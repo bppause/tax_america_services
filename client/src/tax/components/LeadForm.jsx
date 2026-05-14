@@ -31,7 +31,7 @@ export default function LeadForm({ community, products, initialProductSlug }) {
   // legacy `productSlug` body field).
   const [form, setForm] = useState({
     firstName: '', middleName: '', lastName: '',
-    email: '', phone: '', productSlugs: [], message: '', website: '',
+    email: '', phone: '', company: '', productSlugs: [], message: '', website: '',
   });
   const [status, setStatus] = useState({ kind: 'idle', message: '' });
 
@@ -67,13 +67,14 @@ export default function LeadForm({ community, products, initialProductSlug }) {
         lastName: form.lastName,
         email: form.email,
         phone: form.phone,
+        company: form.company,
         productSlugs: form.productSlugs,
         message: form.message,
         locale,
         website: form.website,
       });
       setStatus({ kind: 'success', message: '' });
-      setForm({ firstName: '', middleName: '', lastName: '', email: '', phone: '', productSlugs: [], message: '', website: '' });
+      setForm({ firstName: '', middleName: '', lastName: '', email: '', phone: '', company: '', productSlugs: [], message: '', website: '' });
     } catch (err) {
       const isNetwork = !err?.status;
       setStatus({
@@ -124,6 +125,12 @@ export default function LeadForm({ community, products, initialProductSlug }) {
           <input id="lead-phone" name="phone" type="tel" autoComplete="tel"
                  value={form.phone} onChange={onChange} />
         </div>
+      </div>
+      <div>
+        <label htmlFor="lead-company">{t('lead.field.company')}</label>
+        <input id="lead-company" name="company" type="text" autoComplete="organization"
+               placeholder={t('lead.field.company.placeholder')}
+               value={form.company} onChange={onChange} maxLength={200} />
       </div>
       <div>
         <label>{t('lead.field.services')}</label>
