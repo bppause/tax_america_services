@@ -30,7 +30,12 @@ export function hasSavedLocale() {
 
 function format(str, vars) {
   if (!vars) return str;
-  return String(str).replace(/\{(\w+)\}/g, (_, k) => (k in vars ? String(vars[k]) : `{${k}}`));
+  // Support both {{name}} and {name} placeholder styles. Double-braced
+  // form is the canonical one used in the bundles; single-braced is
+  // accepted for older keys.
+  return String(str)
+    .replace(/\{\{(\w+)\}\}/g, (_, k) => (k in vars ? String(vars[k]) : `{{${k}}}`))
+    .replace(/\{(\w+)\}/g, (_, k) => (k in vars ? String(vars[k]) : `{${k}}`));
 }
 
 const TaxLocaleContext = createContext({
