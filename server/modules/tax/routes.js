@@ -1200,20 +1200,11 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, ...out });
   });
 
-  // Daily-ish cron. 24h interval with a small initial delay so we
-  // don't pile on at startup. Re-uses the existing process — no
-  // separate worker needed for now.
-  if (typeof setInterval === 'function' && typeof setTimeout === 'function') {
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    setTimeout(() => {
-      refreshAllRelationshipTasks()
-        .catch(e => warn('[tax-task-cron] initial run threw', e?.message || e));
-      setInterval(() => {
-        refreshAllRelationshipTasks()
-          .catch(e => warn('[tax-task-cron] interval run threw', e?.message || e));
-      }, DAY_MS);
-    }, 5 * 60 * 1000);
-  }
+  // Auto-cron disabled in this repo to avoid double-firing while the Airbnb
+  // mirror (kai-airbnb-owners-app) still serves the same Supabase DB. The
+  // Airbnb repo's cron remains the single tick source; admins can also call
+  // POST /admin/tasks/refresh in this repo at any time. Re-enable here once
+  // the Airbnb repo has tax code stripped out and its cron is disabled.
 
   // Hard-delete open tasks for a (customer, relationship_type) — used
   // when the relationship is removed. Completed tasks are preserved so
