@@ -1,6 +1,6 @@
 # 🔐 Firebase Google Login Setup Guide
 
-Complete step-by-step to enable real Google login for Propietarios Airbnb KAI.
+Complete step-by-step to enable Google login for Tax America Services.
 
 ---
 
@@ -8,7 +8,7 @@ Complete step-by-step to enable real Google login for Propietarios Airbnb KAI.
 
 1. Go to **https://console.firebase.google.com**
 2. Click **"Add project"**
-3. Name it: `airbnb-kai` (or anything you like)
+3. Name it: `tax-america-services` (or anything you like)
 4. Disable Google Analytics (not needed) → **Create project**
 5. Wait ~30 seconds for it to initialize
 
@@ -30,7 +30,7 @@ Complete step-by-step to enable real Google login for Propietarios Airbnb KAI.
 1. In Firebase Console → click the **gear icon** ⚙️ → **Project settings**
 2. Scroll to **"Your apps"** section
 3. Click the **`</>`** (Web) icon
-4. App nickname: `KAI Web`
+4. App nickname: `Tax America Services Web`
 5. ✅ Check **"Also set up Firebase Hosting"** → NO (skip this)
 6. Click **Register app**
 7. You'll see a config block like this — **copy all the values**:
@@ -54,7 +54,7 @@ const firebaseConfig = {
 2. Scroll to **Authorized domains**
 3. Click **Add domain** and add:
    ```
-   airbnb-property-issue-management.onrender.com
+   tax-america-services.onrender.com
    ```
    (Replace with your actual Render URL)
 4. Click **Add**

@@ -1,10 +1,10 @@
 {
-  "name": "airbnb-property-issue-management",
+  "name": "tax-america-services",
   "version": "1.0.0",
   "scripts": {
-    "build": "node_modules/.bin/vite build client",
+    "build": "cd client && npm install && npm run build",
     "start": "node server.js",
-    "dev": "node_modules/.bin/vite --root client"
+    "dev": "cd client && npm run dev"
   },
   "dependencies": {
     "ws": "^8.18.0",
