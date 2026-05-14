@@ -393,7 +393,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(404).json({ error: 'Tax community not found.' });
     }
     const { data, error } = await supabase.from('tax_employees')
-      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, homepage_display_order')
+      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order')
       .eq('community_id', slug)
       .eq('show_on_homepage', true)
       .eq('status', 'active')
@@ -7887,7 +7887,7 @@ module.exports = function createTaxRouter(deps) {
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, homepage_display_order, created_at, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, created_at, firebase_uid, last_sign_in_at')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -8015,6 +8015,30 @@ module.exports = function createTaxRouter(deps) {
       update.bio_i18n = {
         en: String(body.bioI18n.en || '').slice(0, MAX_TEXT_LEN),
         es: String(body.bioI18n.es || '').slice(0, MAX_TEXT_LEN),
+      };
+    }
+    if (body.roleI18n && typeof body.roleI18n === 'object') {
+      update.role_i18n = {
+        en: String(body.roleI18n.en || '').slice(0, 200),
+        es: String(body.roleI18n.es || '').slice(0, 200),
+      };
+    }
+    if (body.highlightsI18n && typeof body.highlightsI18n === 'object') {
+      update.highlights_i18n = {
+        en: String(body.highlightsI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.highlightsI18n.es || '').slice(0, MAX_TEXT_LEN),
+      };
+    }
+    if (body.educationI18n && typeof body.educationI18n === 'object') {
+      update.education_i18n = {
+        en: String(body.educationI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.educationI18n.es || '').slice(0, MAX_TEXT_LEN),
+      };
+    }
+    if (body.experienceI18n && typeof body.experienceI18n === 'object') {
+      update.experience_i18n = {
+        en: String(body.experienceI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.experienceI18n.es || '').slice(0, MAX_TEXT_LEN),
       };
     }
     if (Number.isFinite(Number(body.displayOrder))) {
