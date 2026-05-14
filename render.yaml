@@ -34,3 +34,5 @@ services:
         sync: false
       - key: EMAIL_FROM
         sync: false
+      - key: PUBLIC_APP_URL
+        value: https://taxamericaservices.com
