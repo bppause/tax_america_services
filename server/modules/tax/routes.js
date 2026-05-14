@@ -2335,7 +2335,7 @@ module.exports = function createTaxRouter(deps) {
         tax_task_priority_colors, tax_task_urgency_colors,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
-        default_locale
+        default_locale, calendly_url
       `)
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle();
     if (error) return sendSupabaseError(res, error);
@@ -2375,6 +2375,19 @@ module.exports = function createTaxRouter(deps) {
             message: 'WhatsApp must be in international format, e.g., +14155551234.' });
         }
         update.whatsapp = norm;
+      }
+    }
+    if (body.calendly_url !== undefined) {
+      const raw = String(body.calendly_url || '').trim();
+      if (raw === '') update.calendly_url = '';
+      else {
+        // Accept only canonical Calendly URLs so a typo doesn't end up
+        // embedding an arbitrary site in an iframe on the landing page.
+        if (!/^https:\/\/(www\.)?calendly\.com\/[A-Za-z0-9._\-/?=&]+$/i.test(raw)) {
+          return res.status(400).json({ error: 'calendly_invalid',
+            message: 'Calendly URL must be https://calendly.com/your-handle (or .../your-handle/event).' });
+        }
+        update.calendly_url = raw.slice(0, 500);
       }
     }
     if (Object.keys(update).length === 1) {

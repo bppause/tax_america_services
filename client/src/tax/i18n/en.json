@@ -1408,9 +1408,13 @@
   "owner.settings.community.postalCode": "Postal code",
   "owner.settings.community.country": "Country",
   "owner.settings.community.whatsappHint": "International format starting with + and country code.",
+  "owner.settings.community.calendly": "Calendly URL",
+  "owner.settings.community.calendlyHint": "Optional. Paste the public link to your Calendly profile or a specific event type (e.g., https://calendly.com/your-handle/intro-call). Visitors will see an inline scheduler near the bottom of your landing page. Leave blank to hide the section.",
   "owner.settings.community.editBtn": "Edit contact info",
   "owner.settings.community.saveBtn": "Save",
   "owner.settings.community.defaultLocale": "Default language",
+  "landing.calendly.heading": "Schedule a consultation",
+  "landing.calendly.subheading": "Pick a time that works for you — we'll meet by phone or video and start mapping out the work.",
 
   "employee.nav.help": "Help",
 

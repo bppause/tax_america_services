@@ -1407,9 +1407,13 @@
   "owner.settings.community.postalCode": "Código postal",
   "owner.settings.community.country": "País",
   "owner.settings.community.whatsappHint": "Formato internacional comenzando con + y código de país.",
+  "owner.settings.community.calendly": "URL de Calendly",
+  "owner.settings.community.calendlyHint": "Opcional. Pega el enlace público a tu perfil de Calendly o a un tipo de evento específico (p. ej., https://calendly.com/tu-usuario/consulta-inicial). Los visitantes verán un calendario integrado cerca del final de la página pública. Déjalo vacío para ocultar la sección.",
   "owner.settings.community.editBtn": "Editar información de contacto",
   "owner.settings.community.saveBtn": "Guardar",
   "owner.settings.community.defaultLocale": "Idioma predeterminado",
+  "landing.calendly.heading": "Agenda una consulta",
+  "landing.calendly.subheading": "Elige un horario que te funcione — nos reunimos por teléfono o video y comenzamos a planificar el trabajo.",
 
   "employee.nav.help": "Ayuda",
 

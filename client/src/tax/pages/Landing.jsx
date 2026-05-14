@@ -8,6 +8,7 @@ import TeamSection from '../components/TeamSection';
 import FaqsSection from '../components/FaqsSection';
 import ArticlesSection from '../components/ArticlesSection';
 import About from '../components/About';
+import CalendlySection from '../components/CalendlySection';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
 
@@ -111,6 +112,7 @@ export default function Landing({ communitySlug }) {
       <ArticlesSection communitySlug={communitySlug} />
       <FaqsSection communitySlug={communitySlug} />
       <About />
+      <CalendlySection url={community.calendly_url} />
       <Contact community={community} products={products}
                initialProductSlug={pendingService} />
       <Footer community={community} />
