@@ -205,6 +205,9 @@ export const taxApi = {
   adminSetEmployeePublicProfile(auth, id, payload) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/public-profile`, payload, auth, { admin: true });
   },
+  adminEmployeePhotoUploadUrl(auth, id, payload) {
+    return request('POST', `/admin/employees/${encodeURIComponent(id)}/photo/upload-url`, payload, auth, { admin: true });
+  },
 
   adminListEmailTemplates(auth, communitySlug)  { return request('GET',  `/admin/email-templates?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
   adminUpdateEmailTemplate(auth, key, lang, payload) { return request('PUT', `/admin/email-templates/${encodeURIComponent(key)}/${encodeURIComponent(lang)}`, payload, auth, { admin: true }); },

@@ -2648,3 +2648,17 @@ alter table public.tax_service_auto_tasks
 create index if not exists tax_service_auto_tasks_default_assignee_idx
   on public.tax_service_auto_tasks(default_assignee_employee_id)
   where default_assignee_employee_id is not null;
+
+-- Public storage bucket for staff profile photos. Files in here are
+-- served at a stable, embeddable URL (no re-signing per render) so the
+-- public landing page can render team headshots from this bucket
+-- directly. Falls through silently when the Storage extension isn't
+-- enabled — in that case create the bucket via the Supabase Dashboard
+-- (Storage → New bucket → "tax-staff-photos", public on).
+do $$ begin
+  insert into storage.buckets (id, name, public)
+  values ('tax-staff-photos', 'tax-staff-photos', true)
+  on conflict (id) do update set public = excluded.public;
+exception when undefined_table then
+  raise notice 'storage.buckets table not available — create the tax-staff-photos bucket via Supabase Dashboard';
+end $$;

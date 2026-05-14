@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
@@ -728,6 +728,8 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
             <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.photoHint')}
             </p>
+            <PhotoUploadButton emp={emp} auth={auth} disabled={busy} t={t}
+                               onUploaded={(url) => set('photoUrl', url)} />
           </div>
         </div>
 
@@ -882,6 +884,75 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// Direct file-upload affordance. Asks the server for a signed PUT URL into
+// the public staff-photos bucket, uploads the file, then writes the
+// resulting public URL straight into the photo_url draft field. The owner
+// still has to click Save Profile to persist it on the row.
+function PhotoUploadButton({ emp, auth, disabled, t, onUploaded }) {
+  const inputRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onPick = () => {
+    if (busy || disabled) return;
+    setErr('');
+    inputRef.current?.click();
+  };
+
+  const onChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setErr(t('owner.publicProfile.photoUpload.tooBig'));
+      return;
+    }
+    setBusy(true); setErr('');
+    try {
+      const r = await taxApi.adminEmployeePhotoUploadUrl(auth, emp.id, {
+        fileName: file.name,
+        mimeType: file.type,
+        sizeBytes: file.size,
+      });
+      const put = await fetch(r.signedUrl, {
+        method: 'PUT', body: file,
+        headers: { 'content-type': file.type, 'x-upsert': 'true' },
+      });
+      if (!put.ok) {
+        const text = await put.text().catch(() => '');
+        throw new Error(text || `Upload failed (${put.status}).`);
+      }
+      // Cache-bust so the freshly-uploaded image replaces the cached
+      // one immediately in the on-page preview.
+      const busted = r.publicUrl + (r.publicUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
+      onUploaded(busted);
+    } catch (ex) {
+      setErr(ex?.message || t('owner.publicProfile.photoUpload.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif"
+             onChange={onChange} style={{ display: 'none' }} />
+      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+              onClick={onPick} disabled={busy || disabled}>
+        {busy
+          ? t('owner.publicProfile.photoUpload.uploading')
+          : t('owner.publicProfile.photoUpload.button')}
+      </button>
+      <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>
+        {t('owner.publicProfile.photoUpload.hint')}
+      </span>
+      {err && (
+        <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>
+      )}
+    </div>
   );
 }
 

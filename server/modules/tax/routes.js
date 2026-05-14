@@ -8104,6 +8104,49 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true });
   });
 
+  // POST /admin/employees/:id/photo/upload-url — returns a one-shot signed
+  // upload URL plus the resulting public URL. Mirrors the document-upload
+  // pattern (no bytes pass through Node) but writes into a public bucket so
+  // the resulting URL is stable and embeddable on the landing page without
+  // re-signing on every render. After the PUT succeeds the client calls the
+  // public-profile PUT with photoUrl=publicUrl to persist it on the row.
+  const STAFF_PHOTO_BUCKET = 'tax-staff-photos';
+  const STAFF_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+  const STAFF_PHOTO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+  router.post('/admin/employees/:id/photo/upload-url', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    if (!actor) return;
+    const empId = trim(req.params.id, 200);
+    const body = req.body || {};
+    const fileName = sanitizeFileName(body.fileName || 'photo.jpg');
+    const mimeType = trim(body.mimeType, 200).toLowerCase();
+    const sizeBytes = Number(body.sizeBytes);
+    if (!STAFF_PHOTO_MIMES.has(mimeType)) {
+      return res.status(415).json({ error: 'Photo must be JPG, PNG, WEBP, or GIF.' });
+    }
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0 || sizeBytes > STAFF_PHOTO_MAX_BYTES) {
+      return res.status(413).json({ error: 'Photo exceeds the 5 MB size limit.' });
+    }
+    const { data: emp } = await supabase.from('tax_employees')
+      .select('id, community_id').eq('id', empId).maybeSingle();
+    if (!emp) return res.status(404).json({ error: 'Employee not found.' });
+
+    const ext = (fileName.match(/\.([a-z0-9]+)$/i)?.[1] || 'jpg').toLowerCase();
+    const objectKey = `${encodeURIComponent(emp.community_id)}/${encodeURIComponent(empId)}/${uuidv4().slice(0, 12)}.${ext}`;
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(STAFF_PHOTO_BUCKET).createSignedUploadUrl(objectKey);
+    if (sErr) {
+      warn('[tax-staff-photo] createSignedUploadUrl failed', sErr.message);
+      return res.status(500).json({ error: 'Could not prepare upload. Please retry.' });
+    }
+    const { data: pub } = supabase.storage.from(STAFF_PHOTO_BUCKET).getPublicUrl(objectKey);
+    res.json({
+      signedUrl: signed.signedUrl,
+      path: objectKey,
+      publicUrl: pub?.publicUrl || '',
+    });
+  });
+
   router.put('/admin/employees/:id/status', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_employees'))) return;
     const empId = trim(req.params.id, 200);
