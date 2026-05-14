@@ -20,7 +20,7 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 create table if not exists public.communities (
-  id text primary key,                     -- slug, e.g. 'kai', 'sol-caribe'
+  id text primary key,                     -- slug, e.g. 'tax-america-services'
   name text not null,                      -- display name
   name_en text not null default '',
   tower text not null default '',          -- building identifier (e.g. 'KAI')
@@ -40,18 +40,15 @@ create table if not exists public.communities (
 -- v83: state field for filtering communities by state/province
 alter table public.communities add column if not exists state text not null default '';
 
--- Seed the default KAI community
-insert into public.communities (id, name, name_en, tower, city, country, background_url, description, description_en) values (
-  'kai',
-  'Propietarios Airbnb KAI',
-  'KAI Airbnb Owners',
-  'KAI',
-  'Cartagena',
-  'Colombia',
-  '/morros-kai-bg.jpg',
-  'Crear una comunidad organizada, informada y proactiva que proteja el valor de nuestras propiedades y eleve la experiencia en Morros KAI.',
-  'Create an organized, informed, and proactive community that protects property value and improves the Morros KAI guest experience.'
-) on conflict (id) do nothing;
+-- Minimal early seed for the default community so the FK-defaulted
+-- community_id columns on audit_logs / email_delivery_logs always
+-- resolve. The TAX MODULE section further down upserts the rich brand
+-- + address fields onto this same row (on conflict (id) do nothing
+-- there is intentional — re-running the schema does not clobber
+-- owner-edited values).
+insert into public.communities (id, name, name_en)
+values ('tax-america-services', 'Tax America Services', 'Tax America Services')
+on conflict (id) do nothing;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- COMMUNITY MEMBERSHIPS (v80)
@@ -134,7 +131,7 @@ alter table public.app_users add column if not exists notification_email text no
 
 create table if not exists public.audit_logs (
   id text primary key,
-  community_id text not null default 'kai' references public.communities(id),
+  community_id text not null default 'tax-america-services' references public.communities(id),
   entity text not null,
   entity_id text not null default '',
   action text not null,
@@ -147,7 +144,7 @@ create table if not exists public.audit_logs (
   created_at timestamptz not null default now()
 );
 
-alter table public.audit_logs add column if not exists community_id text not null default 'kai' references public.communities(id);
+alter table public.audit_logs add column if not exists community_id text not null default 'tax-america-services' references public.communities(id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- EMAIL TEMPLATES
@@ -181,7 +178,7 @@ alter table public.email_templates add constraint email_templates_pkey primary k
 
 create table if not exists public.email_delivery_logs (
   id text primary key,
-  community_id text not null default 'kai' references public.communities(id),
+  community_id text not null default 'tax-america-services' references public.communities(id),
   event_type text not null default '',
   recipients text[] not null default '{}',
   subject text not null default '',
@@ -192,7 +189,14 @@ create table if not exists public.email_delivery_logs (
   created_at timestamptz not null default now()
 );
 
-alter table public.email_delivery_logs add column if not exists community_id text not null default 'kai' references public.communities(id);
+alter table public.email_delivery_logs add column if not exists community_id text not null default 'tax-america-services' references public.communities(id);
+
+-- Re-apply the column defaults on existing databases. `add column if not
+-- exists` is a no-op when the column already exists, even if the default
+-- has since changed (e.g. from 'kai' before the Airbnb split). `set default`
+-- updates the catalog so future inserts pick up the new value.
+alter table public.audit_logs           alter column community_id set default 'tax-america-services';
+alter table public.email_delivery_logs  alter column community_id set default 'tax-america-services';
 
 -- Phase 4n: open / click tracking via Resend webhook. resend_id is the message
 -- id returned by `resend.emails.send`; the webhook receiver matches on it and

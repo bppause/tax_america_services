@@ -5,7 +5,7 @@ const fs = require('fs');
 const { log, warn, error } = require('../logger');
 
 const { publicAppUrl } = require('./core/utils');
-const { getCommunityId, sendSupabaseError } = require('./core/http');
+const { sendSupabaseError } = require('./core/http');
 const { v4: uuidv4 } = require('uuid');
 const { createClient } = require('@supabase/supabase-js');
 const ws = require('ws');
@@ -79,14 +79,13 @@ app.use(express.json({ limit: '15mb' }));
 const DIST = path.join(__dirname, '..', 'client', 'dist');
 app.use(express.static(DIST));
 
-// ─── API: META (/api/health, /api/client-log, /api/version, /api/branding) ───
+// ─── API: META (/api/health, /api/client-log, /api/version) ─────────────────
 const metaModule = require('./platform/meta');
 app.use('/api', metaModule.createRouter({
   supabase,
   isSupabaseConfigured: Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY),
   emailConfigured, emailProvider: EMAIL_PROVIDER, emailFrom: EMAIL_FROM,
   distPath: DIST,
-  getCommunityId, getAppConfig,
 }));
 
 // ─── API: TAX (mounted from server/modules/tax) ──────────────────────────────
@@ -119,7 +118,7 @@ async function logTaxEmailDelivery({ resendId, communityId, customerId, workflow
   try {
     await supabase.from('email_delivery_logs').insert({
       id: 'eml_' + uuidv4().slice(0, 12),
-      community_id: communityId || 'kai',
+      community_id: communityId || 'tax-america-services',
       event_type: String(eventType || ''),
       recipients: Array.isArray(recipients) ? recipients : [],
       subject: String(subject || '').slice(0, 4000),

@@ -3,11 +3,6 @@
 //   POST /api/client-log   (browser-side error reports)
 //   GET  /api/health       (DB + email reachability)
 //   GET  /api/version      (build timestamp from client/dist/build-meta.json)
-//   GET  /api/branding     (community-aware branding bundle for the SPA shell)
-//
-// Lifted byte-identical from server.js stage 4k. Mounted by server.js at the
-// canonical paths (no /api/platform/meta/ prefix — these endpoints have been
-// at /api/* forever and the SPA hits them by their bare names).
 
 'use strict';
 
@@ -21,7 +16,6 @@ module.exports = function createMetaRouter(deps) {
     supabase, isSupabaseConfigured,
     emailConfigured, emailProvider, emailFrom,
     distPath,
-    getCommunityId, getAppConfig,
   } = deps;
 
   const router = express.Router();
@@ -36,39 +30,29 @@ module.exports = function createMetaRouter(deps) {
     res.json({ ok:true });
   });
 
-  // GET /health — Supabase + email reachability
+  // GET /health — Supabase + email reachability. Pings audit_logs as the
+  // canary table (always present; small; no PII surfaced via head/count).
   router.get('/health', async (req, res) => {
-    const result = { ok: false, configured: isSupabaseConfigured, storage: 'supabase', tables: ['listings', 'incidents', 'notifications', 'listing_audit_events', 'audit_logs'], time: new Date().toISOString() };
+    const result = { ok: false, configured: isSupabaseConfigured, storage: 'supabase', time: new Date().toISOString() };
 
     if (!isSupabaseConfigured) {
       result.error = 'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in Render Environment.';
       return res.status(500).json(result);
     }
 
-    const listingsCheck = await supabase.from('listings').select('id', { count: 'exact', head: true });
-    const incidentsCheck = await supabase.from('incidents').select('id', { count: 'exact', head: true });
-    const notificationsCheck = await supabase.from('notifications').select('id', { count: 'exact', head: true });
-    const auditCheck = await supabase.from('listing_audit_events').select('id', { count: 'exact', head: true });
-    const auditLogsCheck = await supabase.from('audit_logs').select('id', { count: 'exact', head: true });
+    const dbCheck = await supabase.from('audit_logs').select('id', { count: 'exact', head: true });
 
-    if (listingsCheck.error || incidentsCheck.error || notificationsCheck.error || auditCheck.error || auditLogsCheck.error) {
-      result.error = listingsCheck.error?.message || incidentsCheck.error?.message || notificationsCheck.error?.message || auditCheck.error?.message || auditLogsCheck.error?.message;
-      result.listings = listingsCheck.error ? 'error' : 'ok';
-      result.incidents = incidentsCheck.error ? 'error' : 'ok';
-      result.notifications = notificationsCheck.error ? 'error' : 'ok';
-      result.auditTrail = auditCheck.error ? 'error' : 'ok';
+    if (dbCheck.error) {
+      result.error = dbCheck.error.message;
+      result.db = 'error';
       return res.status(500).json(result);
     }
 
     result.ok = true;
-    result.listings = 'ok';
-    result.incidents = 'ok';
-    result.notifications = 'ok';
-    result.auditTrail = 'ok';
+    result.db = 'ok';
     result.emailProvider = emailProvider;
     result.emailConfigured = emailConfigured;
     result.emailFrom = emailFrom;
-    result.counts = { listings: listingsCheck.count || 0, incidents: incidentsCheck.count || 0, notifications: notificationsCheck.count || 0, auditEvents: auditCheck.count || 0 };
     res.json(result);
   });
 
@@ -80,22 +64,6 @@ module.exports = function createMetaRouter(deps) {
     } catch(e) {
       res.json({ buildTime: '' });
     }
-  });
-
-  // GET /branding — community-aware branding bundle for the SPA shell
-  router.get('/branding', async (req, res) => {
-    try {
-      const communityId = getCommunityId(req);
-      const cfg = await getAppConfig(communityId);
-      res.json({
-        communityId,
-        complexNameEs: cfg.complex_name_es || 'Propietarios Airbnb KAI',
-        complexNameEn: cfg.complex_name_en || 'KAI Airbnb Owners',
-        complexLocation: cfg.complex_location || 'Serena del Mar · Cartagena 🇨🇴',
-        complexLogo: cfg.complex_logo || '',
-        complexBg: cfg.complex_bg || '/morros-kai-bg.jpg',
-      });
-    } catch(e) { res.json({ communityId:'kai', complexNameEs:'Propietarios Airbnb KAI', complexNameEn:'KAI Airbnb Owners', complexLocation:'Serena del Mar · Cartagena 🇨🇴', complexLogo:'', complexBg:'/morros-kai-bg.jpg' }); }
   });
 
   return router;
