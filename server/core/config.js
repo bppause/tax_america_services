@@ -81,14 +81,14 @@ const KNOWN_AUDIT_EVENT_TYPES = [
 ];
 
 module.exports = function createConfigHelpers(supabase, { EMAIL_FROM }) {
-  const getCommunity = async (communityId='kai') => {
+  const getCommunity = async (communityId='tax-america-services') => {
     try {
       const { data } = await supabase.from('communities').select('*').eq('id', communityId).maybeSingle();
       return data || null;
     } catch(e) { warn('getCommunity failed: ' + (e?.message || e)); return null; }
   };
 
-  const getAppConfig = async (communityId='kai') => {
+  const getAppConfig = async (communityId='tax-america-services') => {
     const cfg = {
       sla_hours:String(DEFAULT_SLA_HOURS||24),
       escalation_cc_emails:DEFAULT_ESCALATION_CC_EMAILS.join(','),
