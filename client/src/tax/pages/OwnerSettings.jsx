@@ -149,12 +149,13 @@ export default function OwnerSettings() {
              style={{ marginBottom: 16 }}>{msg.text}</div>
       )}
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.notifLock.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.notifLock.subtitle')}
-        </p>
-
+      <CollapsibleSection
+        storageKey="notifLock"
+        defaultOpen={allowChange}
+        title={t('owner.settings.notifLock.title')}
+        subtitle={t('owner.settings.notifLock.subtitle')}
+        statusLabel={allowChange ? t('owner.settings.statusEnabled') : t('owner.settings.statusLocked')}
+        enabled={allowChange}>
         <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
           <label style={{
             display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
@@ -187,42 +188,43 @@ export default function OwnerSettings() {
             </div>
           </label>
         </div>
-      </section>
+      </CollapsibleSection>
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.lookahead.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.lookahead.subtitle')}
-        </p>
+      <CollapsibleSection
+        storageKey="lookahead"
+        defaultOpen={true}
+        title={t('owner.settings.lookahead.title')}
+        subtitle={t('owner.settings.lookahead.subtitle')}>
         <LookaheadEditor initial={lookaheadMonths} busy={busy}
                          onSave={onSaveLookahead} onRefresh={onRefreshTasksNow} t={t} />
-      </section>
+      </CollapsibleSection>
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.urgency.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.urgency.subtitle')}
-        </p>
+      <CollapsibleSection
+        storageKey="urgency"
+        defaultOpen={true}
+        title={t('owner.settings.urgency.title')}
+        subtitle={t('owner.settings.urgency.subtitle')}>
         <ThresholdEditor initial={thresholds} busy={busy} onSave={onSaveThresholds} t={t} />
-      </section>
+      </CollapsibleSection>
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.colors.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.colors.subtitle')}
-        </p>
+      <CollapsibleSection
+        storageKey="colors"
+        defaultOpen={true}
+        title={t('owner.settings.colors.title')}
+        subtitle={t('owner.settings.colors.subtitle')}>
         <ColorOverridesEditor
           initialPriority={settings.tax_task_priority_colors || {}}
           initialUrgency={settings.tax_task_urgency_colors || {}}
           busy={busy} onSave={onSaveColorOverrides} t={t} />
-      </section>
+      </CollapsibleSection>
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.reminders.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.reminders.subtitle')}
-        </p>
-
+      <CollapsibleSection
+        storageKey="reminders"
+        defaultOpen={remindersEnabled}
+        title={t('owner.settings.reminders.title')}
+        subtitle={t('owner.settings.reminders.subtitle')}
+        statusLabel={remindersEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+        enabled={remindersEnabled}>
         <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
           <label style={{
             display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
@@ -255,14 +257,15 @@ export default function OwnerSettings() {
             </div>
           </label>
         </div>
-      </section>
+      </CollapsibleSection>
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.portal.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.portal.subtitle')}
-        </p>
-
+      <CollapsibleSection
+        storageKey="portal"
+        defaultOpen={portalEnabled}
+        title={t('owner.settings.portal.title')}
+        subtitle={t('owner.settings.portal.subtitle')}
+        statusLabel={portalEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+        enabled={portalEnabled}>
         <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
           <label style={{
             display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
@@ -295,14 +298,15 @@ export default function OwnerSettings() {
             </div>
           </label>
         </div>
-      </section>
+      </CollapsibleSection>
 
-      <section style={{ marginBottom: 32 }}>
-        <h3 style={{ marginBottom: 4 }}>{t('owner.settings.docs.title')}</h3>
-        <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-          {t('owner.settings.docs.subtitle')}
-        </p>
-
+      <CollapsibleSection
+        storageKey="docs"
+        defaultOpen={docsEnabled}
+        title={t('owner.settings.docs.title')}
+        subtitle={t('owner.settings.docs.subtitle')}
+        statusLabel={docsEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+        enabled={docsEnabled}>
         <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
           <label style={{
             display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
@@ -335,13 +339,90 @@ export default function OwnerSettings() {
             </div>
           </label>
         </div>
-      </section>
+      </CollapsibleSection>
 
       <TaskStatusesSection auth={auth} community={community} t={t} />
 
       <CommunityContactSection settings={settings} auth={auth} community={community}
                                t={t} onSaved={load} />
     </EmployeeShell>
+  );
+}
+
+// Reusable expander for the settings page. Persists open/closed state per
+// section in localStorage so an owner who deliberately collapsed something
+// doesn't see it spring back open after a refresh. Default state is driven
+// by `defaultOpen` — typically the toggle-controlled sections pass the
+// current "enabled" value here so a disabled feature starts collapsed,
+// saving vertical space on the screen.
+function CollapsibleSection({ storageKey, defaultOpen, title, subtitle, statusLabel, enabled, children }) {
+  const lsKey = `tax.ownerSettings.${storageKey}.open`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(lsKey) : null;
+      if (saved === '1') return true;
+      if (saved === '0') return false;
+    } catch { /* ignore */ }
+    return !!defaultOpen;
+  });
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(lsKey, open ? '1' : '0');
+      }
+    } catch { /* ignore */ }
+  }, [open, lsKey]);
+
+  return (
+    <section style={{
+      marginBottom: 16,
+      border: '1px solid var(--tax-border)', borderRadius: 10,
+      background: '#fff', overflow: 'hidden',
+    }}>
+      <button type="button"
+              onClick={() => setOpen(o => !o)}
+              aria-expanded={open}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10,
+                width: '100%', textAlign: 'left',
+                padding: '12px 14px', border: 0,
+                background: open ? 'color-mix(in srgb, var(--tax-brand-primary) 4%, #fff)' : '#fff',
+                cursor: 'pointer',
+              }}>
+        <span style={{
+          display: 'inline-block', transition: 'transform .15s ease',
+          transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+          fontSize: 11, color: 'var(--tax-muted)',
+        }}>▶</span>
+        <span style={{ minWidth: 0, flex: 1 }}>
+          <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--tax-text)' }}>{title}</span>
+        </span>
+        {statusLabel && (
+          <span style={{
+            padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+            textTransform: 'uppercase', letterSpacing: '.04em',
+            background: enabled
+              ? 'color-mix(in srgb, var(--tax-success, #16a34a) 12%, #fff)'
+              : 'var(--tax-bg-alt)',
+            color: enabled ? 'var(--tax-success, #16a34a)' : 'var(--tax-muted)',
+            border: '1px solid',
+            borderColor: enabled
+              ? 'color-mix(in srgb, var(--tax-success, #16a34a) 35%, #fff)'
+              : 'var(--tax-border)',
+          }}>{statusLabel}</span>
+        )}
+      </button>
+      {open && (
+        <div style={{ padding: '4px 14px 16px' }}>
+          {subtitle && (
+            <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
+              {subtitle}
+            </p>
+          )}
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -361,9 +442,12 @@ function TaskStatusesSection({ auth, community, t }) {
   useEffect(load, [community]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <section style={{ marginBottom: 32 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <h3 style={{ margin: 0 }}>{t('owner.settings.taskStatuses.title')}</h3>
+    <CollapsibleSection
+      storageKey="taskStatuses"
+      defaultOpen={true}
+      title={t('owner.settings.taskStatuses.title')}
+      subtitle={t('owner.settings.taskStatuses.subtitle')}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
         {!adding && (
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                   onClick={() => setAdding(true)}>
@@ -371,9 +455,6 @@ function TaskStatusesSection({ auth, community, t }) {
           </button>
         )}
       </div>
-      <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-        {t('owner.settings.taskStatuses.subtitle')}
-      </p>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
@@ -392,7 +473,7 @@ function TaskStatusesSection({ auth, community, t }) {
               ))}
             </div>
       }
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -606,14 +687,12 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
   };
 
   return (
-    <section>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
-        <div>
-          <h3 style={{ marginBottom: 4 }}>{t('owner.settings.community.title')}</h3>
-          <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 12, fontSize: 14 }}>
-            {t('owner.settings.community.subtitle')}
-          </p>
-        </div>
+    <CollapsibleSection
+      storageKey="community"
+      defaultOpen={true}
+      title={t('owner.settings.community.title')}
+      subtitle={t('owner.settings.community.subtitle')}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
         {!editing && (
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                   onClick={() => setEditing(true)}>
@@ -676,7 +755,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
           </div>
         </div>
       )}
-    </section>
+    </CollapsibleSection>
   );
 }
 

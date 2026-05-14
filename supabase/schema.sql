@@ -2200,6 +2200,21 @@ create index if not exists tax_employees_homepage_idx
   on public.tax_employees(community_id, homepage_display_order)
   where show_on_homepage = true and status = 'active';
 
+-- Extended public profile fields. role_i18n is a short label rendered as a
+-- chip on the team card (e.g. "Senior Preparer", "Partner"). highlights_i18n
+-- is a newline-separated list of short brag-points (certifications, years in
+-- the business, languages). education_i18n / experience_i18n are
+-- longer-form textareas. All bilingual and default to empty so an owner
+-- can fill only the ones that make sense.
+alter table public.tax_employees
+  add column if not exists role_i18n jsonb not null default '{}'::jsonb;
+alter table public.tax_employees
+  add column if not exists highlights_i18n jsonb not null default '{}'::jsonb;
+alter table public.tax_employees
+  add column if not exists education_i18n jsonb not null default '{}'::jsonb;
+alter table public.tax_employees
+  add column if not exists experience_i18n jsonb not null default '{}'::jsonb;
+
 -- Seed the three default status options for tax-america-services. New
 -- communities provisioned via the platform endpoint should mirror this
 -- (handled in server code on community create).

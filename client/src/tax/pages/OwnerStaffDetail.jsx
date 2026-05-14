@@ -619,26 +619,25 @@ function AssignmentManager({ assignments, customers, empId, auth, onChange, t, l
 // and a bilingual bio. Default visibility is OFF — the owner explicitly
 // turns it on per employee so nobody is published by surprise.
 function PublicProfileCard({ emp, auth, onSaved, t }) {
-  const [draft, setDraft] = useState({
+  const initial = () => ({
     showOnHomepage: !!emp.show_on_homepage,
     photoUrl: emp.photo_url || '',
     titleEn: emp.title_i18n?.en || '',
     titleEs: emp.title_i18n?.es || '',
     bioEn: emp.bio_i18n?.en || '',
     bioEs: emp.bio_i18n?.es || '',
+    roleEn: emp.role_i18n?.en || '',
+    roleEs: emp.role_i18n?.es || '',
+    highlightsEn: emp.highlights_i18n?.en || '',
+    highlightsEs: emp.highlights_i18n?.es || '',
+    educationEn: emp.education_i18n?.en || '',
+    educationEs: emp.education_i18n?.es || '',
+    experienceEn: emp.experience_i18n?.en || '',
+    experienceEs: emp.experience_i18n?.es || '',
     displayOrder: String(emp.homepage_display_order ?? 100),
   });
-  useEffect(() => {
-    setDraft({
-      showOnHomepage: !!emp.show_on_homepage,
-      photoUrl: emp.photo_url || '',
-      titleEn: emp.title_i18n?.en || '',
-      titleEs: emp.title_i18n?.es || '',
-      bioEn: emp.bio_i18n?.en || '',
-      bioEs: emp.bio_i18n?.es || '',
-      displayOrder: String(emp.homepage_display_order ?? 100),
-    });
-  }, [emp]);
+  const [draft, setDraft] = useState(initial);
+  useEffect(() => { setDraft(initial()); }, [emp]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
@@ -648,6 +647,14 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
              || draft.titleEs !== (emp.title_i18n?.es || '')
              || draft.bioEn !== (emp.bio_i18n?.en || '')
              || draft.bioEs !== (emp.bio_i18n?.es || '')
+             || draft.roleEn !== (emp.role_i18n?.en || '')
+             || draft.roleEs !== (emp.role_i18n?.es || '')
+             || draft.highlightsEn !== (emp.highlights_i18n?.en || '')
+             || draft.highlightsEs !== (emp.highlights_i18n?.es || '')
+             || draft.educationEn !== (emp.education_i18n?.en || '')
+             || draft.educationEs !== (emp.education_i18n?.es || '')
+             || draft.experienceEn !== (emp.experience_i18n?.en || '')
+             || draft.experienceEs !== (emp.experience_i18n?.es || '')
              || Number(draft.displayOrder) !== (emp.homepage_display_order ?? 100);
 
   const set = (k, v) => setDraft(prev => ({ ...prev, [k]: v }));
@@ -660,6 +667,10 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
         photoUrl: draft.photoUrl.trim(),
         titleI18n: { en: draft.titleEn.trim(), es: draft.titleEs.trim() },
         bioI18n: { en: draft.bioEn.trim(), es: draft.bioEs.trim() },
+        roleI18n: { en: draft.roleEn.trim(), es: draft.roleEs.trim() },
+        highlightsI18n: { en: draft.highlightsEn.trim(), es: draft.highlightsEs.trim() },
+        educationI18n: { en: draft.educationEn.trim(), es: draft.educationEs.trim() },
+        experienceI18n: { en: draft.experienceEn.trim(), es: draft.experienceEs.trim() },
         displayOrder: Number(draft.displayOrder) || 100,
       });
       setMsg({ kind: 'success', text: t('owner.publicProfile.saved') });
@@ -744,6 +755,27 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
         <div className="tax-form__row2">
           <div>
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.roleEn')}
+            </label>
+            <input type="text" value={draft.roleEn} maxLength={200} disabled={busy}
+                   onChange={e => set('roleEn', e.target.value)}
+                   placeholder={t('owner.publicProfile.rolePlaceholderEn')}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.roleEs')}
+            </label>
+            <input type="text" value={draft.roleEs} maxLength={200} disabled={busy}
+                   onChange={e => set('roleEs', e.target.value)}
+                   placeholder={t('owner.publicProfile.rolePlaceholderEs')}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          </div>
+        </div>
+
+        <div className="tax-form__row2">
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.bioEn')}
             </label>
             <textarea rows={4} value={draft.bioEn} maxLength={4000} disabled={busy}
@@ -758,6 +790,72 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
             <textarea rows={4} value={draft.bioEs} maxLength={4000} disabled={busy}
                       onChange={e => set('bioEs', e.target.value)}
                       placeholder={t('owner.publicProfile.bioPlaceholder')}
+                      style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+        </div>
+
+        <div className="tax-form__row2">
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.highlightsEn')}
+            </label>
+            <textarea rows={4} value={draft.highlightsEn} maxLength={4000} disabled={busy}
+                      onChange={e => set('highlightsEn', e.target.value)}
+                      placeholder={t('owner.publicProfile.highlightsPlaceholder')}
+                      style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.highlightsEs')}
+            </label>
+            <textarea rows={4} value={draft.highlightsEs} maxLength={4000} disabled={busy}
+                      onChange={e => set('highlightsEs', e.target.value)}
+                      placeholder={t('owner.publicProfile.highlightsPlaceholder')}
+                      style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+        </div>
+        <p style={{ margin: '-4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+          {t('owner.publicProfile.highlightsHint')}
+        </p>
+
+        <div className="tax-form__row2">
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.educationEn')}
+            </label>
+            <textarea rows={3} value={draft.educationEn} maxLength={4000} disabled={busy}
+                      onChange={e => set('educationEn', e.target.value)}
+                      placeholder={t('owner.publicProfile.educationPlaceholder')}
+                      style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.educationEs')}
+            </label>
+            <textarea rows={3} value={draft.educationEs} maxLength={4000} disabled={busy}
+                      onChange={e => set('educationEs', e.target.value)}
+                      placeholder={t('owner.publicProfile.educationPlaceholder')}
+                      style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+        </div>
+
+        <div className="tax-form__row2">
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.experienceEn')}
+            </label>
+            <textarea rows={3} value={draft.experienceEn} maxLength={4000} disabled={busy}
+                      onChange={e => set('experienceEn', e.target.value)}
+                      placeholder={t('owner.publicProfile.experiencePlaceholder')}
+                      style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.publicProfile.experienceEs')}
+            </label>
+            <textarea rows={3} value={draft.experienceEs} maxLength={4000} disabled={busy}
+                      onChange={e => set('experienceEs', e.target.value)}
+                      placeholder={t('owner.publicProfile.experiencePlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
           </div>
         </div>
