@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import TaskHover from '../components/TaskHover';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
@@ -1373,45 +1374,56 @@ function TasksSection({ auth, customer, customerId, community, locale, t }) {
                 const product = task.product;
                 const assignee = task.assignee;
                 const overdue = task.due_date && task.due_date < new Date().toISOString().slice(0, 10) && !task.completed_at;
+                const editHref = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
                 return (
-                  <div key={task.id} className="tax-contact-item"
-                       style={{ display: 'grid', gap: 6 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ fontWeight: 600 }}>{task.title}</div>
-                        <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)', display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                          {product && <span>{pickI18n(product.name_i18n, locale).value || product.slug}</span>}
-                          {assignee && <span>· {(assignee.name || assignee.email)}</span>}
-                          {task.due_date && (
-                            <span style={overdue ? { color: '#b91c1c', fontWeight: 600 } : undefined}>
-                              · {t('owner.tasks.due')}: {task.due_date}{overdue ? ` (${t('owner.tasks.overdue')})` : ''}
-                            </span>
-                          )}
-                          {task.priority !== 'normal' && <span>· {t(`owner.tasks.priority.${task.priority}`)}</span>}
+                  <TaskHover key={task.id} task={task} statuses={statuses}
+                             community={community} locale={locale} t={t}>
+                    <div className="tax-contact-item"
+                         style={{ display: 'grid', gap: 6 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                        <a href={editHref}
+                           style={{
+                             minWidth: 0, flex: 1, textDecoration: 'none',
+                             color: 'inherit', cursor: 'pointer',
+                           }}>
+                          <div style={{ fontWeight: 600 }}>{task.title}</div>
+                          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)', display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                            {product && <span>{pickI18n(product.name_i18n, locale).value || product.slug}</span>}
+                            {assignee && <span>· {(assignee.name || assignee.email)}</span>}
+                            {task.due_date && (
+                              <span style={overdue ? { color: '#b91c1c', fontWeight: 600 } : undefined}>
+                                · {t('owner.tasks.due')}: {task.due_date}{overdue ? ` (${t('owner.tasks.overdue')})` : ''}
+                              </span>
+                            )}
+                            {task.priority !== 'normal' && <span>· {t(`owner.tasks.priority.${task.priority}`)}</span>}
+                          </div>
+                        </a>
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <select value={task.status_key}
+                                  onChange={e => updateTask(task.id, { statusKey: e.target.value })}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{
+                                    padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                    border: '1px solid var(--tax-border)',
+                                    background: `color-mix(in srgb, ${statusBg} 18%, #fff)`,
+                                  }}>
+                            {statuses.map(s => (
+                              <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
+                            ))}
+                          </select>
+                          <button type="button"
+                                  onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
+                                  className="tax-btn tax-btn--ghost tax-btn--sm"
+                                  style={{ color: 'var(--tax-muted)' }}>×</button>
                         </div>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                        <select value={task.status_key} onChange={e => updateTask(task.id, { statusKey: e.target.value })}
-                                style={{
-                                  padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                                  border: '1px solid var(--tax-border)',
-                                  background: `color-mix(in srgb, ${statusBg} 18%, #fff)`,
-                                }}>
-                          {statuses.map(s => (
-                            <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
-                          ))}
-                        </select>
-                        <button type="button" onClick={() => deleteTask(task.id)}
-                                className="tax-btn tax-btn--ghost tax-btn--sm"
-                                style={{ color: 'var(--tax-muted)' }}>×</button>
-                      </div>
+                      {task.notes && (
+                        <div style={{ fontSize: 12, color: 'var(--tax-muted)', whiteSpace: 'pre-wrap' }}>
+                          {task.notes}
+                        </div>
+                      )}
                     </div>
-                    {task.notes && (
-                      <div style={{ fontSize: 12, color: 'var(--tax-muted)', whiteSpace: 'pre-wrap' }}>
-                        {task.notes}
-                      </div>
-                    )}
-                  </div>
+                  </TaskHover>
                 );
               })}
             </div>

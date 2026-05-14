@@ -317,7 +317,7 @@
   "owner.customer.services.addedNamed": "{{name}} tagged.",
   "owner.customer.services.addedWithTasks": "{{name}} tagged. {{count}} new tasks queued.",
   "owner.customer.services.removedNamed": "{{name}} removed.",
-  "owner.customer.services.removedWithTasks": "{{name}} removed. {{count}} untouched task(s) cleaned up.",
+  "owner.customer.services.removedWithTasks": "{{name}} removed. {{count}} open task(s) cleaned up.",
   "owner.customer.services.removeConfirm": "Remove {{name}} from this customer? Untouched auto-tasks for this service will be deleted (assigned / in-progress / with notes are kept).",
   "employee.nav.progress": "Progress",
   "employee.nav.reminders": "Reminders",
