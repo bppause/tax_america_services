@@ -317,7 +317,7 @@
   "owner.customer.services.addedNamed": "{{name}} etiquetado.",
   "owner.customer.services.addedWithTasks": "{{name}} etiquetado. {{count}} tareas nuevas en cola.",
   "owner.customer.services.removedNamed": "{{name}} quitado.",
-  "owner.customer.services.removedWithTasks": "{{name}} quitado. {{count}} tarea(s) sin tocar limpiada(s).",
+  "owner.customer.services.removedWithTasks": "{{name}} quitado. {{count}} tarea(s) abierta(s) limpiada(s).",
   "owner.customer.services.removeConfirm": "¿Quitar {{name}} de este cliente? Las tareas automáticas sin tocar para este servicio se eliminarán (las asignadas / en curso / con notas se conservan).",
   "employee.nav.progress": "Progreso",
   "employee.nav.reminders": "Recordatorios",

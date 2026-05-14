@@ -1209,27 +1209,21 @@ module.exports = function createTaxRouter(deps) {
   // the Airbnb repo has tax code stripped out and its cron is disabled.
 
   // Hard-delete open tasks for a (customer, relationship_type) — used
-  // when the relationship is removed. Completed tasks are preserved so
-  // the work-done history survives. Tasks that are mid-flight
-  // (status in_progress, assignee set, or have notes attached) ALSO
-  // survive because that's real work — the owner cleans those up
-  // explicitly.
+  // when the relationship is removed. Completed tasks (completed_at set)
+  // are preserved so the work-done history survives; everything else
+  // belonging to the removed relationship goes, because keeping
+  // mid-flight work pinned to a relationship that no longer exists just
+  // leaves orphans on the board.
   async function removeTasksForRelationship({ customerId, relationshipTypeId, actorEmail = '' }) {
     if (!customerId || !relationshipTypeId) return { deleted: 0 };
     const { data: cur } = await supabase.from('tax_tasks')
-      .select('id, status_key, completed_at, assigned_employee_id, notes')
+      .select('id')
       .eq('customer_id', customerId)
       .eq('relationship_type_id', relationshipTypeId)
       .eq('source', 'relationship_schedule')
-      .is('archived_at', null);
-    // Drop only the "untouched" rows — no completion, no assignment,
-    // no notes. Anything an employee has already engaged with stays.
-    const dropIds = (cur || [])
-      .filter(t => !t.completed_at
-                && !t.assigned_employee_id
-                && (!t.notes || !t.notes.trim())
-                && t.status_key !== 'in_progress')
-      .map(t => t.id);
+      .is('archived_at', null)
+      .is('completed_at', null);
+    const dropIds = (cur || []).map(t => t.id);
     if (!dropIds.length) return { deleted: 0 };
     const { error } = await supabase.from('tax_tasks')
       .delete().in('id', dropIds);
@@ -1367,16 +1361,13 @@ module.exports = function createTaxRouter(deps) {
   async function removeTasksForService({ customerId, productId, actorEmail = '' }) {
     if (!customerId || !productId) return { deleted: 0 };
     const { data: cur } = await supabase.from('tax_tasks')
-      .select('id, status_key, completed_at, assigned_employee_id, notes')
+      .select('id')
       .eq('customer_id', customerId)
       .eq('product_id', productId)
       .eq('source', 'relationship_schedule')
-      .is('archived_at', null);
-    const dropIds = (cur || [])
-      .filter(t => !t.completed_at && !t.assigned_employee_id
-                && (!t.notes || !t.notes.trim())
-                && t.status_key !== 'in_progress')
-      .map(t => t.id);
+      .is('archived_at', null)
+      .is('completed_at', null);
+    const dropIds = (cur || []).map(t => t.id);
     if (!dropIds.length) return { deleted: 0 };
     const { error } = await supabase.from('tax_tasks').delete().in('id', dropIds);
     if (error) { warn('[tax-cust-svc] delete failed', error.message); return { deleted: 0, error: error.message }; }
@@ -2627,7 +2618,33 @@ module.exports = function createTaxRouter(deps) {
       const { error } = await supabase.from('tax_service_auto_tasks').insert(inserts);
       if (error) return sendSupabaseError(res, error);
     }
+    // When an owner deletes auto-tasks, also drop any open customer
+    // tasks that the generator created for them. Completed tasks
+    // (completed_at set) survive so the work-done history isn't lost,
+    // but everything else for the removed auto-task goes — otherwise
+    // those rows would just hang on the board pointing at a template
+    // that no longer exists.
+    let autoTaskTasksDeleted = 0;
     if (removeIds.length) {
+      try {
+        const { data: openRows } = await supabase.from('tax_tasks')
+          .select('id')
+          .in('service_auto_task_id', removeIds)
+          .is('completed_at', null)
+          .is('archived_at', null);
+        const dropIds = (openRows || []).map(r => r.id);
+        if (dropIds.length) {
+          const { error: delErr } = await supabase.from('tax_tasks')
+            .delete().in('id', dropIds);
+          if (delErr) {
+            warn('[tax-auto-tasks-replace] open task delete failed', delErr.message);
+          } else {
+            autoTaskTasksDeleted = dropIds.length;
+          }
+        }
+      } catch (e) {
+        warn('[tax-auto-tasks-replace] open task cleanup failed', e?.message || e);
+      }
       const { error } = await supabase.from('tax_service_auto_tasks')
         .delete().in('id', removeIds);
       if (error) return sendSupabaseError(res, error);
@@ -2661,7 +2678,7 @@ module.exports = function createTaxRouter(deps) {
       await auditLog({
         entity: 'tax.product', entityId: productId, action: 'auto_tasks_replace',
         actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
-        after: { updated: updates.length, inserted: inserts.length, deleted: removeIds.length, tasksCreated },
+        after: { updated: updates.length, inserted: inserts.length, deleted: removeIds.length, tasksCreated, openTasksDeleted: autoTaskTasksDeleted },
       });
     } catch (_e) {}
 
@@ -2669,7 +2686,7 @@ module.exports = function createTaxRouter(deps) {
       .select('id, community_id, product_id, title_i18n, description_i18n, cadence_kind, anchor_rule, default_priority, default_assignee_employee_id, display_order, active')
       .eq('product_id', productId)
       .order('display_order', { ascending: true });
-    res.json({ ok: true, autoTasks: fresh || [], tasksCreated });
+    res.json({ ok: true, autoTasks: fresh || [], tasksCreated, openTasksDeleted: autoTaskTasksDeleted });
   });
 
   // ── DELETE /admin/products/:id ──────────────────────────────────────────
@@ -6025,10 +6042,10 @@ module.exports = function createTaxRouter(deps) {
   });
 
   // DELETE /admin/customers/:id/services/:linkId
-  // Soft-deletes the join (active=false), then hard-deletes any
-  // untouched generator tasks for that (customer, product) — same
-  // safety rule as relationship removal: keep anything with a
-  // completion, assignee, notes, or in_progress status.
+  // Soft-deletes the join (active=false), then hard-deletes any open
+  // generator tasks for that (customer, product). Completed tasks
+  // (completed_at set) are preserved for history; everything else
+  // tied to the removed service goes.
   router.delete('/admin/customers/:id/services/:linkId', async (req, res) => {
     const actor = await requireOwnerAdmin(req, res, 'manage_customers');
     if (!actor) return;
