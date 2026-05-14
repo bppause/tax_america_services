@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import TaskHover from '../components/TaskHover';
 import { displayPersonName, firstNameOf } from '../lib/personName';
 
 // Today dashboard — the default landing page for employees and the
@@ -79,7 +80,7 @@ export default function OwnerDashboard() {
       }}>
         <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
           <UrgentTasks tasks={data.urgentTasks || []}
-                       base={base} locale={locale} t={t} />
+                       base={base} community={community} locale={locale} t={t} />
           <NeedsAttention rows={data.needsAttention || []}
                           base={base} t={t} />
         </div>
@@ -115,8 +116,11 @@ function Kpi({ label, value, color, sub, href }) {
   );
 }
 
-function UrgentTasks({ tasks, base, locale, t }) {
+function UrgentTasks({ tasks, base, community, locale, t }) {
   const today = new Date().toISOString().slice(0, 10);
+  // Clicking a row jumps to the Tasks page with ?edit=<id> so the same
+  // editor used on List / Kanban / Calendar opens for the task.
+  const editHref = (id) => `${base}/tasks?edit=${encodeURIComponent(id)}`;
   return (
     <section style={{ border: '1px solid var(--tax-border)', borderRadius: 10,
                        background: '#fff', overflow: 'hidden' }}>
@@ -144,25 +148,29 @@ function UrgentTasks({ tasks, base, locale, t }) {
               || t('owner.dashboard.practiceWide');
             return (
               <li key={t1.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
-                <div style={{ padding: '10px 14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                    <div style={{ fontWeight: 600, minWidth: 0, flex: 1 }}>{t1.title}</div>
-                    <DuePill date={t1.due_date} overdue={isOverdue} today={isToday} t={t} />
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--tax-muted)',
-                                 display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {cust && (
-                      <a href={`${base}/customers/${encodeURIComponent(cust.id)}`}
-                         style={{ color: 'inherit' }}>{custName}</a>
-                    )}
-                    {t1.product && (
-                      <span>· {pickI18n(t1.product.name_i18n, locale).value || t1.product.slug}</span>
-                    )}
-                    {t1.priority && t1.priority !== 'normal' && (
-                      <PriorityChip priority={t1.priority} t={t} />
-                    )}
-                  </div>
-                </div>
+                <TaskHover task={t1} statuses={[]} community={community}
+                           locale={locale} t={t}>
+                  <a href={editHref(t1.id)}
+                     style={{
+                       display: 'block', padding: '10px 14px',
+                       textDecoration: 'none', color: 'inherit',
+                     }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <div style={{ fontWeight: 600, minWidth: 0, flex: 1 }}>{t1.title}</div>
+                      <DuePill date={t1.due_date} overdue={isOverdue} today={isToday} t={t} />
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, color: 'var(--tax-muted)',
+                                   display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {cust && <span>{custName}</span>}
+                      {t1.product && (
+                        <span>· {pickI18n(t1.product.name_i18n, locale).value || t1.product.slug}</span>
+                      )}
+                      {t1.priority && t1.priority !== 'normal' && (
+                        <PriorityChip priority={t1.priority} t={t} />
+                      )}
+                    </div>
+                  </a>
+                </TaskHover>
               </li>
             );
           })}
