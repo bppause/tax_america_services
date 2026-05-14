@@ -1,15 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-
-// Path-based vertical routing: /tax/* renders the tax module (its own React tree,
-// own i18n, own CSS scope). Everything else stays on the Airbnb owners app.
-//
-// Both apps and the Airbnb-only `production-ui.css` are loaded via dynamic
-// import so the tax landing skips ~3000 lines of Kai-specific layout CSS that
-// would otherwise override `.tax-app` styling (header sticky/white, button
-// max-width clamps, etc).
-const isTaxRoute = window.location.pathname === '/tax' ||
-                   window.location.pathname.startsWith('/tax/');
+import TaxApp from './tax/TaxApp.jsx'
 
 class RootErrorBoundary extends React.Component {
   constructor(props) {
@@ -48,40 +39,6 @@ class RootErrorBoundary extends React.Component {
   }
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-
-async function boot() {
-  if (isTaxRoute) {
-    const { default: TaxApp } = await import('./tax/TaxApp.jsx');
-    root.render(
-      <React.StrictMode><RootErrorBoundary><TaxApp /></RootErrorBoundary></React.StrictMode>
-    );
-    return;
-  }
-
-  // Airbnb owners app path — load global CSS, App, and the v72 enhancer.
-  await import('./production-ui.css');
-  const [{ default: App }, { installAdminRegistrationAwareness }] = await Promise.all([
-    import('./App.jsx'),
-    import('./enhancers/adminRegistrationAwareness'),
-  ]);
-  root.render(
-    <React.StrictMode><RootErrorBoundary><App /></RootErrorBoundary></React.StrictMode>
-  );
-  try {
-    installAdminRegistrationAwareness()
-  } catch (e) {
-    console.warn('[KAI_V72_INIT_ERROR]', e)
-  }
-}
-
-boot().catch(err => {
-  console.error('[KAI_BOOT_ERROR]', err);
-  root.render(
-    <React.StrictMode>
-      <RootErrorBoundary>
-        <div />
-      </RootErrorBoundary>
-    </React.StrictMode>
-  );
-});
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode><RootErrorBoundary><TaxApp /></RootErrorBoundary></React.StrictMode>
+)
