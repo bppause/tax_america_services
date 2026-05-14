@@ -2662,3 +2662,10 @@ do $$ begin
 exception when undefined_table then
   raise notice 'storage.buckets table not available — create the tax-staff-photos bucket via Supabase Dashboard';
 end $$;
+
+-- Calendly integration. Per-community URL surfaced on the public landing
+-- page in a "Schedule a consultation" section. Empty string = section is
+-- hidden. Validated server-side to require the canonical calendly.com
+-- host so a typo can't embed an arbitrary site in the iframe.
+alter table public.communities
+  add column if not exists calendly_url text not null default '';
