@@ -446,6 +446,7 @@ module.exports = function createTaxRouter(deps) {
       .slice(0, 20);                                  // cap so we can't be flooded
     const productSlug = productSlugs[0] || '';
     const message = trim(body.message, MAX_TEXT_LEN);
+    const company = trim(body.company, 200);
     const preferredLocale = localeOf(body.locale);
     const userAgent = trim(req.get('user-agent') || '', 500);
     const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
@@ -475,6 +476,7 @@ module.exports = function createTaxRouter(deps) {
       first_name: nameParts.first,
       middle_name: nameParts.middle,
       last_name: nameParts.last,
+      company,
       product_slug: productSlug,
       product_slugs: productSlugs,
       message,
@@ -2890,7 +2892,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, created_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, company, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -2920,6 +2922,31 @@ module.exports = function createTaxRouter(deps) {
         const { data: cur } = await supabase.from('tax_leads')
           .select('contacted_at').eq('id', leadId).maybeSingle();
         if (cur && !cur.contacted_at) update.contacted_at = new Date().toISOString();
+      }
+      if (s === 'closed') {
+        update.closed_at = new Date().toISOString();
+        // Close-reason fields are required by the simplified flow but the
+        // server is permissive: an empty string falls through so admins
+        // can clear a stale reason if they re-close a lead.
+        if (body.closeReason !== undefined) {
+          update.close_reason = trim(body.closeReason, 80);
+        }
+        if (body.closeReasonNote !== undefined) {
+          update.close_reason_note = trim(body.closeReasonNote, MAX_TEXT_LEN);
+        }
+      } else {
+        // Re-opening or converting clears the close-reason fields so a
+        // stale "not interested" doesn't follow a customer around.
+        update.close_reason = '';
+        update.close_reason_note = '';
+        update.closed_at = null;
+      }
+    } else {
+      if (body.closeReason !== undefined) {
+        update.close_reason = trim(body.closeReason, 80);
+      }
+      if (body.closeReasonNote !== undefined) {
+        update.close_reason_note = trim(body.closeReasonNote, MAX_TEXT_LEN);
       }
     }
     if (body.notes !== undefined) update.notes = trim(body.notes, MAX_TEXT_LEN);

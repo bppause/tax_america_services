@@ -2010,6 +2010,16 @@ alter table public.tax_leads
 create index if not exists idx_tax_leads_converted_customer
   on public.tax_leads(converted_customer_id) where converted_customer_id is not null;
 
+-- Simplified lead-to-contact flow. `company` is captured on the public
+-- contact form (optional) so the owner has more context up front.
+-- `close_reason` (and free-text `close_reason_note`) is recorded when an
+-- owner closes a lead, so the practice can later see why leads were lost.
+alter table public.tax_leads
+  add column if not exists company text not null default '',
+  add column if not exists close_reason text not null default '',
+  add column if not exists close_reason_note text not null default '',
+  add column if not exists closed_at timestamptz;
+
 -- ─── Long-form service descriptions ───────────────────────────────────────────
 -- Surfaced in the service-detail modal when present. `description_i18n`
 -- stays as the short one-liner; this is the optional richer copy.

@@ -5,7 +5,14 @@ import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import { displayPersonName } from '../lib/personName';
 
-const STATUS_VALUES = ['new', 'contacted', 'converted', 'closed'];
+// Display statuses surface in the inbox. The DB still permits 'contacted'
+// for back-compat with legacy rows; we bucket those into "open" alongside
+// 'new' so a simplified UI flow (convert ↔ close) doesn't lose them.
+const STATUS_VALUES = ['new', 'converted', 'closed'];
+
+// Standard close-reason options. The "Other" bucket lets the owner write
+// a free-text note so a reason that isn't in the preset list isn't lost.
+const CLOSE_REASONS = ['not_interested', 'no_response', 'duplicate', 'out_of_scope', 'spam', 'other'];
 
 export default function OwnerLeads() {
   const { locale, t } = useT();
@@ -62,8 +69,6 @@ export default function OwnerLeads() {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
         {[
           { id: 'open',      labelKey: 'owner.leads.filter.open' },
-          { id: 'new',       labelKey: 'owner.leads.filter.new' },
-          { id: 'contacted', labelKey: 'owner.leads.filter.contacted' },
           { id: 'converted', labelKey: 'owner.leads.filter.converted' },
           { id: 'closed',    labelKey: 'owner.leads.filter.closed' },
           { id: 'all',       labelKey: 'owner.leads.filter.all' },
@@ -93,10 +98,15 @@ export default function OwnerLeads() {
 }
 
 function statusBadge(status) {
-  if (status === 'new')        return { bg: '#dbeafe', fg: '#1e40af' };
-  if (status === 'contacted')  return { bg: '#fef3c7', fg: '#92400e' };
-  if (status === 'converted')  return { bg: '#dcfce7', fg: '#166534' };
+  if (status === 'new' || status === 'contacted') return { bg: '#dbeafe', fg: '#1e40af' };
+  if (status === 'converted')                     return { bg: '#dcfce7', fg: '#166534' };
   return { bg: '#f3f4f6', fg: '#4b5563' };
+}
+
+function statusLabel(status, t) {
+  if (status === 'converted') return t('owner.leads.status.converted');
+  if (status === 'closed')    return t('owner.leads.status.closed');
+  return t('owner.leads.status.open');
 }
 
 function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, locale, t }) {
@@ -105,12 +115,16 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
+  // The close affordance opens an inline reason picker rather than
+  // closing immediately, so the owner is forced to record why this
+  // lead didn't pan out (the simplified flow is convert-or-close).
+  const [closing, setClosing] = useState(false);
   const b = statusBadge(lead.status);
 
-  const setStatus = async (next) => {
+  const setStatus = async (next, extra = {}) => {
     setBusy(true); setErr('');
     try {
-      await taxApi.adminUpdateLead(auth, lead.id, { status: next });
+      await taxApi.adminUpdateLead(auth, lead.id, { status: next, ...extra });
       onChange();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
@@ -138,10 +152,15 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
             {displayPersonName(lead) || lead.email}
+            {lead.company && (
+              <span style={{ marginLeft: 8, fontWeight: 500, color: 'var(--tax-muted)' }}>
+                · {lead.company}
+              </span>
+            )}
             <span style={{
               marginLeft: 8, padding: '1px 8px', borderRadius: 999,
               background: b.bg, color: b.fg, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-            }}>{lead.status}</span>
+            }}>{statusLabel(lead.status, t)}</span>
             {lead.preferred_locale && (
               <span style={{ marginLeft: 6, color: 'var(--tax-muted)', fontSize: 11 }}>
                 {lead.preferred_locale === 'en' ? 'EN' : 'ES'}
@@ -194,51 +213,69 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
             </button>
           </div>
 
+          {lead.status === 'closed' && (lead.close_reason || lead.close_reason_note) && (
+            <div style={{
+              marginBottom: 12, padding: 10, background: '#fff',
+              border: '1px solid var(--tax-border)', borderRadius: 8,
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
+                {t('owner.leads.closeReason.heading')}
+              </div>
+              <div style={{ fontSize: 14 }}>
+                {lead.close_reason
+                  ? t(`owner.leads.closeReason.${lead.close_reason}`, { _: lead.close_reason })
+                  : t('owner.leads.closeReason.other')}
+              </div>
+              {lead.close_reason_note && (
+                <div style={{ marginTop: 4, fontSize: 13, color: 'var(--tax-muted)', whiteSpace: 'pre-wrap' }}>
+                  {lead.close_reason_note}
+                </div>
+              )}
+            </div>
+          )}
+
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {lead.status === 'new' && (
-              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                      onClick={() => setStatus('contacted')} disabled={busy}>
-                {t('owner.leads.action.markContacted')}
-              </button>
-            )}
-            {lead.status !== 'converted' && (
-              <button type="button" onClick={onConvert} disabled={busy}
-                      className="tax-btn tax-btn--ghost tax-btn--sm"
-                      style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
-                {t('owner.leads.action.convert')}
-              </button>
-            )}
-            {lead.status === 'converted' && lead.converted_customer_id && (
-              <a href={`/tax/${communitySlug}/employee/customers/${encodeURIComponent(lead.converted_customer_id)}`}
-                 className="tax-btn tax-btn--ghost tax-btn--sm"
-                 style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
-                {t('owner.leads.action.viewCustomer')}
-              </a>
-            )}
-            {lead.status !== 'converted' && (
-              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                      onClick={() => setStatus('converted')} disabled={busy}
-                      style={{ color: 'var(--tax-text)' }}>
-                {t('owner.leads.action.markConverted')}
-              </button>
-            )}
-            {lead.status !== 'closed' && (
-              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                      onClick={() => setStatus('closed')} disabled={busy}
-                      style={{ color: 'var(--tax-muted)' }}>
-                {t('owner.leads.action.close')}
-              </button>
-            )}
-            {lead.status !== 'new' && lead.status !== 'converted' && (
-              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                      onClick={() => setStatus('new')} disabled={busy}
-                      style={{ color: 'var(--tax-muted)' }}>
-                {t('owner.leads.action.reopen')}
-              </button>
-            )}
-          </div>
+          {closing && (
+            <CloseReasonForm busy={busy} t={t}
+                             onCancel={() => setClosing(false)}
+                             onSubmit={async ({ reason, note }) => {
+                               await setStatus('closed', { closeReason: reason, closeReasonNote: note });
+                               setClosing(false);
+                             }} />
+          )}
+
+          {!closing && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {lead.status !== 'converted' && (
+                <button type="button" onClick={onConvert} disabled={busy}
+                        className="tax-btn tax-btn--primary tax-btn--sm">
+                  {t('owner.leads.action.convert')}
+                </button>
+              )}
+              {lead.status === 'converted' && lead.converted_customer_id && (
+                <a href={`/tax/${communitySlug}/employee/customers/${encodeURIComponent(lead.converted_customer_id)}`}
+                   className="tax-btn tax-btn--ghost tax-btn--sm"
+                   style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
+                  {t('owner.leads.action.viewCustomer')}
+                </a>
+              )}
+              {lead.status !== 'converted' && lead.status !== 'closed' && (
+                <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                        onClick={() => setClosing(true)} disabled={busy}
+                        style={{ color: 'var(--tax-muted)' }}>
+                  {t('owner.leads.action.close')}
+                </button>
+              )}
+              {lead.status === 'closed' && (
+                <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                        onClick={() => setStatus('new')} disabled={busy}
+                        style={{ color: 'var(--tax-muted)' }}>
+                  {t('owner.leads.action.reopen')}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
       {convertOpen && (
@@ -378,5 +415,84 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
         </form>
       </div>
     </div>
+  );
+}
+
+// Inline reason picker shown when the owner clicks Close. Forces a
+// reason selection so we have a record of why this lead didn't convert.
+// "Other" turns the note field required-ish on the client; the server
+// stores whatever comes through but the standard set keeps the data tidy.
+function CloseReasonForm({ busy, t, onCancel, onSubmit }) {
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const requireNote = reason === 'other';
+  const canSubmit = !!reason && (!requireNote || note.trim().length > 0);
+
+  const submit = (e) => {
+    e?.preventDefault?.();
+    if (!canSubmit || busy) return;
+    onSubmit({ reason, note: note.trim() });
+  };
+
+  return (
+    <form onSubmit={submit} style={{
+      marginBottom: 12, padding: 12, background: '#fff',
+      border: '1px solid var(--tax-border)', borderRadius: 8,
+      display: 'grid', gap: 10,
+    }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+        {t('owner.leads.closeReason.prompt')}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {CLOSE_REASONS.map(r => {
+          const active = reason === r;
+          return (
+            <button key={r} type="button"
+                    onClick={() => setReason(r)}
+                    disabled={busy}
+                    style={{
+                      padding: '4px 12px', borderRadius: 999,
+                      background: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                        : '#fff',
+                      color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                      border: '1px solid',
+                      borderColor: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                        : 'var(--tax-border)',
+                      fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                    }}>
+              {t(`owner.leads.closeReason.${r}`)}
+            </button>
+          );
+        })}
+      </div>
+      <div>
+        <label htmlFor="lead-close-note" style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {requireNote
+            ? t('owner.leads.closeReason.noteRequired')
+            : t('owner.leads.closeReason.noteOptional')}
+        </label>
+        <textarea id="lead-close-note" rows={2} value={note}
+                  onChange={e => setNote(e.target.value)} maxLength={4000}
+                  disabled={busy}
+                  style={{
+                    width: '100%', padding: 8, marginTop: 4,
+                    border: '1px solid var(--tax-border)', borderRadius: 6,
+                    font: 'inherit', fontSize: 13,
+                  }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm"
+                disabled={!canSubmit || busy}>
+          {busy ? t('lead.submitting') : t('owner.leads.closeReason.confirm')}
+        </button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                onClick={onCancel} disabled={busy}
+                style={{ color: 'var(--tax-text)' }}>
+          {t('preview.close')}
+        </button>
+      </div>
+    </form>
   );
 }
