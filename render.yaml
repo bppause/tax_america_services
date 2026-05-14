@@ -1,9 +1,9 @@
 services:
   - type: web
-    name: airbnb-property-issue-management
+    name: tax-america-services
     env: node
     plan: free
-    buildCommand: npm install && node_modules/.bin/vite build client
+    buildCommand: npm install && cd client && npm install && npm run build
     startCommand: node server.js
     envVars:
       - key: NODE_VERSION
