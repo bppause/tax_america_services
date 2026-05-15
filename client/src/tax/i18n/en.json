@@ -1428,8 +1428,6 @@
   "owner.settings.community.defaultLocale": "Default language",
   "owner.settings.copy.title": "Landing page copy",
   "owner.settings.copy.subtitle": "Edit headings, button labels, and helper text on your public landing page in English and Spanish. Every field starts with the current copy already filled in — just change what you want. Use \"Reset to default\" on any customized row to revert.",
-  "owner.settings.copy.langEn": "English",
-  "owner.settings.copy.langEs": "Spanish",
   "owner.settings.copy.customizedBadge": "Customized",
   "owner.settings.copy.resetField": "Reset to default",
   "owner.settings.copy.save": "Save landing copy",
