@@ -1,50 +1,33 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 
-// Canonical group order. Categories not in this list slot in after the
-// known ones under the "other" bucket so the form never silently hides a
-// service the owner has configured.
-const CATEGORY_ORDER = ['tax_prep', 'recurring', 'one_off', 'custom'];
-
+// Public-site lead form. Optimized for a low-friction conversion:
+// one name field, email + phone in a row, a row of service chips
+// (no category headings), and an optional message. The server still
+// supports the older firstName/middleName/lastName shape but we send
+// a single `name` here — fewer fields = higher completion rate.
 export default function LeadForm({ community, products, initialProductSlug }) {
   const { locale, t } = useT();
-
-  // Group services by category, preserving the owner-defined display_order
-  // inside each group. Caller already sorts `products` by display_order.
-  const groups = useMemo(() => {
-    const buckets = new Map();
-    for (const p of products || []) {
-      const cat = CATEGORY_ORDER.includes(p.category) ? p.category : 'other';
-      if (!buckets.has(cat)) buckets.set(cat, []);
-      buckets.get(cat).push(p);
-    }
-    const ordered = [];
-    for (const cat of [...CATEGORY_ORDER, 'other']) {
-      if (buckets.has(cat)) ordered.push({ cat, items: buckets.get(cat) });
-    }
-    return ordered;
-  }, [products]);
-  // Phase 4n.12: multi-select services. `productSlugs` is the live state;
-  // submitted as an array. Submission still degrades gracefully if a future
-  // client/server pair forgets to send the array (server falls back to the
-  // legacy `productSlug` body field).
   const [form, setForm] = useState({
-    firstName: '', middleName: '', lastName: '',
-    email: '', phone: '', company: '', productSlugs: [], message: '', website: '',
+    name: '', email: '', phone: '', company: '',
+    productSlugs: [], message: '', website: '',
   });
   const [status, setStatus] = useState({ kind: 'idle', message: '' });
 
-  // When the visitor clicks "Request this service" inside a card's modal,
-  // Landing passes the slug down here. Add it to the selection (don't
-  // replace — they may already have picked others) and flash a soft
-  // highlight so they can see what changed when they land at the form.
+  // When the visitor clicked "Request this service" on a service card,
+  // Landing forwards the slug here. Add it to the selection (don't
+  // replace — they may already have picked others).
   useEffect(() => {
     if (!initialProductSlug) return;
     setForm(f => f.productSlugs.includes(initialProductSlug)
       ? f
       : { ...f, productSlugs: [...f.productSlugs, initialProductSlug] });
   }, [initialProductSlug]);
+
+  // Display order is already established by the parent (community feed
+  // returns them sorted). Filter to enabled products only.
+  const visibleProducts = (products || []).filter(p => p.enabled !== false);
 
   const onChange = (e) => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
 
@@ -62,9 +45,7 @@ export default function LeadForm({ community, products, initialProductSlug }) {
     try {
       await taxApi.submitLead({
         communitySlug: community.id,
-        firstName: form.firstName,
-        middleName: form.middleName,
-        lastName: form.lastName,
+        name: form.name,
         email: form.email,
         phone: form.phone,
         company: form.company,
@@ -74,7 +55,8 @@ export default function LeadForm({ community, products, initialProductSlug }) {
         website: form.website,
       });
       setStatus({ kind: 'success', message: '' });
-      setForm({ firstName: '', middleName: '', lastName: '', email: '', phone: '', company: '', productSlugs: [], message: '', website: '' });
+      setForm({ name: '', email: '', phone: '', company: '',
+                productSlugs: [], message: '', website: '' });
     } catch (err) {
       const isNetwork = !err?.status;
       setStatus({
@@ -97,22 +79,10 @@ export default function LeadForm({ community, products, initialProductSlug }) {
 
   return (
     <form className="tax-form" onSubmit={onSubmit} noValidate>
-      <div className="tax-form__row3">
-        <div>
-          <label htmlFor="lead-first">{t('lead.field.firstName')}</label>
-          <input id="lead-first" name="firstName" type="text" required autoComplete="given-name"
-                 value={form.firstName} onChange={onChange} maxLength={80} />
-        </div>
-        <div>
-          <label htmlFor="lead-middle">{t('lead.field.middleName')}</label>
-          <input id="lead-middle" name="middleName" type="text" autoComplete="additional-name"
-                 value={form.middleName} onChange={onChange} maxLength={80} />
-        </div>
-        <div>
-          <label htmlFor="lead-last">{t('lead.field.lastName')}</label>
-          <input id="lead-last" name="lastName" type="text" required autoComplete="family-name"
-                 value={form.lastName} onChange={onChange} maxLength={80} />
-        </div>
+      <div>
+        <label htmlFor="lead-name">{t('lead.field.fullName')}</label>
+        <input id="lead-name" name="name" type="text" required autoComplete="name"
+               value={form.name} onChange={onChange} maxLength={200} />
       </div>
       <div className="tax-form__row2">
         <div>
@@ -132,51 +102,48 @@ export default function LeadForm({ community, products, initialProductSlug }) {
                placeholder={t('lead.field.company.placeholder')}
                value={form.company} onChange={onChange} maxLength={200} />
       </div>
-      <div>
-        <label>{t('lead.field.services')}</label>
-        <p style={{ margin: '4px 0 8px', fontSize: 13, color: 'var(--tax-muted)' }}>
-          {t('lead.field.services.hint')}
-        </p>
-        <div role="group" aria-label={t('lead.field.services')}
-             style={{ display: 'grid', gap: 16 }}>
-          {groups.map(g => (
-            <div key={g.cat}>
-              <div style={{
-                fontSize: 12, textTransform: 'uppercase', letterSpacing: '.06em',
-                color: 'var(--tax-muted)', fontWeight: 700, marginBottom: 8,
-              }}>
-                {t(`lead.field.services.cat.${g.cat}`)}
-              </div>
-              <div style={{ display: 'grid', gap: 6 }}>
-                {g.items.map(p => {
-                  const label = pickI18n(p.name_i18n, locale).value || p.slug;
-                  const desc  = pickI18n(p.description_i18n, locale).value || '';
-                  const checked = form.productSlugs.includes(p.slug);
-                  return (
-                    <label key={p.id} style={{
-                      display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
-                      padding: '10px 12px', border: '1px solid var(--tax-border)', borderRadius: 8,
-                      background: checked ? 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)' : 'transparent',
-                    }}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleService(p.slug)}
-                             style={{ marginTop: 3 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 600 }}>{label}</div>
-                        {desc && (
-                          <div style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 2 }}>{desc}</div>
-                        )}
-                      </div>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+
+      {visibleProducts.length > 0 && (
+        <div>
+          <label>{t('lead.field.services')}</label>
+          <p style={{ margin: '4px 0 8px', fontSize: 12, color: 'var(--tax-muted)' }}>
+            {t('lead.field.services.hint')}
+          </p>
+          <div role="group" aria-label={t('lead.field.services')}
+               style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {visibleProducts.map(p => {
+              const label = pickI18n(p.name_i18n, locale).value || p.slug;
+              const desc  = pickI18n(p.description_i18n, locale).value || '';
+              const checked = form.productSlugs.includes(p.slug);
+              return (
+                <button key={p.id} type="button"
+                        onClick={() => toggleService(p.slug)}
+                        aria-pressed={checked}
+                        title={desc || undefined}
+                        style={{
+                          padding: '6px 12px', borderRadius: 999,
+                          background: checked
+                            ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                            : '#fff',
+                          color: checked ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                          border: '1px solid',
+                          borderColor: checked
+                            ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                            : 'var(--tax-border)',
+                          fontSize: 13, fontWeight: checked ? 700 : 500,
+                          cursor: 'pointer', whiteSpace: 'nowrap',
+                        }}>
+                  {checked ? '✓ ' : '+ '}{label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
+
       <div>
         <label htmlFor="lead-message">{t('lead.field.message')}</label>
-        <textarea id="lead-message" name="message" rows={5}
+        <textarea id="lead-message" name="message" rows={3}
                   placeholder={t('lead.field.message.placeholder')}
                   value={form.message} onChange={onChange} />
       </div>
