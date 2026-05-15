@@ -1,6 +1,7 @@
 import { useT } from '../i18n';
 import LeadForm from './LeadForm';
 import { useCalendlyPopup } from './CalendlySection';
+import { useLandingCopy } from '../lib/landingCopy';
 
 // Address used for two purposes:
 //   1. Plaintext on the contact card.
@@ -22,6 +23,7 @@ function waDigits(raw) {
 
 export default function Contact({ community, products, initialProductSlug }) {
   const { locale, t } = useT();
+  const { pick } = useLandingCopy();
   const address = buildAddress(community);
   const mapQuery = buildMapQuery(community);
   const hasMap = !!mapQuery;
@@ -52,8 +54,8 @@ export default function Contact({ community, products, initialProductSlug }) {
   return (
     <section className="tax-section tax-section--alt" id="contact">
       <div className="tax-container">
-        <h2>{t('getStarted.heading')}</h2>
-        <p className="tax-section__lede">{t('getStarted.subheading')}</p>
+        <h2>{pick('getStarted.heading')}</h2>
+        <p className="tax-section__lede">{pick('getStarted.subheading')}</p>
 
         {/* Two parallel paths to action when Calendly is configured.
             Without it the lead form keeps the legacy two-column
@@ -63,17 +65,17 @@ export default function Contact({ community, products, initialProductSlug }) {
             <div className="tax-twopath">
               <article className="tax-twopath__card">
                 <div className="tax-twopath__icon" aria-hidden="true">📅</div>
-                <h3 className="tax-twopath__title">{t('getStarted.scheduleHeading')}</h3>
-                <p className="tax-twopath__body">{t('getStarted.scheduleBody')}</p>
+                <h3 className="tax-twopath__title">{pick('getStarted.scheduleHeading')}</h3>
+                <p className="tax-twopath__body">{pick('getStarted.scheduleBody')}</p>
                 <button type="button" className="tax-btn tax-btn--primary tax-btn--block"
                         onClick={openCalendly}>
-                  {t('landing.calendly.cta')}
+                  {pick('landing.calendly.cta')}
                 </button>
               </article>
               <article className="tax-twopath__card">
                 <div className="tax-twopath__icon" aria-hidden="true">✉️</div>
-                <h3 className="tax-twopath__title">{t('getStarted.messageHeading')}</h3>
-                <p className="tax-twopath__body">{t('getStarted.messageBody')}</p>
+                <h3 className="tax-twopath__title">{pick('getStarted.messageHeading')}</h3>
+                <p className="tax-twopath__body">{pick('getStarted.messageBody')}</p>
                 <LeadForm community={community} products={products}
                           initialProductSlug={initialProductSlug} />
               </article>

@@ -10,6 +10,7 @@ import ArticlesSection from '../components/ArticlesSection';
 import About from '../components/About';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
+import { LandingCopyProvider } from '../lib/landingCopy';
 
 // Sets <head> meta for SEO + social previews. Best-effort from JS — non-JS
 // crawlers (legacy Facebook/LinkedIn) won't see these. Server-side rendering
@@ -116,17 +117,19 @@ export default function Landing({ communitySlug }) {
   };
 
   return (
-    <div className="tax-app" style={brandStyle}>
-      <Header community={community} sections={sections} />
-      <Hero community={community} />
-      <ServicesGrid products={products} onRequestService={onRequestService} />
-      <TeamSection communitySlug={communitySlug} />
-      <ArticlesSection communitySlug={communitySlug} />
-      <FaqsSection communitySlug={communitySlug} />
-      <About />
-      <Contact community={community} products={products}
-               initialProductSlug={pendingService} />
-      <Footer community={community} />
-    </div>
+    <LandingCopyProvider community={community}>
+      <div className="tax-app" style={brandStyle}>
+        <Header community={community} sections={sections} />
+        <Hero community={community} />
+        <ServicesGrid products={products} onRequestService={onRequestService} />
+        <TeamSection communitySlug={communitySlug} />
+        <ArticlesSection communitySlug={communitySlug} />
+        <FaqsSection communitySlug={communitySlug} />
+        <About />
+        <Contact community={community} products={products}
+                 initialProductSlug={pendingService} />
+        <Footer community={community} />
+      </div>
+    </LandingCopyProvider>
   );
 }

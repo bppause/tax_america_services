@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 import { displayPersonName } from '../lib/personName';
+import { useLandingCopy } from '../lib/landingCopy';
 
 // Meet-the-team section on the public landing page. Renders only the
 // employees the owner has opted into the homepage (show_on_homepage =
@@ -9,6 +10,7 @@ import { displayPersonName } from '../lib/personName';
 // the landing tidy on fresh communities.
 export default function TeamSection({ communitySlug }) {
   const { locale, t } = useT();
+  const { pick } = useLandingCopy();
   const [members, setMembers] = useState(null);
 
   useEffect(() => {
@@ -25,8 +27,8 @@ export default function TeamSection({ communitySlug }) {
   return (
     <section className="tax-section" id="team">
       <div className="tax-container">
-        <h2>{t('landing.team.heading')}</h2>
-        <p className="tax-section__lede">{t('landing.team.subheading')}</p>
+        <h2>{pick('landing.team.heading')}</h2>
+        <p className="tax-section__lede">{pick('landing.team.subheading')}</p>
 
         <div style={{
           display: 'grid', gap: 18, marginTop: 18,

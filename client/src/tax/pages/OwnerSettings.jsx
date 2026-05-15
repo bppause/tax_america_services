@@ -345,6 +345,9 @@ export default function OwnerSettings() {
 
       <CommunityContactSection settings={settings} auth={auth} community={community}
                                t={t} onSaved={load} />
+
+      <LandingCopySection settings={settings} auth={auth} community={community}
+                          t={t} onSaved={load} />
     </EmployeeShell>
   );
 }
@@ -1010,5 +1013,189 @@ function ColorGroup({ heading, subheading, buckets, labelKey, defaults, override
         })}
       </div>
     </div>
+  );
+}
+
+// Editable copy for the public landing page. JSONB blob on the community
+// row keyed by the same i18n keys the landing components otherwise read
+// from the bundled translations. Grouped by section, each group is its
+// own nested collapsible card so the owner can focus on one area at a
+// time. Empty inputs clear the override (fall back to platform default).
+const LANDING_COPY_GROUPS = [
+  {
+    key: 'hero', titleKey: 'owner.settings.copy.group.hero',
+    fields: [
+      { key: 'hero.subtitle', labelKey: 'owner.settings.copy.field.heroSubtitle', multiline: true },
+      { key: 'hero.cta_book', labelKey: 'owner.settings.copy.field.heroCtaBook' },
+      { key: 'hero.cta_primary', labelKey: 'owner.settings.copy.field.heroCtaPrimary' },
+      { key: 'hero.cta_secondary', labelKey: 'owner.settings.copy.field.heroCtaSecondary' },
+    ],
+  },
+  {
+    key: 'getStarted', titleKey: 'owner.settings.copy.group.getStarted',
+    fields: [
+      { key: 'getStarted.heading', labelKey: 'owner.settings.copy.field.gsHeading' },
+      { key: 'getStarted.subheading', labelKey: 'owner.settings.copy.field.gsSubheading', multiline: true },
+      { key: 'getStarted.scheduleHeading', labelKey: 'owner.settings.copy.field.gsScheduleHeading' },
+      { key: 'getStarted.scheduleBody', labelKey: 'owner.settings.copy.field.gsScheduleBody', multiline: true },
+      { key: 'landing.calendly.cta', labelKey: 'owner.settings.copy.field.gsScheduleCta' },
+      { key: 'getStarted.messageHeading', labelKey: 'owner.settings.copy.field.gsMessageHeading' },
+      { key: 'getStarted.messageBody', labelKey: 'owner.settings.copy.field.gsMessageBody', multiline: true },
+    ],
+  },
+  {
+    key: 'sections', titleKey: 'owner.settings.copy.group.sections',
+    fields: [
+      { key: 'services.heading', labelKey: 'owner.settings.copy.field.servicesHeading' },
+      { key: 'services.subheading', labelKey: 'owner.settings.copy.field.servicesSubheading', multiline: true },
+      { key: 'landing.team.heading', labelKey: 'owner.settings.copy.field.teamHeading' },
+      { key: 'landing.team.subheading', labelKey: 'owner.settings.copy.field.teamSubheading', multiline: true },
+      { key: 'landing.articles.heading', labelKey: 'owner.settings.copy.field.articlesHeading' },
+      { key: 'landing.articles.subheading', labelKey: 'owner.settings.copy.field.articlesSubheading', multiline: true },
+      { key: 'landing.faqs.heading', labelKey: 'owner.settings.copy.field.faqsHeading' },
+      { key: 'landing.faqs.subheading', labelKey: 'owner.settings.copy.field.faqsSubheading', multiline: true },
+    ],
+  },
+  {
+    key: 'about', titleKey: 'owner.settings.copy.group.about',
+    fields: [
+      { key: 'about.heading', labelKey: 'owner.settings.copy.field.aboutHeading' },
+      { key: 'about.body', labelKey: 'owner.settings.copy.field.aboutBody', multiline: true },
+    ],
+  },
+];
+
+function LandingCopySection({ settings, auth, community, t, onSaved }) {
+  const initial = () => settings?.landing_copy_i18n || {};
+  const [draft, setDraft] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  useEffect(() => { setDraft(initial()); }, [settings]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const set = (key, lang, value) => setDraft(prev => {
+    const next = { ...prev };
+    const cur = { ...(next[key] || {}) };
+    cur[lang] = value;
+    if (!String(cur.en || '').trim() && !String(cur.es || '').trim()) {
+      delete next[key];
+    } else {
+      next[key] = cur;
+    }
+    return next;
+  });
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(settings?.landing_copy_i18n || {});
+
+  const onSave = async () => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminUpdateLandingCopy(auth, {
+        communitySlug: community.id, copy: draft,
+      });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      onSaved && onSaved();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
+  const onReset = () => setDraft(settings?.landing_copy_i18n || {});
+
+  return (
+    <CollapsibleSection
+      storageKey="landingCopy"
+      defaultOpen={false}
+      title={t('owner.settings.copy.title')}
+      subtitle={t('owner.settings.copy.subtitle')}>
+      {msg.text && (
+        <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginBottom: 12 }}>{msg.text}</div>
+      )}
+      <div style={{ display: 'grid', gap: 10 }}>
+        {LANDING_COPY_GROUPS.map(group => (
+          <CollapsibleSection
+            key={group.key}
+            storageKey={`landingCopy.${group.key}`}
+            defaultOpen={false}
+            title={t(group.titleKey)}>
+            <div style={{ display: 'grid', gap: 14 }}>
+              {group.fields.map(field => {
+                const fallback = t(field.key);
+                const cur = draft[field.key] || {};
+                return (
+                  <div key={field.key} style={{
+                    padding: 12, borderRadius: 8,
+                    border: '1px solid var(--tax-border)', background: '#fff',
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                      {t(field.labelKey, { _: field.key })}
+                    </div>
+                    <div style={{
+                      fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8,
+                      fontStyle: 'italic',
+                    }}>
+                      {t('owner.settings.copy.defaultLabel')}: {fallback}
+                    </div>
+                    <div style={{ display: 'grid', gap: 8,
+                                  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+                      <CopyInput lang="en"
+                        labelKey="owner.settings.copy.langEn"
+                        value={cur.en || ''}
+                        multiline={field.multiline}
+                        placeholder={fallback}
+                        disabled={busy} t={t}
+                        onChange={(v) => set(field.key, 'en', v)} />
+                      <CopyInput lang="es"
+                        labelKey="owner.settings.copy.langEs"
+                        value={cur.es || ''}
+                        multiline={field.multiline}
+                        placeholder={fallback}
+                        disabled={busy} t={t}
+                        onChange={(v) => set(field.key, 'es', v)} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CollapsibleSection>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                disabled={!dirty || busy} onClick={onSave}>
+          {busy ? t('lead.submitting') : t('owner.settings.copy.save')}
+        </button>
+        {dirty && (
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  disabled={busy} onClick={onReset} style={{ color: 'var(--tax-text)' }}>
+            {t('owner.settings.copy.discard')}
+          </button>
+        )}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+function CopyInput({ lang, labelKey, value, onChange, multiline, placeholder, disabled, t }) {
+  const Field = multiline ? 'textarea' : 'input';
+  return (
+    <label style={{ display: 'block' }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                     textTransform: 'uppercase', letterSpacing: '.04em' }}>
+        {t(labelKey, { _: lang })}
+      </span>
+      <Field type={multiline ? undefined : 'text'}
+             value={value}
+             onChange={(e) => onChange(e.target.value)}
+             placeholder={placeholder}
+             disabled={disabled}
+             rows={multiline ? 3 : undefined}
+             maxLength={800}
+             style={{
+               width: '100%', marginTop: 4, padding: 8,
+               border: '1px solid var(--tax-border)', borderRadius: 6,
+               font: 'inherit', fontSize: 13, resize: multiline ? 'vertical' : 'none',
+             }} />
+    </label>
   );
 }

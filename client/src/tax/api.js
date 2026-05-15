@@ -221,6 +221,7 @@ export const taxApi = {
   adminCloneWorkflowTemplate(auth, templateId, payload) { return request('POST', `/admin/workflow-templates/${encodeURIComponent(templateId)}/clone`, payload, auth, { admin: true }); },
   adminGetWorkflowAudit(auth, ruleId, limit = 20) { return request('GET', `/admin/workflows/${encodeURIComponent(ruleId)}/audit?limit=${limit}`, undefined, auth, { admin: true }); },
   adminUpdateCommunityContact(auth, payload) { return request('PUT', '/admin/community-settings/contact', payload, auth, { admin: true }); },
+  adminUpdateLandingCopy(auth, payload) { return request('PUT', '/admin/community-settings/landing-copy', payload, auth, { admin: true }); },
   adminPromoteCustomerToStaff(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/promote-to-staff`, payload, auth, { admin: true }); },
   adminSetCustomerStatus(auth, customerId, payload) { return request('PUT', `/admin/customers/${encodeURIComponent(customerId)}/status`, payload, auth, { admin: true }); },
   // Customer notes — admin-scoped routes; auth headers are admin headers.

@@ -2669,3 +2669,13 @@ end $$;
 -- host so a typo can't embed an arbitrary site in the iframe.
 alter table public.communities
   add column if not exists calendly_url text not null default '';
+
+-- Owner-customizable copy for the public landing page. JSONB shape:
+--   { "<i18n.key>": { "en": "...", "es": "..." }, ... }
+-- Empty / missing values fall back to the platform i18n defaults so the
+-- column is additive — leaving it as {} preserves the current behavior.
+-- Allowlist of editable keys is enforced server-side; the public
+-- GET /community/:slug returns the column verbatim so the client can
+-- merge with its bundled translations.
+alter table public.communities
+  add column if not exists landing_copy_i18n jsonb not null default '{}'::jsonb;

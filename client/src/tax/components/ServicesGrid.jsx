@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import VideoEmbed from './VideoEmbed';
+import { useLandingCopy } from '../lib/landingCopy';
 
 const ICON_LETTER = {
   receipt: 'IR', briefcase: 'BT', 'id-card': 'ID', book: 'BK', wallet: 'PR',
@@ -15,6 +16,7 @@ const ICON_LETTER = {
 // the landing page stays scannable.
 export default function ServicesGrid({ products, onRequestService }) {
   const { locale, t } = useT();
+  const { pick } = useLandingCopy();
   const [openId, setOpenId] = useState(null);
   const open = products.find(p => p.id === openId) || null;
 
@@ -26,8 +28,8 @@ export default function ServicesGrid({ products, onRequestService }) {
   return (
     <section className="tax-section" id="services">
       <div className="tax-container">
-        <h2>{t('services.heading')}</h2>
-        <p className="tax-section__lede">{t('services.subheading')}</p>
+        <h2>{pick('services.heading')}</h2>
+        <p className="tax-section__lede">{pick('services.subheading')}</p>
         <div className="tax-services-grid">
           {products.map(p => {
             const name = pickI18n(p.name_i18n, locale).value;

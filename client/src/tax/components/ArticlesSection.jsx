@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 import VideoEmbed from './VideoEmbed';
+import { useLandingCopy } from '../lib/landingCopy';
 
 // Public articles section on the landing page. Defaults to a preview
 // (top 3) with a "Read all articles" link to a dedicated index page.
@@ -9,6 +10,7 @@ import VideoEmbed from './VideoEmbed';
 // /tax/:slug/articles uses.
 export default function ArticlesSection({ communitySlug, mode = 'preview', max = 3 }) {
   const { locale, t } = useT();
+  const { pick } = useLandingCopy();
   const [articles, setArticles] = useState(null);
   const [openId, setOpenId] = useState(null);
 
@@ -29,8 +31,8 @@ export default function ArticlesSection({ communitySlug, mode = 'preview', max =
   return (
     <section className="tax-section" id="articles">
       <div className="tax-container">
-        <h2>{t('landing.articles.heading')}</h2>
-        <p className="tax-section__lede">{t('landing.articles.subheading')}</p>
+        <h2>{pick('landing.articles.heading')}</h2>
+        <p className="tax-section__lede">{pick('landing.articles.subheading')}</p>
 
         <div style={{ display: 'grid', gap: 12, marginTop: 18 }}>
           {visible.map(a => {
