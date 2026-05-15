@@ -125,6 +125,92 @@ export default function OwnerCustomers() {
     setRelationshipFilter(prev =>
       prev.includes(typeId) ? prev.filter(id => id !== typeId) : [...prev, typeId]);
 
+  // Sort controls. Default = last name ascending (the common phone-book
+  // ordering owners expect when scanning a customer roster). Owner can
+  // flip to first-name sort, and reverse direction either way. Choice
+  // persists in localStorage so the next visit honors their preference.
+  const [sortBy, setSortBy] = useState(() => {
+    try {
+      const s = localStorage.getItem('tax.customers.sortBy');
+      if (s === 'firstName' || s === 'lastName') return s;
+    } catch { /* ignore */ }
+    return 'lastName';
+  });
+  const [sortDir, setSortDir] = useState(() => {
+    try {
+      const s = localStorage.getItem('tax.customers.sortDir');
+      if (s === 'asc' || s === 'desc') return s;
+    } catch { /* ignore */ }
+    return 'asc';
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tax.customers.sortBy', sortBy); }
+    catch { /* ignore */ }
+  }, [sortBy]);
+  useEffect(() => {
+    try { localStorage.setItem('tax.customers.sortDir', sortDir); }
+    catch { /* ignore */ }
+  }, [sortDir]);
+
+  // Alphabetic letter grouping. The letter we bucket by follows the
+  // current sort key — sort by last name → group by first letter of
+  // last name; sort by first name → group by first letter of first
+  // name. Search dissolves the grouping (flat results scan faster).
+  const [collapsedLetters, setCollapsedLetters] = useState(() => new Set());
+  const toggleLetter = (letter) => setCollapsedLetters(prev => {
+    const next = new Set(prev);
+    if (next.has(letter)) next.delete(letter); else next.add(letter);
+    return next;
+  });
+  // Reset collapse state when the sort key flips so a customer who was
+  // hiding under "Z" by last name doesn't end up hidden under a stale
+  // letter when they switch to first-name sort.
+  useEffect(() => { setCollapsedLetters(new Set()); }, [sortBy]);
+
+  // The string we sort + bucket by, per customer. Falls through to
+  // whichever name part is populated, and finally to the email so
+  // freshly-imported rows with no name parts still slot in somewhere
+  // visible instead of disappearing into a "—" group.
+  const sortKeyOf = (c) => {
+    const primary = sortBy === 'firstName'
+      ? (c.first_name || c.last_name || c.name || c.email || '')
+      : (c.last_name  || c.first_name || c.name || c.email || '');
+    return String(primary).trim().toLowerCase();
+  };
+  const bucketLetterOf = (c) => {
+    const first = sortKeyOf(c).charAt(0).toUpperCase();
+    return /[A-Z]/.test(first) ? first : '#';
+  };
+
+  // Sort + group the customers list. Search active → flat results,
+  // group headers off (the customer hunting for a name doesn't need
+  // to expand "M" to find Maria).
+  const grouping = useMemo(() => {
+    const rows = (customers || []).slice();
+    rows.sort((a, b) => {
+      const cmp = sortKeyOf(a).localeCompare(sortKeyOf(b));
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    if (search) return { mode: 'flat', rows };
+    const map = new Map();
+    for (const c of rows) {
+      const l = bucketLetterOf(c);
+      if (!map.has(l)) map.set(l, []);
+      map.get(l).push(c);
+    }
+    // # (digits / symbols) always sorts after letters, regardless of
+    // direction, to keep the natural alphabetical look.
+    const sections = Array.from(map.entries())
+      .sort(([a], [b]) => {
+        if (a === '#') return 1;
+        if (b === '#') return -1;
+        return sortDir === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
+      })
+      .map(([letter, rows]) => ({ letter, rows }));
+    return { mode: 'grouped', sections };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customers, sortBy, sortDir, search]);
+
   const onAdd = async (e) => {
     e.preventDefault();
     if (!form.email.trim()) { setAddMsg({ kind: 'error', text: t('owner.customers.errEmailRequired') }); return; }
@@ -415,55 +501,168 @@ export default function OwnerCustomers() {
                 ? t('owner.customers.noMatch')
                 : t('owner.customers.empty')}
             </p>
-          : <div style={{ display: 'grid', gap: 8, opacity: loading ? 0.6 : 1 }}>
-              {customers.map(c => (
-                <a key={c.id} href={`${base}/${encodeURIComponent(c.id)}`}
-                   className="tax-contact-item" style={{ textDecoration: 'none', color: 'inherit' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 600 }}>
-                        {displayPersonName(c) || c.email}
-                        <HealthChip health={c.health} t={t} />
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 2 }}>
-                        {c.email}
-                        {c.phone ? ` • ${c.phone}` : ''}
-                        {c.whatsapp ? ` • WhatsApp ${c.whatsapp}` : ''}
-                      </div>
-                      {/* Address summary — first line + city when available */}
-                      {(c.address?.line1 || c.address?.city) && (
-                        <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-                          {[c.address.line1, c.address.city, c.address.state].filter(Boolean).join(', ')}
-                        </div>
-                      )}
-                      {/* Relationship chips */}
-                      {Array.isArray(c.relationships) && c.relationships.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-                          {c.relationships.map(r => (
-                            <span key={r.relationship_type_id} style={{
-                              padding: '1px 8px', borderRadius: 999,
-                              background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
-                              color: 'var(--tax-brand-primary)',
-                              border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 18%, #fff)',
-                              fontSize: 11, fontWeight: 600,
-                            }}>
-                              {pickI18n(r.type?.name_i18n, locale).value || r.relationship_type_id}
+          : <>
+              <CustomerSortBar sortBy={sortBy} setSortBy={setSortBy}
+                               sortDir={sortDir} setSortDir={setSortDir}
+                               grouping={grouping} t={t}
+                               onCollapseAll={() =>
+                                 grouping.mode === 'grouped' &&
+                                 setCollapsedLetters(new Set(grouping.sections.map(s => s.letter)))}
+                               onExpandAll={() => setCollapsedLetters(new Set())} />
+              <div style={{ display: 'grid', gap: 14, opacity: loading ? 0.6 : 1 }}>
+                {grouping.mode === 'flat'
+                  ? grouping.rows.map(c =>
+                      <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t} />)
+                  : grouping.sections.map(({ letter, rows }) => {
+                      const collapsed = collapsedLetters.has(letter);
+                      return (
+                        <div key={letter} style={{ display: 'grid', gap: 6 }}>
+                          <button type="button"
+                                  onClick={() => toggleLetter(letter)}
+                                  aria-expanded={!collapsed}
+                                  style={{
+                                    position: 'sticky', top: 0, zIndex: 1,
+                                    display: 'flex', alignItems: 'center', gap: 8,
+                                    width: '100%', textAlign: 'left',
+                                    padding: '4px 0', border: 0,
+                                    background: 'rgba(255,255,255,.96)', cursor: 'pointer',
+                                    fontSize: 12, fontWeight: 700, color: 'var(--tax-muted)',
+                                    letterSpacing: '.5px',
+                                  }}>
+                            <span style={{
+                              display: 'inline-block', transition: 'transform .15s ease',
+                              transform: collapsed ? 'rotate(0deg)' : 'rotate(90deg)',
+                              fontSize: 10,
+                            }}>▶</span>
+                            <span>{letter}</span>
+                            <span style={{ color: 'var(--tax-muted)', fontWeight: 500 }}>
+                              ({rows.length})
                             </span>
-                          ))}
+                          </button>
+                          {!collapsed && rows.map(c =>
+                            <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t} />
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--tax-muted)', textAlign: 'right' }}>
-                      <div>{c.locale === 'en' ? 'EN' : 'ES'}</div>
-                      <div style={{ marginTop: 2, color: c.last_sign_in_at ? 'var(--tax-muted)' : '#b91c1c' }}>
-                        {formatLastSignInCompact(c.last_sign_in_at, locale, t)}
-                      </div>
-                    </div>
-                  </div>
-                </a>
-              ))}
-            </div>}
+                      );
+                    })}
+              </div>
+            </>}
     </EmployeeShell>
+  );
+}
+
+// One row of the customer list, used by both the flat (search-results)
+// path and the grouped-by-letter path. Kept identical to the prior
+// inline markup so existing visual + interaction patterns survive.
+function CustomerRow({ c, base, locale, t }) {
+  return (
+    <a href={`${base}/${encodeURIComponent(c.id)}`}
+       className="tax-contact-item" style={{ textDecoration: 'none', color: 'inherit' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 600 }}>
+            {displayPersonName(c) || c.email}
+            <HealthChip health={c.health} t={t} />
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 2 }}>
+            {c.email}
+            {c.phone ? ` • ${c.phone}` : ''}
+            {c.whatsapp ? ` • WhatsApp ${c.whatsapp}` : ''}
+          </div>
+          {(c.address?.line1 || c.address?.city) && (
+            <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
+              {[c.address.line1, c.address.city, c.address.state].filter(Boolean).join(', ')}
+            </div>
+          )}
+          {Array.isArray(c.relationships) && c.relationships.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+              {c.relationships.map(r => (
+                <span key={r.relationship_type_id} style={{
+                  padding: '1px 8px', borderRadius: 999,
+                  background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
+                  color: 'var(--tax-brand-primary)',
+                  border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 18%, #fff)',
+                  fontSize: 11, fontWeight: 600,
+                }}>
+                  {pickI18n(r.type?.name_i18n, locale).value || r.relationship_type_id}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--tax-muted)', textAlign: 'right' }}>
+          <div>{c.locale === 'en' ? 'EN' : 'ES'}</div>
+          <div style={{ marginTop: 2, color: c.last_sign_in_at ? 'var(--tax-muted)' : '#b91c1c' }}>
+            {formatLastSignInCompact(c.last_sign_in_at, locale, t)}
+          </div>
+        </div>
+      </div>
+    </a>
+  );
+}
+
+// Sort + collapse controls above the customer list. Two segmented
+// pills (Last name / First name) drive both the sort key and the
+// alphabet grouping bucket; the arrow toggles direction. Collapse /
+// Expand All only render in grouped mode (search dissolves grouping).
+function CustomerSortBar({ sortBy, setSortBy, sortDir, setSortDir, grouping, t, onCollapseAll, onExpandAll }) {
+  const Pill = ({ value, label }) => {
+    const active = sortBy === value;
+    return (
+      <button type="button" onClick={() => setSortBy(value)}
+              style={{
+                padding: '4px 12px', borderRadius: 999, fontSize: 12,
+                cursor: 'pointer',
+                background: active
+                  ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                  : '#fff',
+                color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                border: '1px solid',
+                borderColor: active
+                  ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                  : 'var(--tax-border)',
+                fontWeight: active ? 700 : 500,
+              }}>{label}</button>
+    );
+  };
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+      marginBottom: 10,
+    }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                     textTransform: 'uppercase', letterSpacing: '.5px', marginRight: 4 }}>
+        {t('owner.customers.sort.label')}
+      </span>
+      <Pill value="lastName"  label={t('owner.customers.sort.lastName')} />
+      <Pill value="firstName" label={t('owner.customers.sort.firstName')} />
+      <button type="button"
+              onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+              title={sortDir === 'asc' ? t('owner.customers.sort.asc') : t('owner.customers.sort.desc')}
+              style={{
+                padding: '4px 10px', borderRadius: 999, fontSize: 12,
+                background: '#fff', border: '1px solid var(--tax-border)',
+                color: 'var(--tax-text)', cursor: 'pointer',
+              }}>
+        {sortDir === 'asc' ? '↓ A–Z' : '↑ Z–A'}
+      </button>
+      {grouping.mode === 'grouped' && grouping.sections.length > 1 && (
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
+          <button type="button" onClick={onCollapseAll}
+                  style={{
+                    border: 0, background: 'transparent', cursor: 'pointer',
+                    color: 'var(--tax-brand-primary)', fontSize: 11,
+                    fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px',
+                  }}>{t('owner.customers.sort.collapseAll')}</button>
+          <button type="button" onClick={onExpandAll}
+                  style={{
+                    border: 0, background: 'transparent', cursor: 'pointer',
+                    color: 'var(--tax-brand-primary)', fontSize: 11,
+                    fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px',
+                  }}>{t('owner.customers.sort.expandAll')}</button>
+        </div>
+      )}
+    </div>
   );
 }
 
