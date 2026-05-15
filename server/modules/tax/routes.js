@@ -2335,7 +2335,7 @@ module.exports = function createTaxRouter(deps) {
         tax_task_priority_colors, tax_task_urgency_colors,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
-        default_locale, calendly_url
+        default_locale, calendly_url, landing_copy_i18n
       `)
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle();
     if (error) return sendSupabaseError(res, error);
@@ -2409,6 +2409,59 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
     res.json({ ok: true });
+  });
+
+  // PUT /admin/community-settings/landing-copy — owner-customizable copy
+  // for the public landing page. Body shape:
+  //   { communitySlug, copy: { "<i18n.key>": { en, es }, ... } }
+  // Keys are allowlisted so an owner can't smuggle arbitrary HTML/script
+  // into the marketing page via a random translation key. Each value is
+  // trimmed and capped; empty strings remove the override (the row falls
+  // back to the platform default).
+  const LANDING_COPY_KEYS = new Set([
+    'hero.subtitle', 'hero.cta_primary', 'hero.cta_book', 'hero.cta_secondary',
+    'services.heading', 'services.subheading',
+    'landing.team.heading', 'landing.team.subheading',
+    'landing.articles.heading', 'landing.articles.subheading',
+    'landing.faqs.heading', 'landing.faqs.subheading',
+    'about.heading', 'about.body',
+    'getStarted.heading', 'getStarted.subheading',
+    'getStarted.scheduleHeading', 'getStarted.scheduleBody',
+    'landing.calendly.cta',
+    'getStarted.messageHeading', 'getStarted.messageBody',
+  ]);
+  const LANDING_COPY_MAX_LEN = 800;
+  router.put('/admin/community-settings/landing-copy', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const incoming = body.copy && typeof body.copy === 'object' ? body.copy : {};
+
+    const sanitized = {};
+    for (const key of Object.keys(incoming)) {
+      if (!LANDING_COPY_KEYS.has(key)) continue;
+      const v = incoming[key];
+      if (!v || typeof v !== 'object') continue;
+      const en = String(v.en || '').trim().slice(0, LANDING_COPY_MAX_LEN);
+      const es = String(v.es || '').trim().slice(0, LANDING_COPY_MAX_LEN);
+      // Skip entries that are entirely empty so the column stays tidy.
+      if (!en && !es) continue;
+      sanitized[key] = { en, es };
+    }
+
+    const { error } = await supabase.from('communities')
+      .update({ landing_copy_i18n: sanitized, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.copy', entityId: communitySlug,
+        action: 'update_landing_copy', actorEmail: '',
+        after: { keys: Object.keys(sanitized) },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, copy: sanitized });
   });
 
   // GET /admin/products?communitySlug=  — products with their schedules.

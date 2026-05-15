@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 import VideoEmbed from './VideoEmbed';
+import { useLandingCopy } from '../lib/landingCopy';
 
 // Public FAQ section on the landing page. Defaults to a preview (top 3
 // across all relationship types) with a "See all FAQs" link to a
@@ -9,6 +10,7 @@ import VideoEmbed from './VideoEmbed';
 // grouped by relationship type — that's what /tax/:slug/faqs uses.
 export default function FaqsSection({ communitySlug, mode = 'preview', max = 3 }) {
   const { locale, t } = useT();
+  const { pick } = useLandingCopy();
   const [groups, setGroups] = useState(null);
   const [openId, setOpenId] = useState(null);
 
@@ -44,8 +46,8 @@ export default function FaqsSection({ communitySlug, mode = 'preview', max = 3 }
   return (
     <section className="tax-section" id="faqs" style={{ background: 'var(--tax-bg-alt)' }}>
       <div className="tax-container">
-        <h2>{t('landing.faqs.heading')}</h2>
-        <p className="tax-section__lede">{t('landing.faqs.subheading')}</p>
+        <h2>{pick('landing.faqs.heading')}</h2>
+        <p className="tax-section__lede">{pick('landing.faqs.subheading')}</p>
 
         <div style={{ display: 'grid', gap: 22, marginTop: 18 }}>
           {visibleGroups.map(group => (

@@ -1,8 +1,10 @@
 import { useT } from '../i18n';
 import { useCalendlyPopup } from './CalendlySection';
+import { useLandingCopy } from '../lib/landingCopy';
 
 export default function Hero({ community }) {
   const { locale, t } = useT();
+  const { pick } = useLandingCopy();
   const tagline = (locale === 'es'
     ? (community?.tagline || community?.tagline_en)
     : (community?.tagline_en || community?.tagline)
@@ -16,14 +18,14 @@ export default function Hero({ community }) {
     useCalendlyPopup(community?.calendly_url, locale);
 
   const primaryLabel = calendlyAvailable
-    ? t('hero.cta_book')
-    : t('hero.cta_primary');
+    ? pick('hero.cta_book')
+    : pick('hero.cta_primary');
 
   return (
     <section className="tax-hero" id="top">
       <div className="tax-container">
         <h1>{tagline}</h1>
-        <p>{t('hero.subtitle')}</p>
+        <p>{pick('hero.subtitle')}</p>
         <div className="tax-hero__ctas">
           {calendlyAvailable ? (
             <button type="button" className="tax-btn tax-btn--primary"
@@ -33,7 +35,7 @@ export default function Hero({ community }) {
           ) : (
             <a className="tax-btn tax-btn--primary" href="#contact">{primaryLabel}</a>
           )}
-          <a className="tax-btn tax-btn--ghost" href="#services">{t('hero.cta_secondary')}</a>
+          <a className="tax-btn tax-btn--ghost" href="#services">{pick('hero.cta_secondary')}</a>
         </div>
       </div>
     </section>
