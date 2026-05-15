@@ -8,7 +8,6 @@ import TeamSection from '../components/TeamSection';
 import FaqsSection from '../components/FaqsSection';
 import ArticlesSection from '../components/ArticlesSection';
 import About from '../components/About';
-import CalendlySection from '../components/CalendlySection';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
 
@@ -105,12 +104,12 @@ export default function Landing({ communitySlug }) {
 
   // Which sections will end up rendering, so the Header can hide nav
   // links whose anchor would scroll to nothing. Team/FAQs always
-  // attempt to render — they self-hide when empty — but we can hint
-  // the obvious "schedule is configured" case from the community row.
+  // attempt to render — they self-hide when empty. Calendly is folded
+  // into the Contact section now (two-path layout), so there's no
+  // separate Schedule anchor to expose.
   const sections = {
     services: (products || []).length > 0,
     team: true,
-    schedule: Boolean(community.calendly_url),
     faqs: true,
     about: true,
     contact: true,
@@ -125,7 +124,6 @@ export default function Landing({ communitySlug }) {
       <ArticlesSection communitySlug={communitySlug} />
       <FaqsSection communitySlug={communitySlug} />
       <About />
-      <CalendlySection url={community.calendly_url} />
       <Contact community={community} products={products}
                initialProductSlug={pendingService} />
       <Footer community={community} />

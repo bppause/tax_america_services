@@ -14,6 +14,7 @@
   "hero.tagline_fallback": "Your financial success in good hands",
   "hero.subtitle": "Professional tax preparation, bookkeeping, payroll, and business services — bilingual, accurate, and on time.",
   "hero.cta_primary": "Request a consultation",
+  "hero.cta_book": "Book a free consultation",
   "hero.cta_secondary": "See our services",
 
   "services.heading": "Our services",
@@ -29,6 +30,12 @@
 
   "lead.heading": "Request a consultation",
   "lead.subheading": "Tell us a bit about what you need. We will respond within one business day.",
+  "getStarted.heading": "Get started",
+  "getStarted.subheading": "Two ways to reach us. Pick whichever fits your schedule.",
+  "getStarted.scheduleHeading": "Schedule a call",
+  "getStarted.scheduleBody": "Pick a time and we'll meet by phone or video to map out the work — no pressure, no commitment.",
+  "getStarted.messageHeading": "Send us a message",
+  "getStarted.messageBody": "Tell us about your situation and we'll get back to you within one business day.",
   "lead.field.name": "Full name",
   "lead.field.firstName": "First name",
   "lead.field.middleName": "Middle (optional)",

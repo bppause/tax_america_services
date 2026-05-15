@@ -14,6 +14,7 @@
   "hero.tagline_fallback": "Su éxito financiero en buenas manos",
   "hero.subtitle": "Servicios profesionales de impuestos, contabilidad, nómina y formación de empresas — bilingües, precisos y a tiempo.",
   "hero.cta_primary": "Solicitar consulta",
+  "hero.cta_book": "Reservar consulta gratuita",
   "hero.cta_secondary": "Ver nuestros servicios",
 
   "services.heading": "Nuestros servicios",
@@ -29,6 +30,12 @@
 
   "lead.heading": "Solicita una consulta",
   "lead.subheading": "Cuéntanos brevemente lo que necesitas. Te responderemos en menos de un día hábil.",
+  "getStarted.heading": "Comienza",
+  "getStarted.subheading": "Dos formas de contactarnos. Elige la que se adapte a tu horario.",
+  "getStarted.scheduleHeading": "Agenda una llamada",
+  "getStarted.scheduleBody": "Elige un horario y nos reunimos por teléfono o video para planificar el trabajo — sin presión, sin compromiso.",
+  "getStarted.messageHeading": "Envíanos un mensaje",
+  "getStarted.messageBody": "Cuéntanos tu situación y te responderemos en menos de un día hábil.",
   "lead.field.name": "Nombre completo",
   "lead.field.firstName": "Nombre",
   "lead.field.middleName": "Segundo nombre (opcional)",
