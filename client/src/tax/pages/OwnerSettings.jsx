@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useT } from '../i18n';
+import enBundle from '../i18n/en.json';
+import esBundle from '../i18n/es.json';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
@@ -1066,32 +1068,95 @@ const LANDING_COPY_GROUPS = [
 ];
 
 function LandingCopySection({ settings, auth, community, t, onSaved }) {
-  const initial = () => settings?.landing_copy_i18n || {};
-  const [draft, setDraft] = useState(initial);
+  // Platform defaults for every editable key, in both locales. Used to
+  // seed the inputs (so the owner edits existing text instead of a blank
+  // box) and to detect whether the owner actually changed something at
+  // save time. Static — bundles never change at runtime.
+  const defaults = useMemo(() => {
+    const out = {};
+    for (const group of LANDING_COPY_GROUPS) {
+      for (const field of group.fields) {
+        out[field.key] = {
+          en: enBundle[field.key] || '',
+          es: esBundle[field.key] || '',
+        };
+      }
+    }
+    return out;
+  }, []);
+
+  // Seed: prefer the override, fall back to the platform default per
+  // locale. Result is the "effective" text shown in each field — the
+  // owner sees what visitors actually see today and can just edit it.
+  const seedFrom = (overrides) => {
+    const out = {};
+    for (const group of LANDING_COPY_GROUPS) {
+      for (const field of group.fields) {
+        const ov = (overrides && overrides[field.key]) || {};
+        out[field.key] = {
+          en: (typeof ov.en === 'string' && ov.en) ? ov.en : defaults[field.key].en,
+          es: (typeof ov.es === 'string' && ov.es) ? ov.es : defaults[field.key].es,
+        };
+      }
+    }
+    return out;
+  };
+
+  const [draft, setDraft] = useState(() => seedFrom(settings?.landing_copy_i18n));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
-  useEffect(() => { setDraft(initial()); }, [settings]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setDraft(seedFrom(settings?.landing_copy_i18n)); }, [settings]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const set = (key, lang, value) => setDraft(prev => {
-    const next = { ...prev };
-    const cur = { ...(next[key] || {}) };
-    cur[lang] = value;
-    if (!String(cur.en || '').trim() && !String(cur.es || '').trim()) {
-      delete next[key];
-    } else {
-      next[key] = cur;
+  const set = (key, lang, value) => setDraft(prev => ({
+    ...prev,
+    [key]: { ...(prev[key] || defaults[key]), [lang]: value },
+  }));
+
+  const resetField = (key) => setDraft(prev => ({
+    ...prev,
+    [key]: { ...defaults[key] },
+  }));
+
+  // Build the persistable copy blob: only include fields where the
+  // current value differs from the platform default. A field that
+  // matches the default in both locales reverts to "no override" and
+  // drops out of the JSONB column entirely.
+  const payload = useMemo(() => {
+    const out = {};
+    for (const group of LANDING_COPY_GROUPS) {
+      for (const field of group.fields) {
+        const cur = draft[field.key] || defaults[field.key];
+        const def = defaults[field.key];
+        const enChanged = (cur.en || '').trim() !== (def.en || '').trim();
+        const esChanged = (cur.es || '').trim() !== (def.es || '').trim();
+        if (!enChanged && !esChanged) continue;
+        // Empty strings here mean "use default for this locale". Keep
+        // them so a mixed override (e.g., custom EN, default ES) round-
+        // trips correctly through the seed-from-override path above.
+        out[field.key] = {
+          en: enChanged ? cur.en.trim() : '',
+          es: esChanged ? cur.es.trim() : '',
+        };
+      }
     }
-    return next;
-  });
+    return out;
+  }, [draft, defaults]);
 
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings?.landing_copy_i18n || {});
+  const dirty = JSON.stringify(payload) !== JSON.stringify(settings?.landing_copy_i18n || {});
+
+  const isCustomized = (key) => {
+    const cur = draft[key] || defaults[key];
+    const def = defaults[key];
+    return (cur.en || '').trim() !== (def.en || '').trim()
+        || (cur.es || '').trim() !== (def.es || '').trim();
+  };
 
   const onSave = async () => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
       await taxApi.adminUpdateLandingCopy(auth, {
-        communitySlug: community.id, copy: draft,
+        communitySlug: community.id, copy: payload,
       });
       setMsg({ kind: 'success', text: t('owner.settings.saved') });
       onSaved && onSaved();
@@ -1099,7 +1164,7 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
       setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
     } finally { setBusy(false); }
   };
-  const onReset = () => setDraft(settings?.landing_copy_i18n || {});
+  const onResetAll = () => setDraft(seedFrom(settings?.landing_copy_i18n));
 
   return (
     <CollapsibleSection
@@ -1120,21 +1185,45 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
             title={t(group.titleKey)}>
             <div style={{ display: 'grid', gap: 14 }}>
               {group.fields.map(field => {
-                const fallback = t(field.key);
-                const cur = draft[field.key] || {};
+                const cur = draft[field.key] || defaults[field.key];
+                const customized = isCustomized(field.key);
                 return (
                   <div key={field.key} style={{
                     padding: 12, borderRadius: 8,
-                    border: '1px solid var(--tax-border)', background: '#fff',
+                    border: '1px solid var(--tax-border)',
+                    background: customized
+                      ? 'color-mix(in srgb, var(--tax-brand-primary) 4%, #fff)'
+                      : '#fff',
                   }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-                      {t(field.labelKey, { _: field.key })}
-                    </div>
                     <div style={{
-                      fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8,
-                      fontStyle: 'italic',
+                      display: 'flex', alignItems: 'baseline',
+                      justifyContent: 'space-between', gap: 8, marginBottom: 8,
                     }}>
-                      {t('owner.settings.copy.defaultLabel')}: {fallback}
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                        <span style={{ fontSize: 13, fontWeight: 600 }}>
+                          {t(field.labelKey, { _: field.key })}
+                        </span>
+                        {customized && (
+                          <span style={{
+                            padding: '1px 8px', borderRadius: 999, fontSize: 10,
+                            fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+                            background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+                            color: 'var(--tax-brand-primary)',
+                            border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)',
+                          }}>{t('owner.settings.copy.customizedBadge')}</span>
+                        )}
+                      </div>
+                      {customized && (
+                        <button type="button" disabled={busy}
+                                onClick={() => resetField(field.key)}
+                                style={{
+                                  border: 0, background: 'transparent', cursor: 'pointer',
+                                  color: 'var(--tax-brand-primary)',
+                                  fontSize: 11, fontWeight: 700,
+                                }}>
+                          {t('owner.settings.copy.resetField')}
+                        </button>
+                      )}
                     </div>
                     <div style={{ display: 'grid', gap: 8,
                                   gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
@@ -1142,14 +1231,12 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
                         labelKey="owner.settings.copy.langEn"
                         value={cur.en || ''}
                         multiline={field.multiline}
-                        placeholder={fallback}
                         disabled={busy} t={t}
                         onChange={(v) => set(field.key, 'en', v)} />
                       <CopyInput lang="es"
                         labelKey="owner.settings.copy.langEs"
                         value={cur.es || ''}
                         multiline={field.multiline}
-                        placeholder={fallback}
                         disabled={busy} t={t}
                         onChange={(v) => set(field.key, 'es', v)} />
                     </div>
@@ -1167,7 +1254,7 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
         </button>
         {dirty && (
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                  disabled={busy} onClick={onReset} style={{ color: 'var(--tax-text)' }}>
+                  disabled={busy} onClick={onResetAll} style={{ color: 'var(--tax-text)' }}>
             {t('owner.settings.copy.discard')}
           </button>
         )}
@@ -1176,7 +1263,7 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
   );
 }
 
-function CopyInput({ lang, labelKey, value, onChange, multiline, placeholder, disabled, t }) {
+function CopyInput({ lang, labelKey, value, onChange, multiline, disabled, t }) {
   const Field = multiline ? 'textarea' : 'input';
   return (
     <label style={{ display: 'block' }}>
@@ -1187,7 +1274,6 @@ function CopyInput({ lang, labelKey, value, onChange, multiline, placeholder, di
       <Field type={multiline ? undefined : 'text'}
              value={value}
              onChange={(e) => onChange(e.target.value)}
-             placeholder={placeholder}
              disabled={disabled}
              rows={multiline ? 3 : undefined}
              maxLength={800}
