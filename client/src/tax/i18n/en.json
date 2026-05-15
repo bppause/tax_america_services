@@ -1,8 +1,13 @@
 {
   "nav.services": "Services",
+  "nav.team": "Team",
+  "nav.schedule": "Schedule",
+  "nav.faqs": "FAQs",
   "nav.about": "About",
   "nav.contact": "Contact",
   "nav.signin": "Sign in",
+  "nav.openMenu": "Open navigation",
+  "nav.closeMenu": "Close navigation",
   "locale.english": "English",
   "locale.spanish": "Español",
 
@@ -1415,6 +1420,7 @@
   "owner.settings.community.defaultLocale": "Default language",
   "landing.calendly.heading": "Schedule a consultation",
   "landing.calendly.subheading": "Pick a time that works for you — we'll meet by phone or video and start mapping out the work.",
+  "landing.calendly.cta": "Book a time",
 
   "employee.nav.help": "Help",
 

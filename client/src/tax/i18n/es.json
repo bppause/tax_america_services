@@ -1,5 +1,10 @@
 {
   "nav.services": "Servicios",
+  "nav.team": "Equipo",
+  "nav.schedule": "Agenda",
+  "nav.faqs": "Preguntas",
+  "nav.openMenu": "Abrir navegación",
+  "nav.closeMenu": "Cerrar navegación",
   "nav.about": "Nosotros",
   "nav.contact": "Contacto",
   "nav.signin": "Iniciar sesión",
@@ -1414,6 +1419,7 @@
   "owner.settings.community.defaultLocale": "Idioma predeterminado",
   "landing.calendly.heading": "Agenda una consulta",
   "landing.calendly.subheading": "Elige un horario que te funcione — nos reunimos por teléfono o video y comenzamos a planificar el trabajo.",
+  "landing.calendly.cta": "Reservar horario",
 
   "employee.nav.help": "Ayuda",
 

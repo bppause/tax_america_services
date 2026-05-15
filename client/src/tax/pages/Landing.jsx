@@ -103,9 +103,22 @@ export default function Landing({ communitySlug }) {
     '--tax-brand-secondary': community.brand_secondary_color || undefined,
   };
 
+  // Which sections will end up rendering, so the Header can hide nav
+  // links whose anchor would scroll to nothing. Team/FAQs always
+  // attempt to render — they self-hide when empty — but we can hint
+  // the obvious "schedule is configured" case from the community row.
+  const sections = {
+    services: (products || []).length > 0,
+    team: true,
+    schedule: Boolean(community.calendly_url),
+    faqs: true,
+    about: true,
+    contact: true,
+  };
+
   return (
     <div className="tax-app" style={brandStyle}>
-      <Header community={community} />
+      <Header community={community} sections={sections} />
       <Hero community={community} />
       <ServicesGrid products={products} onRequestService={onRequestService} />
       <TeamSection communitySlug={communitySlug} />
