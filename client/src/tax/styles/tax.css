@@ -50,6 +50,20 @@
 .tax-nav { display: flex; align-items: center; gap: 18px; }
 .tax-nav a { color: var(--tax-text); text-decoration: none; font-size: 14px; }
 .tax-nav a:hover { color: var(--tax-brand-primary); }
+/* Nav entries that trigger a popup (e.g. Schedule → Calendly) render
+   as buttons but should read like the rest of the nav, not like form
+   submit buttons. */
+.tax-nav__link--button {
+  background: transparent; border: 0; padding: 0; margin: 0;
+  font: inherit; color: var(--tax-text); cursor: pointer;
+  font-size: 14px;
+}
+.tax-nav__link--button:hover { color: var(--tax-brand-primary); }
+.tax-nav--mobile .tax-nav__link--button {
+  display: block; padding: 12px 4px; font-size: 16px; font-weight: 600;
+  border-bottom: 1px solid var(--tax-border);
+  text-align: left; width: 100%;
+}
 
 /* Hamburger affordance — hidden on desktop, shown below 760px. */
 .tax-nav__hamburger {
