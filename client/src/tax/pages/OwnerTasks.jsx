@@ -797,6 +797,9 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   };
 
   return (
+    <TaskHover task={task} statuses={statuses}
+               community={community} locale={locale} t={t}
+               side="auto">
     <div className="tax-contact-item" style={{
       display: 'grid', gap: 8,
       background: selected ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : undefined,
@@ -921,6 +924,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
         </div>
       )}
     </div>
+    </TaskHover>
   );
 }
 
