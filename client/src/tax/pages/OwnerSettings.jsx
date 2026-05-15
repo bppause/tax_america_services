@@ -1227,17 +1227,15 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
                     </div>
                     <div style={{ display: 'grid', gap: 8,
                                   gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-                      <CopyInput lang="en"
-                        labelKey="owner.settings.copy.langEn"
+                      <CopyInput label="English"
                         value={cur.en || ''}
                         multiline={field.multiline}
-                        disabled={busy} t={t}
+                        disabled={busy}
                         onChange={(v) => set(field.key, 'en', v)} />
-                      <CopyInput lang="es"
-                        labelKey="owner.settings.copy.langEs"
+                      <CopyInput label="Español"
                         value={cur.es || ''}
                         multiline={field.multiline}
-                        disabled={busy} t={t}
+                        disabled={busy}
                         onChange={(v) => set(field.key, 'es', v)} />
                     </div>
                   </div>
@@ -1263,13 +1261,18 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
   );
 }
 
-function CopyInput({ lang, labelKey, value, onChange, multiline, disabled, t }) {
+// Per-language input cell. `label` is intentionally static text — using
+// the active UI locale here would make "English" and "Spanish" both
+// translate to Spanish words for an owner browsing in es, hiding which
+// column is which. The owner should always be able to edit both
+// languages regardless of which UI language they're currently viewing.
+function CopyInput({ label, value, onChange, multiline, disabled }) {
   const Field = multiline ? 'textarea' : 'input';
   return (
     <label style={{ display: 'block' }}>
       <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
                      textTransform: 'uppercase', letterSpacing: '.04em' }}>
-        {t(labelKey, { _: lang })}
+        {label}
       </span>
       <Field type={multiline ? undefined : 'text'}
              value={value}
