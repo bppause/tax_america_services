@@ -288,7 +288,16 @@
 }
 .tax-twopath__title { margin: 0; font-size: 18px; font-weight: 700; }
 .tax-twopath__body  { margin: 0; color: var(--tax-muted); font-size: 14px; }
-.tax-twopath__card .tax-form { box-shadow: none; padding: 0; border: 0; background: transparent; }
+.tax-twopath__card .tax-form {
+  box-shadow: none; padding: 0; border: 0; background: transparent;
+  max-width: 100%; gap: 12px;
+}
+.tax-twopath__card .tax-form textarea { min-height: 80px; }
+/* Inside the narrower two-path card the email/phone row would be too
+   tight side-by-side at every common viewport width — always stack
+   it. The standalone fallback form (no Calendly) still uses the
+   1fr 1fr layout via the global rule. */
+.tax-twopath__card .tax-form__row2 { grid-template-columns: 1fr; }
 
 .tax-contact-grid {
   display: grid; gap: 16px;
