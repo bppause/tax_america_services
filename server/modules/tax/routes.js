@@ -49,6 +49,7 @@ module.exports = function createTaxRouter(deps) {
     supabase, requireSupabaseEnv, sendSupabaseError,
     auditLog,
     sendTaxLeadEmail,
+    sendTaxTaskAssignedEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
@@ -1393,6 +1394,40 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
     return { deleted: dropIds.length };
+  }
+
+  // Fire a task-assigned notification email to the new assignee. Safe
+  // to call from anywhere — silently no-ops when the assignee can't
+  // be resolved, has no email, or matches the actor (no need to email
+  // yourself for assigning your own task). Loads the customer +
+  // community lazily so callers don't have to hand the world over.
+  async function notifyTaskAssignee({ taskId, newAssigneeId, prevAssigneeId, actor }) {
+    if (typeof sendTaxTaskAssignedEmail !== 'function') return;
+    if (!newAssigneeId) return;
+    if (newAssigneeId === prevAssigneeId) return;
+    if (actor && newAssigneeId === actor.id) return;
+    try {
+      const { data: task } = await supabase.from('tax_tasks')
+        .select(`
+          id, community_id, title, due_date, priority, assigned_employee_id,
+          customer:tax_customers ( id, name, business_name, email )
+        `).eq('id', taskId).maybeSingle();
+      if (!task || task.assigned_employee_id !== newAssigneeId) return;
+      const [{ data: assignee }, { data: community }] = await Promise.all([
+        supabase.from('tax_employees')
+          .select('id, email, name, first_name, last_name, locale, status')
+          .eq('id', newAssigneeId).maybeSingle(),
+        supabase.from('communities')
+          .select('id, name').eq('id', task.community_id).maybeSingle(),
+      ]);
+      if (!assignee || !assignee.email || assignee.status === 'archived') return;
+      await sendTaxTaskAssignedEmail({
+        community: community || { id: task.community_id, name: '' },
+        task, assignee, actor,
+      });
+    } catch (e) {
+      warn('[tax-task-assign] notify failed', e?.message || e);
+    }
   }
 
   // Shared welcome-email plumbing — loads the customer, community, and the
@@ -5506,6 +5541,9 @@ module.exports = function createTaxRouter(deps) {
         after: { title, customerId, productId, assignedTo, dueDate, priority, statusKey },
       });
     } catch (_e) {}
+    if (assignedTo) {
+      await notifyTaskAssignee({ taskId: id, newAssigneeId: assignedTo, prevAssigneeId: null, actor: emp });
+    }
     res.json({ ok: true, id, task: row });
   });
 
@@ -5561,6 +5599,14 @@ module.exports = function createTaxRouter(deps) {
         after: Object.keys(update).filter(k => k !== 'updated_at'),
       });
     } catch (_e) {}
+    if (Object.prototype.hasOwnProperty.call(update, 'assigned_employee_id')) {
+      await notifyTaskAssignee({
+        taskId,
+        newAssigneeId: update.assigned_employee_id,
+        prevAssigneeId: cur.assigned_employee_id,
+        actor: emp,
+      });
+    }
     res.json({ ok: true });
   });
 
@@ -5644,10 +5690,32 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
 
+    // Fire one assignment notification per row that actually changed
+    // assignee. Skip rows where the assignee already matched the patch
+    // so a bulk status flip doesn't email the prior owner about
+    // "their" task again.
+    if (Object.prototype.hasOwnProperty.call(update, 'assigned_employee_id')) {
+      const newAssigneeId = update.assigned_employee_id;
+      const allowedSet = new Set(allowedIds);
+      const changed = (rows || []).filter(r =>
+        allowedSet.has(r.id) && r.assigned_employee_id !== newAssigneeId);
+      // Best-effort, fire-and-forget per row so we don't slow the
+      // response on a 100-row bulk reassign.
+      for (const r of changed) {
+        notifyTaskAssignee({
+          taskId: r.id, newAssigneeId,
+          prevAssigneeId: r.assigned_employee_id, actor: emp,
+        }).catch(() => {});
+      }
+    }
+
     res.json({ ok: true, updated: allowedIds.length });
   });
 
-  // DELETE /admin/tasks/:id
+  // DELETE /admin/tasks/:id — admin-only by default. Staff can edit /
+  // complete a task they're assigned to but cannot remove it; an owner
+  // who wants to delegate deletion can promote the employee to admin
+  // or grant the action through a future permission key.
   router.delete('/admin/tasks/:id', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const taskId = trim(req.params.id, 200);
@@ -5655,8 +5723,9 @@ module.exports = function createTaxRouter(deps) {
       .select('id, community_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    if (emp.role !== 'admin' && cur.assigned_employee_id !== emp.id && cur.created_by_employee_id !== emp.id) {
-      return res.status(403).json({ error: 'Only the assignee, creator, or an admin can delete this task.' });
+    if (emp.role !== 'admin') {
+      return res.status(403).json({ error: 'task_delete_admin_only',
+        message: 'Only an admin can delete a task.' });
     }
     const { error } = await supabase.from('tax_tasks').delete().eq('id', taskId);
     if (error) return sendSupabaseError(res, error);

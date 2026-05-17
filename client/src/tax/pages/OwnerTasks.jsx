@@ -896,7 +896,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
                   style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
             {t('owner.tasks.edit')}
           </button>
-          {(isAdmin || task.assigned_employee_id === auth?.uid) && (
+          {isAdmin && (
             <button type="button" onClick={onDelete} disabled={busy}
                     className="tax-btn tax-btn--ghost tax-btn--sm"
                     style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}>

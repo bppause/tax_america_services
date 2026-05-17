@@ -11,7 +11,16 @@ const { escapeHtml } = require('../../core/utils');
 const { firstNameOf, displayNameOf } = require('./names');
 
 module.exports = function createTaxSenders(deps) {
-  const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery } = deps;
+  const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery, publicAppUrl } = deps;
+
+  // Resolve the deployed app's base URL for clickable links in emails.
+  // Falls through to empty string in tests so the helper never throws —
+  // a missing publicAppUrl just produces a relative-looking link, which
+  // is benign in HTML.
+  const appBase = () => {
+    try { return typeof publicAppUrl === 'function' ? publicAppUrl() : ''; }
+    catch { return ''; }
+  };
 
   // Phase 4i: owner-editable subject + intro paragraph per (template_key, lang).
   // Senders compute their defaults as before; if an override row exists and
@@ -59,6 +68,11 @@ module.exports = function createTaxSenders(deps) {
       : (lead.product_slug ? [lead.product_slug] : []);
     const servicesLabel = services.length ? services.join(', ') : '—';
 
+    // Deep-link the inbox row so the recipient lands on the lead instead
+    // of scrolling. OwnerLeads honors the `?lead=<id>` query param —
+    // auto-expands the matching row and scrolls to it.
+    const leadInboxUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/leads?lead=${encodeURIComponent(lead.id)}`;
+
     const lines = [
       `New lead via ${community.name} landing page:`,
       '',
@@ -70,6 +84,8 @@ module.exports = function createTaxSenders(deps) {
       '',
       'Message:',
       lead.message || '(none)',
+      '',
+      `Open in app: ${leadInboxUrl}`,
       '',
       `Lead ID: ${lead.id}`,
       `Submitted: ${lead.created_at}`,
@@ -88,6 +104,12 @@ module.exports = function createTaxSenders(deps) {
         </table>
         <h3>Message</h3>
         <div style="white-space:pre-wrap;background:#f7f7f7;padding:12px;border-radius:8px">${escapeHtml(lead.message || '(none)')}</div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(leadInboxUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            Open this lead →
+          </a>
+        </p>
         <p style="color:#888;font-size:12px;margin-top:24px">Lead ID: ${escapeHtml(lead.id)}<br/>Submitted: ${escapeHtml(lead.created_at)}</p>
       </div>
     `;
@@ -1395,8 +1417,97 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // Notification to a task's assignee when someone assigns work to them.
+  // Fires from POST /admin/tasks (initial assign) and PATCH /admin/tasks
+  // (reassignment). Includes a deep link that opens the task in the
+  // edit modal so the assignee can act on it without hunting through
+  // the list. Localized to the employee's row locale; falls back to
+  // Spanish (the platform default).
+  const sendTaxTaskAssignedEmail = async ({ community, task, assignee, actor }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(assignee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Assignee has no email.' };
+
+    const lang = (assignee && assignee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const taskUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
+    const actorLabel = (actor && (actor.name || actor.email)) || '';
+    const assigneeFirst = firstNameOf(assignee) || '';
+    const customerLine = task.customer
+      ? (task.customer.business_name || task.customer.name || task.customer.email || '')
+      : '';
+
+    const subjectDefault = lang === 'en'
+      ? `New task assigned: ${task.title}`
+      : `Nueva tarea asignada: ${task.title}`;
+    const greeting = lang === 'en'
+      ? (assigneeFirst ? `Hi ${assigneeFirst},` : 'Hi,')
+      : (assigneeFirst ? `Hola ${assigneeFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? (actorLabel
+          ? `${actorLabel} assigned a task to you on ${community.name}.`
+          : `A new task was assigned to you on ${community.name}.`)
+      : (actorLabel
+          ? `${actorLabel} te asignó una tarea en ${community.name}.`
+          : `Se te asignó una nueva tarea en ${community.name}.`);
+    const cta = lang === 'en' ? 'Open this task →' : 'Abrir esta tarea →';
+    const dueLabel = lang === 'en' ? 'Due' : 'Vence';
+    const customerLabel = lang === 'en' ? 'Customer' : 'Cliente';
+    const priorityLabel = lang === 'en' ? 'Priority' : 'Prioridad';
+    const priorityValue = task.priority || 'normal';
+
+    const textLines = [
+      greeting, '', intro, '',
+      task.title,
+      task.due_date ? `${dueLabel}: ${task.due_date}` : '',
+      customerLine ? `${customerLabel}: ${customerLine}` : '',
+      `${priorityLabel}: ${priorityValue}`,
+      '', `${cta} ${taskUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#f7f7f7;padding:14px 16px;border-radius:8px;margin:14px 0">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(task.title)}</div>
+          ${task.due_date ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(dueLabel)}:</strong> ${escapeHtml(task.due_date)}</div>` : ''}
+          ${customerLine ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(customerLabel)}:</strong> ${escapeHtml(customerLine)}</div>` : ''}
+          <div style="margin-top:4px;color:#555"><strong>${escapeHtml(priorityLabel)}:</strong> ${escapeHtml(priorityValue)}</div>
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(taskUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      assignee_name: displayNameOf(assignee) || assignee.email || '',
+      assignee_first_name: assigneeFirst,
+      actor_name: actorLabel,
+      task_title: task.title,
+      task_due: task.due_date || '',
+      task_priority: priorityValue,
+      task_url: taskUrl,
+      customer_name: customerLine,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'task_assigned', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    return sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+  };
+
   return {
     sendTaxLeadEmail,
+    sendTaxTaskAssignedEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
