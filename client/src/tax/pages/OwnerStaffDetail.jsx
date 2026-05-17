@@ -90,7 +90,16 @@ export default function OwnerStaffDetail({ employeeId }) {
               fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
               verticalAlign: 'middle',
             }}>{emp.role}</span>
+            <DetailAccessScopePill emp={emp} t={t} />
           </h2>
+          {/* One-sentence summary of what this person can see, right under
+              the name. Mirrors the customer-access pill copy so the owner
+              never has to guess. */}
+          <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 6, fontSize: 13 }}>
+            {emp.role === 'admin'
+              ? t('owner.staff.access.allHint')
+              : t('owner.staff.access.assignedHint')}
+          </p>
           <p style={{ color: 'var(--tax-muted)', marginTop: 0, fontSize: 13 }}>
             {emp.email}
             {!emp.firebase_uid && <> • <em>{t('owner.staff.notSignedInHint')}</em></>}
@@ -103,6 +112,9 @@ export default function OwnerStaffDetail({ employeeId }) {
           {/* No self-impersonation — admin viewing their own row shouldn't try. */}
           {emp.id !== me?.id && emp.firebase_uid && emp.status === 'active' && (
             <ImpersonateEmployeeButton employee={emp} auth={auth} community={community} t={t} />
+          )}
+          {!emp.firebase_uid && emp.status === 'active' && (
+            <DetailResendWelcomeButton emp={emp} auth={auth} t={t} />
           )}
           {emp.id !== me?.id && (
             <ArchiveEmployeeButton emp={emp} auth={auth} onChanged={loadEmployee} t={t} />
@@ -1126,6 +1138,83 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // Phase 4n.16: archive (status='archived') an employee. Soft-delete to
 // retain audit history + past assignments. When already archived, swaps
 // to a "Restore" affordance.
+// Mirror of AccessScopePill (on the list page) for the detail header.
+// Inline since it's tiny and the two pages don't otherwise share code.
+function DetailAccessScopePill({ emp, t }) {
+  if (emp.status === 'archived') return null;
+  const isAdmin = emp.role === 'admin';
+  const count = Number(emp.assigned_customer_count) || 0;
+  const label = isAdmin
+    ? t('owner.staff.access.all')
+    : (count === 0
+        ? t('owner.staff.access.none')
+        : t('owner.staff.access.assigned', { count }));
+  const tint = isAdmin
+    ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+        fg: 'var(--tax-brand-primary)',
+        bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
+    : count === 0
+      ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
+          fg: '#7f1d1d',
+          bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
+      : { bg: 'var(--tax-bg-alt)',
+          fg: 'var(--tax-text)',
+          bd: 'var(--tax-border)' };
+  return (
+    <span style={{
+      marginLeft: 8, padding: '2px 10px', borderRadius: 999,
+      background: tint.bg, color: tint.fg, border: `1px solid ${tint.bd}`,
+      fontSize: 11, fontWeight: 700, verticalAlign: 'middle',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+// Detail-page resend affordance. Shown when the employee hasn't yet
+// completed first sign-in — same endpoint as the list-row variant.
+function DetailResendWelcomeButton({ emp, auth, t }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  const onClick = async () => {
+    if (!window.confirm(t('owner.staff.resendWelcome.confirm', { name: displayPersonName(emp) || emp.email }))) return;
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const r = await taxApi.adminSendStaffWelcomeEmail(auth, emp.id);
+      if (r?.welcomeEmail?.sent || r?.sent) {
+        setMsg({ kind: 'success', text: t('owner.staff.resendWelcome.sent') });
+      } else {
+        const reason = r?.welcomeEmail?.reason || r?.reason || r?.welcomeEmail?.error || r?.error;
+        setMsg({ kind: 'error', text: reason
+          ? t('owner.staff.resendWelcome.failedWithReason', { reason })
+          : t('owner.staff.resendWelcome.failed') });
+      }
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('owner.staff.resendWelcome.failed') });
+    } finally {
+      setBusy(false);
+      setTimeout(() => setMsg({ kind: 'idle', text: '' }), 6000);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+              onClick={onClick} disabled={busy}
+              style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
+        {busy ? t('lead.submitting') : t('owner.staff.resendWelcome.button')}
+      </button>
+      {msg.text && (
+        <span style={{ fontSize: 11,
+                       color: msg.kind === 'success' ? 'var(--tax-success)' : 'var(--tax-error)' }}>
+          {msg.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ArchiveEmployeeButton({ emp, auth, onChanged, t }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });

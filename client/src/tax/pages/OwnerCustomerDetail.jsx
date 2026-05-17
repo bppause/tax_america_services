@@ -4,6 +4,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import TaskHover from '../components/TaskHover';
+import { ensureCompletionNotes } from './OwnerTasks';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
@@ -148,6 +149,7 @@ export default function OwnerCustomerDetail({ customerId }) {
         locale={locale} t={t} />
 
       <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
+                    isAdmin={employee?.role === 'admin'}
                     locale={locale} t={t} />
 
       <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
@@ -1305,7 +1307,7 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t }) {
 // Phase: per-customer task list. Inline-edit status, add new tasks, mark
 // complete. Filters down to this customer's tasks via customerId on the
 // /admin/tasks endpoint.
-function TasksSection({ auth, customer, customerId, community, locale, t }) {
+function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t }) {
   const [tasks, setTasks] = useState(null);
   const [statuses, setStatuses] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -1334,7 +1336,12 @@ function TasksSection({ auth, customer, customerId, community, locale, t }) {
   }, [community, customerId]);
 
   const updateTask = async (id, patch) => {
-    try { await taxApi.adminUpdateTask(auth, id, patch); load(); }
+    // Completing requires a closing note — prompt up-front so the
+    // round-trip never has to fail with notes_required_on_complete.
+    const target = (tasks || []).find(t0 => t0.id === id);
+    const finalPatch = ensureCompletionNotes({ statuses, task: target || {}, patch, t });
+    if (!finalPatch) return;
+    try { await taxApi.adminUpdateTask(auth, id, finalPatch); load(); }
     catch (e) { setErr(e?.message || ''); }
   };
   const deleteTask = async (id) => {
@@ -1411,10 +1418,12 @@ function TasksSection({ auth, customer, customerId, community, locale, t }) {
                               <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
                             ))}
                           </select>
-                          <button type="button"
-                                  onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
-                                  className="tax-btn tax-btn--ghost tax-btn--sm"
-                                  style={{ color: 'var(--tax-muted)' }}>×</button>
+                          {isAdmin && (
+                            <button type="button"
+                                    onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
+                                    className="tax-btn tax-btn--ghost tax-btn--sm"
+                                    style={{ color: 'var(--tax-muted)' }}>×</button>
+                          )}
                         </div>
                       </div>
                       {task.notes && (

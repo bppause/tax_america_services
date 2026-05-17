@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
@@ -19,8 +19,18 @@ export default function OwnerLeads() {
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
+  // The lead-arrival notification email deep-links here as
+  // `…/employee/leads?lead=<id>` so the recipient lands directly on
+  // the row instead of having to scan the inbox.
+  const focusLeadId = (() => {
+    try { return new URLSearchParams(window.location.search).get('lead') || ''; }
+    catch { return ''; }
+  })();
+
   const [leads, setLeads] = useState(null);
-  const [filter, setFilter] = useState('open'); // 'open' = new|contacted, 'all', or specific status
+  // Force the filter to "all" when we have a target lead so the row
+  // never gets hidden by the current filter (closed / converted / etc).
+  const [filter, setFilter] = useState(focusLeadId ? 'all' : 'open'); // 'open' = new|contacted, 'all', or specific status
   const [products, setProducts] = useState([]);
   const [relTypes, setRelTypes] = useState([]);
   const [err, setErr] = useState('');
@@ -90,6 +100,7 @@ export default function OwnerLeads() {
                 <LeadRow key={lead.id} lead={lead} auth={auth} onChange={load}
                          communitySlug={community.id}
                          products={products} relTypes={relTypes}
+                         focused={lead.id === focusLeadId}
                          locale={locale} t={t} />
               ))}
             </div>}
@@ -109,8 +120,8 @@ function statusLabel(status, t) {
   return t('owner.leads.status.open');
 }
 
-function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, locale, t }) {
-  const [expanded, setExpanded] = useState(false);
+function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, focused, locale, t }) {
+  const [expanded, setExpanded] = useState(!!focused);
   const [notes, setNotes] = useState(lead.notes || '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -120,6 +131,15 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
   // lead didn't pan out (the simplified flow is convert-or-close).
   const [closing, setClosing] = useState(false);
   const b = statusBadge(lead.status);
+
+  // When the user lands here from the new-lead notification email
+  // (`?lead=<id>`), auto-expand the row and scroll it into view so
+  // the lead they came to see is immediately readable.
+  const rowRef = useRef(null);
+  useEffect(() => {
+    if (!focused || !rowRef.current) return;
+    rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focused]);
 
   const setStatus = async (next, extra = {}) => {
     setBusy(true); setErr('');
@@ -147,7 +167,10 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
   const onConvert = () => setConvertOpen(true);
 
   return (
-    <div className="tax-contact-item">
+    <div ref={rowRef} className="tax-contact-item"
+         style={focused ? {
+           boxShadow: '0 0 0 2px color-mix(in srgb, var(--tax-brand-primary) 50%, transparent)',
+         } : undefined}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
@@ -170,6 +193,7 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
           <div style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 2 }}>
             <a href={`mailto:${lead.email}`}>{lead.email}</a>
             {lead.phone ? <> • {lead.phone}</> : null}
+            {lead.whatsapp ? <> • WhatsApp {lead.whatsapp}</> : null}
             {(() => {
               const services = Array.isArray(lead.product_slugs) && lead.product_slugs.length
                 ? lead.product_slugs
@@ -354,6 +378,7 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
         <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--tax-muted)' }}>
           {t('owner.leads.convert.identity')}: <strong>{lead.email}</strong>
           {lead.phone ? <> · {lead.phone}</> : null}
+          {lead.whatsapp ? <> · WhatsApp {lead.whatsapp}</> : null}
         </div>
 
         <form onSubmit={onSubmit} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>

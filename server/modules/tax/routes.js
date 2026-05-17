@@ -49,6 +49,7 @@ module.exports = function createTaxRouter(deps) {
     supabase, requireSupabaseEnv, sendSupabaseError,
     auditLog,
     sendTaxLeadEmail,
+    sendTaxTaskAssignedEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
@@ -435,6 +436,18 @@ module.exports = function createTaxRouter(deps) {
     const name = nameParts.name;
     const email = trim(body.email, MAX_NAME_LEN).toLowerCase();
     const phone = trim(body.phone, MAX_PHONE_LEN);
+    // WhatsApp is optional. Empty string is fine; anything else must
+    // normalize to E.164 or we refuse the submission so the value the
+    // owner sees on the lead row is always something they can click.
+    let whatsapp = '';
+    if (body.whatsapp !== undefined && String(body.whatsapp || '').trim() !== '') {
+      const norm = normalizeWhatsapp(String(body.whatsapp));
+      if (!norm) {
+        return res.status(400).json({ error: 'whatsapp_invalid',
+          message: 'WhatsApp must be in international format, e.g., +14155551234.' });
+      }
+      whatsapp = norm;
+    }
     // Phase 4n.12: accept multi-select. `productSlugs` is the new
     // source-of-truth; fall back to the legacy single `productSlug` so
     // older clients keep working until they redeploy.
@@ -454,6 +467,8 @@ module.exports = function createTaxRouter(deps) {
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     if (!name) return res.status(400).json({ error: 'Name is required.' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'A valid email is required.' });
+    if (!phone) return res.status(400).json({ error: 'phone_required',
+      message: 'A phone number is required so we can reach you.' });
 
     // Honeypot — bots fill the hidden field; real users never see it.
     if (trim(body.website, 200)) {
@@ -472,7 +487,7 @@ module.exports = function createTaxRouter(deps) {
     const lead = {
       id: 'lead_' + uuidv4().slice(0, 12),
       community_id: community.id,
-      name, email, phone,
+      name, email, phone, whatsapp,
       first_name: nameParts.first,
       middle_name: nameParts.middle,
       last_name: nameParts.last,
@@ -1379,6 +1394,40 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
     return { deleted: dropIds.length };
+  }
+
+  // Fire a task-assigned notification email to the new assignee. Safe
+  // to call from anywhere — silently no-ops when the assignee can't
+  // be resolved, has no email, or matches the actor (no need to email
+  // yourself for assigning your own task). Loads the customer +
+  // community lazily so callers don't have to hand the world over.
+  async function notifyTaskAssignee({ taskId, newAssigneeId, prevAssigneeId, actor }) {
+    if (typeof sendTaxTaskAssignedEmail !== 'function') return;
+    if (!newAssigneeId) return;
+    if (newAssigneeId === prevAssigneeId) return;
+    if (actor && newAssigneeId === actor.id) return;
+    try {
+      const { data: task } = await supabase.from('tax_tasks')
+        .select(`
+          id, community_id, title, due_date, priority, assigned_employee_id,
+          customer:tax_customers ( id, name, business_name, email )
+        `).eq('id', taskId).maybeSingle();
+      if (!task || task.assigned_employee_id !== newAssigneeId) return;
+      const [{ data: assignee }, { data: community }] = await Promise.all([
+        supabase.from('tax_employees')
+          .select('id, email, name, first_name, last_name, locale, status')
+          .eq('id', newAssigneeId).maybeSingle(),
+        supabase.from('communities')
+          .select('id, name').eq('id', task.community_id).maybeSingle(),
+      ]);
+      if (!assignee || !assignee.email || assignee.status === 'archived') return;
+      await sendTaxTaskAssignedEmail({
+        community: community || { id: task.community_id, name: '' },
+        task, assignee, actor,
+      });
+    } catch (e) {
+      warn('[tax-task-assign] notify failed', e?.message || e);
+    }
   }
 
   // Shared welcome-email plumbing — loads the customer, community, and the
@@ -2975,7 +3024,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, company, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -3056,7 +3105,7 @@ module.exports = function createTaxRouter(deps) {
     const leadId = trim(req.params.id, 200);
 
     const { data: lead, error: lErr } = await supabase.from('tax_leads')
-      .select('id, community_id, name, first_name, middle_name, last_name, email, phone, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
+      .select('id, community_id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
       .eq('id', leadId).maybeSingle();
     if (lErr) return sendSupabaseError(res, lErr);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
@@ -3100,6 +3149,8 @@ module.exports = function createTaxRouter(deps) {
         email,
         name, first_name: parts.first, middle_name: parts.middle, last_name: parts.last,
         phone: lead.phone || '',
+        whatsapp: lead.whatsapp || '',
+        business_name: lead.company || '',
         locale: lead.preferred_locale === 'en' ? 'en' : 'es',
         status: 'active',
         notes: noteLines.join('\n\n').slice(0, MAX_TEXT_LEN),
@@ -5490,6 +5541,9 @@ module.exports = function createTaxRouter(deps) {
         after: { title, customerId, productId, assignedTo, dueDate, priority, statusKey },
       });
     } catch (_e) {}
+    if (assignedTo) {
+      await notifyTaskAssignee({ taskId: id, newAssigneeId: assignedTo, prevAssigneeId: null, actor: emp });
+    }
     res.json({ ok: true, id, task: row });
   });
 
@@ -5500,7 +5554,7 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key')
+      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -5526,12 +5580,28 @@ module.exports = function createTaxRouter(deps) {
     if (body.dueDate !== undefined)            update.due_date = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     if (body.notes !== undefined)              update.notes = trim(body.notes || '', MAX_TEXT_LEN);
 
-    // Auto-stamp completed_at when moving into a terminal status.
+    // Auto-stamp completed_at when moving into a terminal status. We
+    // also require non-empty notes on completion so the practice's
+    // history has a record of what was actually done — the row's
+    // existing notes count if the client didn't send new ones in the
+    // same patch.
     if (update.status_key && update.status_key !== cur.status_key) {
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
-      if (opt?.is_terminal) update.completed_at = new Date().toISOString();
-      else update.completed_at = null;
+      if (opt?.is_terminal) {
+        const effectiveNotes = (body.notes !== undefined
+          ? String(body.notes || '')
+          : String(cur.notes || ''));
+        if (!effectiveNotes.trim()) {
+          return res.status(400).json({
+            error: 'notes_required_on_complete',
+            message: 'Add a note describing what was done before completing this task.',
+          });
+        }
+        update.completed_at = new Date().toISOString();
+      } else {
+        update.completed_at = null;
+      }
     }
 
     if (Object.keys(update).length === 1) return res.status(400).json({ error: 'Nothing to update.' });
@@ -5545,6 +5615,14 @@ module.exports = function createTaxRouter(deps) {
         after: Object.keys(update).filter(k => k !== 'updated_at'),
       });
     } catch (_e) {}
+    if (Object.prototype.hasOwnProperty.call(update, 'assigned_employee_id')) {
+      await notifyTaskAssignee({
+        taskId,
+        newAssigneeId: update.assigned_employee_id,
+        prevAssigneeId: cur.assigned_employee_id,
+        actor: emp,
+      });
+    }
     res.json({ ok: true });
   });
 
@@ -5606,10 +5684,16 @@ module.exports = function createTaxRouter(deps) {
         .eq('key', update.status_key)
         .maybeSingle();
       if (opt?.is_terminal) {
-        setCompletedAt = new Date().toISOString();
-      } else {
-        clearCompletedAt = true;
+        // Completion requires notes — bulk-complete only works when the
+        // owner can stamp a common closing note across the batch (e.g.
+        // "Q1 returns filed"). Tasks are completed one at a time
+        // otherwise so each row's notes are meaningful on their own.
+        return res.status(400).json({
+          error: 'bulk_complete_unsupported',
+          message: 'Bulk completion is disabled — complete tasks individually so each has a closing note.',
+        });
       }
+      clearCompletedAt = true;
     }
 
     const finalUpdate = { ...update };
@@ -5628,10 +5712,32 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
 
+    // Fire one assignment notification per row that actually changed
+    // assignee. Skip rows where the assignee already matched the patch
+    // so a bulk status flip doesn't email the prior owner about
+    // "their" task again.
+    if (Object.prototype.hasOwnProperty.call(update, 'assigned_employee_id')) {
+      const newAssigneeId = update.assigned_employee_id;
+      const allowedSet = new Set(allowedIds);
+      const changed = (rows || []).filter(r =>
+        allowedSet.has(r.id) && r.assigned_employee_id !== newAssigneeId);
+      // Best-effort, fire-and-forget per row so we don't slow the
+      // response on a 100-row bulk reassign.
+      for (const r of changed) {
+        notifyTaskAssignee({
+          taskId: r.id, newAssigneeId,
+          prevAssigneeId: r.assigned_employee_id, actor: emp,
+        }).catch(() => {});
+      }
+    }
+
     res.json({ ok: true, updated: allowedIds.length });
   });
 
-  // DELETE /admin/tasks/:id
+  // DELETE /admin/tasks/:id — admin-only by default. Staff can edit /
+  // complete a task they're assigned to but cannot remove it; an owner
+  // who wants to delegate deletion can promote the employee to admin
+  // or grant the action through a future permission key.
   router.delete('/admin/tasks/:id', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const taskId = trim(req.params.id, 200);
@@ -5639,8 +5745,9 @@ module.exports = function createTaxRouter(deps) {
       .select('id, community_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    if (emp.role !== 'admin' && cur.assigned_employee_id !== emp.id && cur.created_by_employee_id !== emp.id) {
-      return res.status(403).json({ error: 'Only the assignee, creator, or an admin can delete this task.' });
+    if (emp.role !== 'admin') {
+      return res.status(403).json({ error: 'task_delete_admin_only',
+        message: 'Only an admin can delete a task.' });
     }
     const { error } = await supabase.from('tax_tasks').delete().eq('id', taskId);
     if (error) return sendSupabaseError(res, error);
@@ -8002,7 +8109,25 @@ module.exports = function createTaxRouter(deps) {
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
-    res.json({ employees: data || [] });
+
+    // Attach an assigned-customer count per row so the Staff list can
+    // surface "sees all customers" (admin) vs. "sees N assigned"
+    // (staff) without an extra round-trip per row.
+    const ids = (data || []).map(e => e.id);
+    const counts = new Map();
+    if (ids.length) {
+      const { data: assignments } = await supabase
+        .from('tax_employee_customer_assignments')
+        .select('employee_id')
+        .in('employee_id', ids).eq('active', true);
+      for (const a of assignments || []) {
+        counts.set(a.employee_id, (counts.get(a.employee_id) || 0) + 1);
+      }
+    }
+    const enriched = (data || []).map(e => ({
+      ...e, assigned_customer_count: counts.get(e.id) || 0,
+    }));
+    res.json({ employees: enriched });
   });
 
   router.post('/admin/employees', async (req, res) => {
@@ -8275,13 +8400,21 @@ module.exports = function createTaxRouter(deps) {
     const { data: community } = await supabase.from('communities')
       .select('id, name, contact_email').eq('id', emp.community_id).maybeSingle();
 
-    const employeeUrl = `${(typeof publicAppUrl === 'function' ? publicAppUrl() : '')}/tax/${emp.community_id}/employee`;
-
     // Phase 4n.16: detect existing account so the welcome email's sign-in
     // instructions are accurate. Existing customers in the same community,
     // or a Firebase identity that's already linked elsewhere on the
     // platform (app_users), both count as "existing".
     const existingAccount = await hasExistingAccountForEmail(emp.email, emp.community_id);
+    // Pre-populate the staff portal sign-in form by passing the email
+    // (and, for brand-new accounts, mode=create) as query params on
+    // the welcome-email link. PortalLogin reads both. Existing users
+    // land on the sign-in tab with their email already filled.
+    const portalBase = `${(typeof publicAppUrl === 'function' ? publicAppUrl() : '')}/tax/${emp.community_id}/employee`;
+    const linkParams = new URLSearchParams();
+    if (emp.email) linkParams.set('email', emp.email);
+    if (!existingAccount) linkParams.set('mode', 'create');
+    const qs = linkParams.toString();
+    const employeeUrl = qs ? `${portalBase}?${qs}` : portalBase;
 
     let result = { sent: false, skipped: true, reason: 'no_sender' };
     if (typeof sendTaxStaffWelcomeEmail === 'function') {

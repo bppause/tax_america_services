@@ -139,12 +139,15 @@ async function logTaxEmailDelivery({ resendId, communityId, customerId, workflow
 }
 
 const {
-  sendTaxLeadEmail, sendTaxReminderEmail, sendTaxDocumentEmail,
+  sendTaxLeadEmail, sendTaxTaskAssignedEmail, sendTaxReminderEmail, sendTaxDocumentEmail,
   sendTaxMessageEmail, sendTaxMessagePracticeEmail, sendTaxMessageEmployeeEmail,
   sendTaxWelcomeEmail, sendTaxStaffWelcomeEmail,
   sendTaxSignatureRequestEmail, sendTaxSignatureSignedEmail,
   previewTaxEmail, getTemplateDefaults,
-} = require('./modules/tax/email-senders')({ sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery });
+} = require('./modules/tax/email-senders')({
+  sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery,
+  publicAppUrl: () => publicAppUrl(),
+});
 
 const taxRemindersCron = require('./modules/tax/reminders')({
   supabase,
@@ -159,6 +162,7 @@ const taxRouter = taxModule.createRouter({
   supabase, requireSupabaseEnv, sendSupabaseError,
   auditLog,
   sendTaxLeadEmail,
+  sendTaxTaskAssignedEmail,
   sendTaxReminderEmail,
   sendTaxDocumentEmail,
   sendTaxMessageEmail,
