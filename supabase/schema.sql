@@ -2679,3 +2679,10 @@ alter table public.communities
 -- merge with its bundled translations.
 alter table public.communities
   add column if not exists landing_copy_i18n jsonb not null default '{}'::jsonb;
+
+-- Optional WhatsApp on lead submissions. Captured on the public
+-- landing form alongside phone so leads who only respond on WhatsApp
+-- can still be reached. Validated server-side (E.164 / +countrycode);
+-- carried into tax_customers on convert.
+alter table public.tax_leads
+  add column if not exists whatsapp text not null default '';

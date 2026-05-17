@@ -2,15 +2,17 @@ import { useEffect, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 
-// Public-site lead form. Optimized for a low-friction conversion:
-// one name field, email + phone in a row, a row of service chips
-// (no category headings), and an optional message. The server still
-// supports the older firstName/middleName/lastName shape but we send
-// a single `name` here — fewer fields = higher completion rate.
+// Public-site lead form. Optimized for converting a prospect into a
+// customer record with minimal re-entry: name parts mirror the
+// customer profile (first / middle optional / last), phone is required,
+// optional WhatsApp captures the channel a lot of leads actually
+// respond on. Service chips drive the auto-tag handoff in the convert
+// flow so the practice's team queue is pre-populated.
 export default function LeadForm({ community, products, initialProductSlug }) {
   const { locale, t } = useT();
   const [form, setForm] = useState({
-    name: '', email: '', phone: '', company: '',
+    firstName: '', middleName: '', lastName: '',
+    email: '', phone: '', whatsapp: '', company: '',
     productSlugs: [], message: '', website: '',
   });
   const [status, setStatus] = useState({ kind: 'idle', message: '' });
@@ -25,8 +27,6 @@ export default function LeadForm({ community, products, initialProductSlug }) {
       : { ...f, productSlugs: [...f.productSlugs, initialProductSlug] });
   }, [initialProductSlug]);
 
-  // Display order is already established by the parent (community feed
-  // returns them sorted). Filter to enabled products only.
   const visibleProducts = (products || []).filter(p => p.enabled !== false);
 
   const onChange = (e) => setForm(f => ({ ...f, [e.target.name]: e.target.value }));
@@ -45,9 +45,12 @@ export default function LeadForm({ community, products, initialProductSlug }) {
     try {
       await taxApi.submitLead({
         communitySlug: community.id,
-        name: form.name,
+        firstName: form.firstName,
+        middleName: form.middleName,
+        lastName: form.lastName,
         email: form.email,
         phone: form.phone,
+        whatsapp: form.whatsapp,
         company: form.company,
         productSlugs: form.productSlugs,
         message: form.message,
@@ -55,7 +58,8 @@ export default function LeadForm({ community, products, initialProductSlug }) {
         website: form.website,
       });
       setStatus({ kind: 'success', message: '' });
-      setForm({ name: '', email: '', phone: '', company: '',
+      setForm({ firstName: '', middleName: '', lastName: '',
+                email: '', phone: '', whatsapp: '', company: '',
                 productSlugs: [], message: '', website: '' });
     } catch (err) {
       const isNetwork = !err?.status;
@@ -79,10 +83,22 @@ export default function LeadForm({ community, products, initialProductSlug }) {
 
   return (
     <form className="tax-form" onSubmit={onSubmit} noValidate>
-      <div>
-        <label htmlFor="lead-name">{t('lead.field.fullName')}</label>
-        <input id="lead-name" name="name" type="text" required autoComplete="name"
-               value={form.name} onChange={onChange} maxLength={200} />
+      <div className="tax-form__row3">
+        <div>
+          <label htmlFor="lead-first">{t('lead.field.firstName')}</label>
+          <input id="lead-first" name="firstName" type="text" required autoComplete="given-name"
+                 value={form.firstName} onChange={onChange} maxLength={80} />
+        </div>
+        <div>
+          <label htmlFor="lead-middle">{t('lead.field.middleName')}</label>
+          <input id="lead-middle" name="middleName" type="text" autoComplete="additional-name"
+                 value={form.middleName} onChange={onChange} maxLength={80} />
+        </div>
+        <div>
+          <label htmlFor="lead-last">{t('lead.field.lastName')}</label>
+          <input id="lead-last" name="lastName" type="text" required autoComplete="family-name"
+                 value={form.lastName} onChange={onChange} maxLength={80} />
+        </div>
       </div>
       <div className="tax-form__row2">
         <div>
@@ -91,16 +107,27 @@ export default function LeadForm({ community, products, initialProductSlug }) {
                  value={form.email} onChange={onChange} />
         </div>
         <div>
-          <label htmlFor="lead-phone">{t('lead.field.phone')}</label>
-          <input id="lead-phone" name="phone" type="tel" autoComplete="tel"
+          <label htmlFor="lead-phone">{t('lead.field.phone.required')}</label>
+          <input id="lead-phone" name="phone" type="tel" required autoComplete="tel"
                  value={form.phone} onChange={onChange} />
         </div>
       </div>
-      <div>
-        <label htmlFor="lead-company">{t('lead.field.company')}</label>
-        <input id="lead-company" name="company" type="text" autoComplete="organization"
-               placeholder={t('lead.field.company.placeholder')}
-               value={form.company} onChange={onChange} maxLength={200} />
+      <div className="tax-form__row2">
+        <div>
+          <label htmlFor="lead-whatsapp">{t('lead.field.whatsapp')}</label>
+          <input id="lead-whatsapp" name="whatsapp" type="tel" autoComplete="tel"
+                 placeholder="+14155551234"
+                 value={form.whatsapp} onChange={onChange} maxLength={40} />
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+            {t('lead.field.whatsapp.hint')}
+          </p>
+        </div>
+        <div>
+          <label htmlFor="lead-company">{t('lead.field.company')}</label>
+          <input id="lead-company" name="company" type="text" autoComplete="organization"
+                 placeholder={t('lead.field.company.placeholder')}
+                 value={form.company} onChange={onChange} maxLength={200} />
+        </div>
       </div>
 
       {visibleProducts.length > 0 && (

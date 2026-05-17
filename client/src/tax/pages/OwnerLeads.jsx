@@ -170,6 +170,7 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, loca
           <div style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 2 }}>
             <a href={`mailto:${lead.email}`}>{lead.email}</a>
             {lead.phone ? <> • {lead.phone}</> : null}
+            {lead.whatsapp ? <> • WhatsApp {lead.whatsapp}</> : null}
             {(() => {
               const services = Array.isArray(lead.product_slugs) && lead.product_slugs.length
                 ? lead.product_slugs
@@ -354,6 +355,7 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
         <div style={{ marginBottom: 14, fontSize: 13, color: 'var(--tax-muted)' }}>
           {t('owner.leads.convert.identity')}: <strong>{lead.email}</strong>
           {lead.phone ? <> · {lead.phone}</> : null}
+          {lead.whatsapp ? <> · WhatsApp {lead.whatsapp}</> : null}
         </div>
 
         <form onSubmit={onSubmit} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>

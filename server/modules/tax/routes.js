@@ -435,6 +435,18 @@ module.exports = function createTaxRouter(deps) {
     const name = nameParts.name;
     const email = trim(body.email, MAX_NAME_LEN).toLowerCase();
     const phone = trim(body.phone, MAX_PHONE_LEN);
+    // WhatsApp is optional. Empty string is fine; anything else must
+    // normalize to E.164 or we refuse the submission so the value the
+    // owner sees on the lead row is always something they can click.
+    let whatsapp = '';
+    if (body.whatsapp !== undefined && String(body.whatsapp || '').trim() !== '') {
+      const norm = normalizeWhatsapp(String(body.whatsapp));
+      if (!norm) {
+        return res.status(400).json({ error: 'whatsapp_invalid',
+          message: 'WhatsApp must be in international format, e.g., +14155551234.' });
+      }
+      whatsapp = norm;
+    }
     // Phase 4n.12: accept multi-select. `productSlugs` is the new
     // source-of-truth; fall back to the legacy single `productSlug` so
     // older clients keep working until they redeploy.
@@ -454,6 +466,8 @@ module.exports = function createTaxRouter(deps) {
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     if (!name) return res.status(400).json({ error: 'Name is required.' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'A valid email is required.' });
+    if (!phone) return res.status(400).json({ error: 'phone_required',
+      message: 'A phone number is required so we can reach you.' });
 
     // Honeypot — bots fill the hidden field; real users never see it.
     if (trim(body.website, 200)) {
@@ -472,7 +486,7 @@ module.exports = function createTaxRouter(deps) {
     const lead = {
       id: 'lead_' + uuidv4().slice(0, 12),
       community_id: community.id,
-      name, email, phone,
+      name, email, phone, whatsapp,
       first_name: nameParts.first,
       middle_name: nameParts.middle,
       last_name: nameParts.last,
@@ -2975,7 +2989,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, company, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -3056,7 +3070,7 @@ module.exports = function createTaxRouter(deps) {
     const leadId = trim(req.params.id, 200);
 
     const { data: lead, error: lErr } = await supabase.from('tax_leads')
-      .select('id, community_id, name, first_name, middle_name, last_name, email, phone, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
+      .select('id, community_id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
       .eq('id', leadId).maybeSingle();
     if (lErr) return sendSupabaseError(res, lErr);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
@@ -3100,6 +3114,8 @@ module.exports = function createTaxRouter(deps) {
         email,
         name, first_name: parts.first, middle_name: parts.middle, last_name: parts.last,
         phone: lead.phone || '',
+        whatsapp: lead.whatsapp || '',
+        business_name: lead.company || '',
         locale: lead.preferred_locale === 'en' ? 'en' : 'es',
         status: 'active',
         notes: noteLines.join('\n\n').slice(0, MAX_TEXT_LEN),
