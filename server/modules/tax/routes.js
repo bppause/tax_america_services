@@ -8109,7 +8109,25 @@ module.exports = function createTaxRouter(deps) {
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
-    res.json({ employees: data || [] });
+
+    // Attach an assigned-customer count per row so the Staff list can
+    // surface "sees all customers" (admin) vs. "sees N assigned"
+    // (staff) without an extra round-trip per row.
+    const ids = (data || []).map(e => e.id);
+    const counts = new Map();
+    if (ids.length) {
+      const { data: assignments } = await supabase
+        .from('tax_employee_customer_assignments')
+        .select('employee_id')
+        .in('employee_id', ids).eq('active', true);
+      for (const a of assignments || []) {
+        counts.set(a.employee_id, (counts.get(a.employee_id) || 0) + 1);
+      }
+    }
+    const enriched = (data || []).map(e => ({
+      ...e, assigned_customer_count: counts.get(e.id) || 0,
+    }));
+    res.json({ employees: enriched });
   });
 
   router.post('/admin/employees', async (req, res) => {

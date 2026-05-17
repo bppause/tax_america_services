@@ -90,7 +90,16 @@ export default function OwnerStaffDetail({ employeeId }) {
               fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
               verticalAlign: 'middle',
             }}>{emp.role}</span>
+            <DetailAccessScopePill emp={emp} t={t} />
           </h2>
+          {/* One-sentence summary of what this person can see, right under
+              the name. Mirrors the customer-access pill copy so the owner
+              never has to guess. */}
+          <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 6, fontSize: 13 }}>
+            {emp.role === 'admin'
+              ? t('owner.staff.access.allHint')
+              : t('owner.staff.access.assignedHint')}
+          </p>
           <p style={{ color: 'var(--tax-muted)', marginTop: 0, fontSize: 13 }}>
             {emp.email}
             {!emp.firebase_uid && <> • <em>{t('owner.staff.notSignedInHint')}</em></>}
@@ -1129,6 +1138,39 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // Phase 4n.16: archive (status='archived') an employee. Soft-delete to
 // retain audit history + past assignments. When already archived, swaps
 // to a "Restore" affordance.
+// Mirror of AccessScopePill (on the list page) for the detail header.
+// Inline since it's tiny and the two pages don't otherwise share code.
+function DetailAccessScopePill({ emp, t }) {
+  if (emp.status === 'archived') return null;
+  const isAdmin = emp.role === 'admin';
+  const count = Number(emp.assigned_customer_count) || 0;
+  const label = isAdmin
+    ? t('owner.staff.access.all')
+    : (count === 0
+        ? t('owner.staff.access.none')
+        : t('owner.staff.access.assigned', { count }));
+  const tint = isAdmin
+    ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+        fg: 'var(--tax-brand-primary)',
+        bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
+    : count === 0
+      ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
+          fg: '#7f1d1d',
+          bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
+      : { bg: 'var(--tax-bg-alt)',
+          fg: 'var(--tax-text)',
+          bd: 'var(--tax-border)' };
+  return (
+    <span style={{
+      marginLeft: 8, padding: '2px 10px', borderRadius: 999,
+      background: tint.bg, color: tint.fg, border: `1px solid ${tint.bd}`,
+      fontSize: 11, fontWeight: 700, verticalAlign: 'middle',
+    }}>
+      {label}
+    </span>
+  );
+}
+
 // Detail-page resend affordance. Shown when the employee hasn't yet
 // completed first sign-in — same endpoint as the list-row variant.
 function DetailResendWelcomeButton({ emp, auth, t }) {

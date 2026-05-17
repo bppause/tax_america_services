@@ -91,6 +91,18 @@ export default function OwnerStaff() {
       </div>
       <p className="tax-section__lede">{t('owner.staff.subtitle')}</p>
 
+      <div style={{
+        padding: '10px 14px', marginBottom: 16,
+        background: 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)',
+        border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 22%, #fff)',
+        borderRadius: 8, fontSize: 13, color: 'var(--tax-text)',
+      }}>
+        <strong>{t('owner.staff.accessExplainer.heading')}</strong>{' '}
+        <span style={{ color: 'var(--tax-muted)' }}>
+          {t('owner.staff.accessExplainer.body')}
+        </span>
+      </div>
+
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
       {adding && (
@@ -197,6 +209,7 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
             color: e.role === 'admin' ? '#fff' : 'var(--tax-muted)',
             fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
           }}>{e.role}</span>
+          <AccessScopePill emp={e} t={t} />
           {!e.firebase_uid && (
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--tax-muted)' }}>
               ({t('owner.staff.notSignedIn')})
@@ -223,6 +236,44 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Pill that telegraphs which customers this employee can see — the most
+// common owner question on this page. Admins always see the whole
+// community; staff see only the customers they're explicitly assigned
+// to. The assignment count comes back from /admin/employees so the
+// list scans without a per-row round-trip. Archived staff see nothing
+// (suppress the pill — the archived badge already covers it).
+function AccessScopePill({ emp, t }) {
+  if (emp.status === 'archived') return null;
+  const isAdmin = emp.role === 'admin';
+  const count = Number(emp.assigned_customer_count) || 0;
+  const label = isAdmin
+    ? t('owner.staff.access.all')
+    : (count === 0
+        ? t('owner.staff.access.none')
+        : t('owner.staff.access.assigned', { count }));
+  const tint = isAdmin
+    ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+        fg: 'var(--tax-brand-primary)',
+        bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
+    : count === 0
+      ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
+          fg: '#7f1d1d',
+          bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
+      : { bg: 'var(--tax-bg-alt)',
+          fg: 'var(--tax-text)',
+          bd: 'var(--tax-border)' };
+  return (
+    <span style={{
+      marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+      background: tint.bg, color: tint.fg, border: `1px solid ${tint.bd}`,
+      fontSize: 11, fontWeight: 600,
+    }}
+          title={isAdmin ? t('owner.staff.access.allHint') : t('owner.staff.access.assignedHint')}>
+      {label}
+    </span>
   );
 }
 
