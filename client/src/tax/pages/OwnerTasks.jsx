@@ -2146,7 +2146,18 @@ function TasksCalendar({ tasks, community, statuses, onEdit, locale, t }) {
               <span style={{
                 fontSize: 12, fontWeight: isToday ? 700 : 500,
                 color: isToday ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
-              }}>{d.getUTCDate()}</span>
+              }}>
+                {/* Today's cell shows "<month> <day>" instead of just
+                    a bare number so you can never misread "13" as
+                    "the 13th of which month?" when the grid spans
+                    a month boundary. Same prefix on the 1st of any
+                    visible month — those cells live next to the
+                    last few days of the previous month, which is
+                    where the off-by-one confusion lands. */}
+                {(isToday || d.getUTCDate() === 1)
+                  ? `${d.toLocaleDateString(locale === 'es' ? 'es' : 'en', { month: 'short' })} ${d.getUTCDate()}`
+                  : d.getUTCDate()}
+              </span>
               {cellTasks.slice(0, 4).map(tt => {
                 const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
                 return (
