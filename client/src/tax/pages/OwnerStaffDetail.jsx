@@ -104,6 +104,9 @@ export default function OwnerStaffDetail({ employeeId }) {
           {emp.id !== me?.id && emp.firebase_uid && emp.status === 'active' && (
             <ImpersonateEmployeeButton employee={emp} auth={auth} community={community} t={t} />
           )}
+          {!emp.firebase_uid && emp.status === 'active' && (
+            <DetailResendWelcomeButton emp={emp} auth={auth} t={t} />
+          )}
           {emp.id !== me?.id && (
             <ArchiveEmployeeButton emp={emp} auth={auth} onChanged={loadEmployee} t={t} />
           )}
@@ -1126,6 +1129,50 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // Phase 4n.16: archive (status='archived') an employee. Soft-delete to
 // retain audit history + past assignments. When already archived, swaps
 // to a "Restore" affordance.
+// Detail-page resend affordance. Shown when the employee hasn't yet
+// completed first sign-in — same endpoint as the list-row variant.
+function DetailResendWelcomeButton({ emp, auth, t }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  const onClick = async () => {
+    if (!window.confirm(t('owner.staff.resendWelcome.confirm', { name: displayPersonName(emp) || emp.email }))) return;
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const r = await taxApi.adminSendStaffWelcomeEmail(auth, emp.id);
+      if (r?.welcomeEmail?.sent || r?.sent) {
+        setMsg({ kind: 'success', text: t('owner.staff.resendWelcome.sent') });
+      } else {
+        const reason = r?.welcomeEmail?.reason || r?.reason || r?.welcomeEmail?.error || r?.error;
+        setMsg({ kind: 'error', text: reason
+          ? t('owner.staff.resendWelcome.failedWithReason', { reason })
+          : t('owner.staff.resendWelcome.failed') });
+      }
+    } catch (err) {
+      setMsg({ kind: 'error', text: err?.message || t('owner.staff.resendWelcome.failed') });
+    } finally {
+      setBusy(false);
+      setTimeout(() => setMsg({ kind: 'idle', text: '' }), 6000);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+              onClick={onClick} disabled={busy}
+              style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
+        {busy ? t('lead.submitting') : t('owner.staff.resendWelcome.button')}
+      </button>
+      {msg.text && (
+        <span style={{ fontSize: 11,
+                       color: msg.kind === 'success' ? 'var(--tax-success)' : 'var(--tax-error)' }}>
+          {msg.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ArchiveEmployeeButton({ emp, auth, onChanged, t }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
