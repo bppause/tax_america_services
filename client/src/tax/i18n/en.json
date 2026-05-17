@@ -143,6 +143,8 @@
   "portal.login.resetBtn": "Send reset email",
   "portal.login.working": "Working…",
   "portal.login.firstTime": "First time? Create a password",
+  "portal.login.firstTime.heading": "First time signing in?",
+  "portal.login.firstTime.body": "We pre-filled your email ({{email}}). Use \"Sign in with Google\" if that address is a Google account — otherwise scroll down and pick a password under \"First time? Create a password\". Either path is fine.",
   "portal.login.forgot": "Forgot password?",
   "portal.login.backToSignin": "← Back to sign in",
   "portal.login.resetSent": "If an account exists for that email, we sent a reset link.",

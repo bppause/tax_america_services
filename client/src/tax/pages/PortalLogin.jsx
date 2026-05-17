@@ -12,14 +12,38 @@ import {
 
 // Standalone login page (no AuthProvider context dependency — the provider
 // only mounts after the user is signed in).
+//
+// Welcome emails (sent when an owner adds a staff member or a new
+// customer is created) deep-link here with `?email=<addr>` and an
+// optional `?mode=create` so the email field is pre-populated and
+// the form lands on the right initial mode. Without those params we
+// fall back to the legacy blank-state sign-in.
+function readLoginHints() {
+  if (typeof window === 'undefined') return { email: '', mode: '' };
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const email = String(p.get('email') || '').trim();
+    const m = String(p.get('mode') || '').trim().toLowerCase();
+    const mode = (m === 'create' || m === 'reset' || m === 'signin') ? m : '';
+    return { email, mode };
+  } catch { return { email: '', mode: '' }; }
+}
+
 export default function PortalLogin({ community, titleKey, subtitleKey }) {
   const { locale, t } = useT();
-  const [mode, setMode] = useState('signin');   // signin | create | reset
-  const [email, setEmail] = useState('');
+  const hints = readLoginHints();
+  const [mode, setMode] = useState(hints.mode || 'signin'); // signin | create | reset
+  const [email, setEmail] = useState(hints.email);
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [info, setInfo] = useState('');
+  // First-time setup hint: highlight the "Use Google OR set a password"
+  // choice when the user landed here from the welcome email and we
+  // know they're brand-new (mode=create) or at least have a pre-filled
+  // address. Stays hidden on plain visits so returning users don't see
+  // onboarding chrome.
+  const showFirstTimeHint = !!hints.email;
 
   const initials = (community?.name || 'TAX')
     .split(/\s+/).map(w => w[0] || '').join('').slice(0, 3).toUpperCase();
@@ -74,6 +98,22 @@ export default function PortalLogin({ community, titleKey, subtitleKey }) {
 
         {!firebaseReady && (
           <div className="tax-msg tax-msg--error" role="alert">{t('portal.login.notConfigured')}</div>
+        )}
+
+        {showFirstTimeHint && (
+          <div style={{
+            padding: '12px 14px', marginBottom: 12,
+            background: 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)',
+            border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 22%, #fff)',
+            borderRadius: 8, fontSize: 14, color: 'var(--tax-text)',
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>
+              {t('portal.login.firstTime.heading')}
+            </div>
+            <div style={{ color: 'var(--tax-muted)' }}>
+              {t('portal.login.firstTime.body', { email: hints.email })}
+            </div>
+          </div>
         )}
 
         <div style={{ display: 'grid', gap: 12 }}>

@@ -8400,13 +8400,21 @@ module.exports = function createTaxRouter(deps) {
     const { data: community } = await supabase.from('communities')
       .select('id, name, contact_email').eq('id', emp.community_id).maybeSingle();
 
-    const employeeUrl = `${(typeof publicAppUrl === 'function' ? publicAppUrl() : '')}/tax/${emp.community_id}/employee`;
-
     // Phase 4n.16: detect existing account so the welcome email's sign-in
     // instructions are accurate. Existing customers in the same community,
     // or a Firebase identity that's already linked elsewhere on the
     // platform (app_users), both count as "existing".
     const existingAccount = await hasExistingAccountForEmail(emp.email, emp.community_id);
+    // Pre-populate the staff portal sign-in form by passing the email
+    // (and, for brand-new accounts, mode=create) as query params on
+    // the welcome-email link. PortalLogin reads both. Existing users
+    // land on the sign-in tab with their email already filled.
+    const portalBase = `${(typeof publicAppUrl === 'function' ? publicAppUrl() : '')}/tax/${emp.community_id}/employee`;
+    const linkParams = new URLSearchParams();
+    if (emp.email) linkParams.set('email', emp.email);
+    if (!existingAccount) linkParams.set('mode', 'create');
+    const qs = linkParams.toString();
+    const employeeUrl = qs ? `${portalBase}?${qs}` : portalBase;
 
     let result = { sent: false, skipped: true, reason: 'no_sender' };
     if (typeof sendTaxStaffWelcomeEmail === 'function') {

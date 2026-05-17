@@ -143,6 +143,8 @@
   "portal.login.resetBtn": "Enviar correo de recuperación",
   "portal.login.working": "Procesando…",
   "portal.login.firstTime": "¿Primera vez? Crear contraseña",
+  "portal.login.firstTime.heading": "¿Primera vez que inicias sesión?",
+  "portal.login.firstTime.body": "Ya completamos tu correo ({{email}}). Usa \"Iniciar sesión con Google\" si ese correo es una cuenta de Google — si no, desplázate hacia abajo y elige una contraseña en \"¿Primera vez? Crear contraseña\". Cualquiera de los dos funciona.",
   "portal.login.forgot": "¿Olvidó su contraseña?",
   "portal.login.backToSignin": "← Volver a iniciar sesión",
   "portal.login.resetSent": "Si existe una cuenta con ese correo, le enviamos un enlace para restablecer la contraseña.",
