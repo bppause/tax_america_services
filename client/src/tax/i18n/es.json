@@ -671,6 +671,8 @@
   "owner.tasks.created": "Creada",
   "owner.tasks.delete": "Eliminar",
   "owner.tasks.deleteConfirm": "¿Eliminar esta tarea? Esta acción no se puede deshacer.",
+  "owner.tasks.completeNotesPrompt": "Agrega una nota breve de cierre antes de marcar esta tarea como completa (qué se hizo, fechas presentadas, referencias, etc.):",
+  "owner.tasks.completeNotesRequired": "Se requiere una nota de cierre para completar una tarea.",
   "owner.tasks.errTitle": "El título de la tarea es obligatorio.",
   "owner.tasks.showNotes": "Ver notas",
   "owner.tasks.hideNotes": "Ocultar notas",

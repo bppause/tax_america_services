@@ -22,6 +22,32 @@ import TaskHover from '../components/TaskHover';
 
 const PRIORITY_OPTIONS = ['urgent', 'high', 'normal', 'low'];
 
+// Inline completion-note prompt. When a status change would move the
+// task into a terminal bucket and there's no existing note (or the
+// patch isn't already supplying one), prompt the user via
+// window.prompt and merge the result into the patch. Returns null
+// when the user cancels — the caller should skip the API call.
+// Keeps the inline status dropdown and the Kanban drag-drop from
+// surprising the user with a server 400.
+export function ensureCompletionNotes({ statuses, task, patch, t }) {
+  if (!patch || !patch.statusKey) return patch;
+  const target = (statuses || []).find(s => s.key === patch.statusKey);
+  if (!target?.is_terminal) return patch;
+  const incoming = String(patch.notes || '').trim();
+  const existing = String(task?.notes || '').trim();
+  if (incoming || existing) return patch;
+  const note = typeof window !== 'undefined'
+    ? window.prompt(t('owner.tasks.completeNotesPrompt'))
+    : null;
+  if (note === null) return null;
+  const trimmed = String(note).trim();
+  if (!trimmed) {
+    if (typeof window !== 'undefined') window.alert(t('owner.tasks.completeNotesRequired'));
+    return null;
+  }
+  return { ...patch, notes: trimmed };
+}
+
 export default function OwnerTasks() {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -783,8 +809,14 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   const prCol = priorityColorOf(task.priority, community);
 
   const update = async (patch) => {
+    // Completing a task requires a closing note — see the server-side
+    // notes_required_on_complete check. Prompt the owner inline when
+    // the row's status is being flipped to terminal and there's no
+    // note yet, so the server round-trip never has to fail.
+    const finalPatch = ensureCompletionNotes({ statuses, task, patch, t });
+    if (!finalPatch) return;
     setBusy(true); setErr('');
-    try { await taxApi.adminUpdateTask(auth, task.id, patch); onChange(); }
+    try { await taxApi.adminUpdateTask(auth, task.id, finalPatch); onChange(); }
     catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
   };
@@ -2196,8 +2228,12 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, local
     if (!id) return;
     const task = tasks.find(tt => tt.id === id);
     if (!task || task.status_key === targetKey) return;
+    const patch = ensureCompletionNotes({
+      statuses, task, patch: { statusKey: targetKey }, t,
+    });
+    if (!patch) return;
     try {
-      await taxApi.adminUpdateTask(auth, id, { statusKey: targetKey });
+      await taxApi.adminUpdateTask(auth, id, patch);
       onChange();
     } catch (_e) { /* swallow */ }
   };

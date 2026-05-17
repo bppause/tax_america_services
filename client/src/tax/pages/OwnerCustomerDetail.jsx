@@ -4,6 +4,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import TaskHover from '../components/TaskHover';
+import { ensureCompletionNotes } from './OwnerTasks';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
@@ -1335,7 +1336,12 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
   }, [community, customerId]);
 
   const updateTask = async (id, patch) => {
-    try { await taxApi.adminUpdateTask(auth, id, patch); load(); }
+    // Completing requires a closing note — prompt up-front so the
+    // round-trip never has to fail with notes_required_on_complete.
+    const target = (tasks || []).find(t0 => t0.id === id);
+    const finalPatch = ensureCompletionNotes({ statuses, task: target || {}, patch, t });
+    if (!finalPatch) return;
+    try { await taxApi.adminUpdateTask(auth, id, finalPatch); load(); }
     catch (e) { setErr(e?.message || ''); }
   };
   const deleteTask = async (id) => {

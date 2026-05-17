@@ -5554,7 +5554,7 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key')
+      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -5580,12 +5580,28 @@ module.exports = function createTaxRouter(deps) {
     if (body.dueDate !== undefined)            update.due_date = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     if (body.notes !== undefined)              update.notes = trim(body.notes || '', MAX_TEXT_LEN);
 
-    // Auto-stamp completed_at when moving into a terminal status.
+    // Auto-stamp completed_at when moving into a terminal status. We
+    // also require non-empty notes on completion so the practice's
+    // history has a record of what was actually done — the row's
+    // existing notes count if the client didn't send new ones in the
+    // same patch.
     if (update.status_key && update.status_key !== cur.status_key) {
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
-      if (opt?.is_terminal) update.completed_at = new Date().toISOString();
-      else update.completed_at = null;
+      if (opt?.is_terminal) {
+        const effectiveNotes = (body.notes !== undefined
+          ? String(body.notes || '')
+          : String(cur.notes || ''));
+        if (!effectiveNotes.trim()) {
+          return res.status(400).json({
+            error: 'notes_required_on_complete',
+            message: 'Add a note describing what was done before completing this task.',
+          });
+        }
+        update.completed_at = new Date().toISOString();
+      } else {
+        update.completed_at = null;
+      }
     }
 
     if (Object.keys(update).length === 1) return res.status(400).json({ error: 'Nothing to update.' });
@@ -5668,10 +5684,16 @@ module.exports = function createTaxRouter(deps) {
         .eq('key', update.status_key)
         .maybeSingle();
       if (opt?.is_terminal) {
-        setCompletedAt = new Date().toISOString();
-      } else {
-        clearCompletedAt = true;
+        // Completion requires notes — bulk-complete only works when the
+        // owner can stamp a common closing note across the batch (e.g.
+        // "Q1 returns filed"). Tasks are completed one at a time
+        // otherwise so each row's notes are meaningful on their own.
+        return res.status(400).json({
+          error: 'bulk_complete_unsupported',
+          message: 'Bulk completion is disabled — complete tasks individually so each has a closing note.',
+        });
       }
+      clearCompletedAt = true;
     }
 
     const finalUpdate = { ...update };

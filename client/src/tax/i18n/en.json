@@ -672,6 +672,8 @@
   "owner.tasks.created": "Created",
   "owner.tasks.delete": "Delete",
   "owner.tasks.deleteConfirm": "Delete this task? This cannot be undone.",
+  "owner.tasks.completeNotesPrompt": "Add a brief closing note before marking this task complete (what was done, dates filed, references, etc.):",
+  "owner.tasks.completeNotesRequired": "A closing note is required to complete a task.",
   "owner.tasks.errTitle": "Task title is required.",
   "owner.tasks.showNotes": "Show notes",
   "owner.tasks.hideNotes": "Hide notes",
