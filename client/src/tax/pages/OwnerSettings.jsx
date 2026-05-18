@@ -101,6 +101,17 @@ export default function OwnerSettings() {
     } finally { setBusy(false); }
   };
 
+  const onToggleCustomerEmail = async (type, enabled) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetCustomerEmailEnabled(auth, { communitySlug: community.id, type, enabled });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
+
   const onToggleRemindersEnabled = async (enabled) => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
@@ -219,6 +230,9 @@ export default function OwnerSettings() {
           initialUrgency={settings.tax_task_urgency_colors || {}}
           busy={busy} onSave={onSaveColorOverrides} t={t} />
       </CollapsibleSection>
+
+      <CustomerEmailsSection settings={settings} busy={busy} t={t}
+                             onToggle={onToggleCustomerEmail} />
 
       <CollapsibleSection
         storageKey="reminders"
@@ -358,6 +372,85 @@ export default function OwnerSettings() {
 // section in localStorage so an owner who deliberately collapsed something
 // doesn't see it spring back open after a refresh. Default state is driven
 // by `defaultOpen` — typically the toggle-controlled sections pass the
+// Customer-facing email types the owner can toggle independently.
+// Each row maps a community column to a friendly label + explainer.
+// All four ship as OFF defaults on the schema so a fresh community
+// never quietly emails customers — the owner opts each one in.
+const CUSTOMER_EMAIL_TYPES = [
+  { type: 'welcome',   column: 'tax_email_welcome_enabled',
+    labelKey: 'owner.settings.customerEmails.welcome.label',
+    descKey:  'owner.settings.customerEmails.welcome.desc' },
+  { type: 'document',  column: 'tax_email_document_enabled',
+    labelKey: 'owner.settings.customerEmails.document.label',
+    descKey:  'owner.settings.customerEmails.document.desc' },
+  { type: 'message',   column: 'tax_email_message_enabled',
+    labelKey: 'owner.settings.customerEmails.message.label',
+    descKey:  'owner.settings.customerEmails.message.desc' },
+  { type: 'signature', column: 'tax_email_signature_enabled',
+    labelKey: 'owner.settings.customerEmails.signature.label',
+    descKey:  'owner.settings.customerEmails.signature.desc' },
+];
+
+// Collapsible card with one row per customer-email type. Each row is
+// its own toggle pill so the owner can flip exactly the types they
+// want on without the all-or-nothing feel of a single switch. Counter
+// in the header shows how many are currently on, so the owner can
+// tell at a glance how chatty the practice is being with customers.
+function CustomerEmailsSection({ settings, busy, t, onToggle }) {
+  const enabledCount = CUSTOMER_EMAIL_TYPES
+    .filter(row => settings && settings[row.column]).length;
+  return (
+    <CollapsibleSection
+      storageKey="customerEmails"
+      defaultOpen={false}
+      title={t('owner.settings.customerEmails.title')}
+      subtitle={t('owner.settings.customerEmails.subtitle')}
+      statusLabel={enabledCount === 0
+        ? t('owner.settings.customerEmails.allOff')
+        : t('owner.settings.customerEmails.someOn', { count: enabledCount })}
+      enabled={enabledCount > 0}>
+      <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
+        {CUSTOMER_EMAIL_TYPES.map(row => {
+          const on = !!(settings && settings[row.column]);
+          return (
+            <label key={row.type} style={{
+              display: 'flex', gap: 12, alignItems: 'flex-start',
+              padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+              cursor: busy ? 'wait' : 'pointer',
+              background: on ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+            }}>
+              <input type="checkbox" disabled={busy}
+                     checked={on}
+                     onChange={(e) => onToggle(row.type, e.target.checked)}
+                     style={{ marginTop: 4 }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>
+                  {t(row.labelKey)}
+                  <span style={{
+                    marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+                    background: on
+                      ? 'color-mix(in srgb, var(--tax-success, #16a34a) 12%, #fff)'
+                      : 'var(--tax-bg-alt)',
+                    color: on ? 'var(--tax-success, #16a34a)' : 'var(--tax-muted)',
+                    border: '1px solid',
+                    borderColor: on
+                      ? 'color-mix(in srgb, var(--tax-success, #16a34a) 35%, #fff)'
+                      : 'var(--tax-border)',
+                    fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                  }}>{on ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}</span>
+                </div>
+                <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                  {t(row.descKey)}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 // current "enabled" value here so a disabled feature starts collapsed,
 // saving vertical space on the screen.
 function CollapsibleSection({ storageKey, defaultOpen, title, subtitle, statusLabel, enabled, children }) {
