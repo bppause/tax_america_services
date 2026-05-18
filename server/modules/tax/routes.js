@@ -514,7 +514,8 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (e) { warn('[tax] audit log failed', e?.message || e); }
 
-    if (typeof sendTaxLeadEmail === 'function') {
+    if (typeof sendTaxLeadEmail === 'function'
+        && await communityStaffEmailFlag(community.id, 'tax_staff_email_lead_enabled')) {
       try { await sendTaxLeadEmail({ community, lead: inserted }); }
       catch (e) { warn('[tax] lead notification email failed', e?.message || e); }
     }
@@ -1428,6 +1429,7 @@ module.exports = function createTaxRouter(deps) {
           .select('id, name').eq('id', task.community_id).maybeSingle(),
       ]);
       if (!assignee || !assignee.email || assignee.status === 'archived') return;
+      if (!await communityStaffEmailFlag(task.community_id, 'tax_staff_email_task_assigned_enabled')) return;
       await sendTaxTaskAssignedEmail({
         community: community || { id: task.community_id, name: '' },
         task, assignee, actor,
@@ -1556,7 +1558,13 @@ module.exports = function createTaxRouter(deps) {
     } catch (_e) {}
 
     let welcomeResult = { sent: false, skipped: true };
-    if (sendWelcome) welcomeResult = await sendWelcomeForEmployee(empId);
+    if (sendWelcome) {
+      if (await communityStaffEmailFlag(cust.community_id, 'tax_staff_email_welcome_enabled')) {
+        welcomeResult = await sendWelcomeForEmployee(empId);
+      } else {
+        welcomeResult = { sent: false, skipped: true, reason: 'staff_welcome_emails_disabled' };
+      }
+    }
 
     res.json({ ok: true, employeeId: empId, welcomeEmail: welcomeResult });
   });
@@ -2404,6 +2412,72 @@ module.exports = function createTaxRouter(deps) {
     } catch { return false; }
   }
 
+  // Mirror of the customer-side helpers but for owner/staff emails
+  // (lead notifications, task-assignment, customer-messaged-practice,
+  // signed-confirmation, staff welcome). Defaults are ON so existing
+  // tenants keep their current behavior; the owner flips them off
+  // from Settings → Team email notifications.
+  const STAFF_EMAIL_TYPE_COLUMNS = {
+    lead:              'tax_staff_email_lead_enabled',
+    task_assigned:     'tax_staff_email_task_assigned_enabled',
+    message:           'tax_staff_email_message_enabled',
+    signature_signed:  'tax_staff_email_signature_signed_enabled',
+    staff_welcome:     'tax_staff_email_welcome_enabled',
+  };
+  router.put('/admin/community-settings/staff-email-enabled', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const type = trim(body.type, 40);
+    const column = STAFF_EMAIL_TYPE_COLUMNS[type];
+    if (!communitySlug || !column) {
+      return res.status(400).json({ error: 'communitySlug and a known type required.' });
+    }
+    const enabled = Boolean(body.enabled);
+    const { error } = await supabase.from('communities')
+      .update({ [column]: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.email', entityId: communitySlug,
+        action: `set_staff_${type}_enabled`,
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { [column]: enabled },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, type, enabled });
+  });
+  router.put('/admin/community-settings/staff-emails-master', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const enabled = Boolean(req.body?.enabled);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { error } = await supabase.from('communities')
+      .update({ tax_staff_emails_master_enabled: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.email', entityId: communitySlug,
+        action: 'set_staff_master_enabled',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { tax_staff_emails_master_enabled: enabled },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, enabled });
+  });
+  async function communityStaffEmailFlag(communityId, column) {
+    if (!communityId || !column) return false;
+    try {
+      const { data } = await supabase.from('communities')
+        .select(`tax_staff_emails_master_enabled, ${column}`)
+        .eq('id', communityId).maybeSingle();
+      if (!data || data.tax_staff_emails_master_enabled !== true) return false;
+      return data[column] === true;
+    } catch { return false; }
+  }
+
   // Owner toggle for the customer portal itself. Default is OFF — when
   // disabled, the portal routes redirect to the landing page and every
   // outbound email swaps portal links for landing-page links.
@@ -2466,6 +2540,10 @@ module.exports = function createTaxRouter(deps) {
         tax_customer_emails_master_enabled,
         tax_email_welcome_enabled, tax_email_document_enabled,
         tax_email_message_enabled, tax_email_signature_enabled,
+        tax_staff_emails_master_enabled,
+        tax_staff_email_lead_enabled, tax_staff_email_task_assigned_enabled,
+        tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
+        tax_staff_email_welcome_enabled,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
         default_locale, calendly_url, landing_copy_i18n
@@ -6107,7 +6185,9 @@ module.exports = function createTaxRouter(deps) {
           payload: { customerId, requestId },
         });
       }
-      if (channels.includes('email') && typeof sendTaxSignatureSignedEmail === 'function') {
+      if (channels.includes('email')
+          && typeof sendTaxSignatureSignedEmail === 'function'
+          && await communityStaffEmailFlag(community.id, 'tax_staff_email_signature_signed_enabled')) {
         try {
           await sendTaxSignatureSignedEmail({
             emp, customer: cust || { name: '', email: customerEmail },
@@ -7288,7 +7368,9 @@ module.exports = function createTaxRouter(deps) {
         });
       }
 
-      if (channels.includes('email') && typeof sendTaxMessageEmployeeEmail === 'function') {
+      if (channels.includes('email')
+          && typeof sendTaxMessageEmployeeEmail === 'function'
+          && await communityStaffEmailFlag(community.id, 'tax_staff_email_message_enabled')) {
         try {
           await sendTaxMessageEmployeeEmail({
             community, customer: cust, employee: emp, thread,
@@ -7301,7 +7383,8 @@ module.exports = function createTaxRouter(deps) {
     // Fallback: when no employees exist yet, alert the practice contact_email.
     // Once at least one employee is on-staff, individual employee emails take
     // over and this fallback goes silent.
-    if (empList.length === 0 && typeof sendTaxMessagePracticeEmail === 'function') {
+    if (empList.length === 0 && typeof sendTaxMessagePracticeEmail === 'function'
+        && await communityStaffEmailFlag(community.id, 'tax_staff_email_message_enabled')) {
       try {
         await sendTaxMessagePracticeEmail({
           community, customer: cust, thread,
@@ -8249,7 +8332,11 @@ module.exports = function createTaxRouter(deps) {
 
     let welcomeResult = { sent: false, skipped: true };
     if (sendWelcome) {
-      welcomeResult = await sendWelcomeForEmployee(id);
+      if (await communityStaffEmailFlag(communitySlug, 'tax_staff_email_welcome_enabled')) {
+        welcomeResult = await sendWelcomeForEmployee(id);
+      } else {
+        welcomeResult = { sent: false, skipped: true, reason: 'staff_welcome_emails_disabled' };
+      }
     }
 
     res.json({ ok: true, id, isExistingUser, welcomeEmail: welcomeResult });

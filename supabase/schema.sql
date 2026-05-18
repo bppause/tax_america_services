@@ -2706,3 +2706,16 @@ alter table public.communities
 -- the per-type defaults (fresh communities start quiet).
 alter table public.communities
   add column if not exists tax_customer_emails_master_enabled boolean not null default false;
+
+-- Per-type owner/staff email notification toggles + master switch.
+-- Mirrors the customer-email columns one section above but defaults
+-- ON so existing tenants keep getting their lead emails, task
+-- assignment notifications, etc. The owner flips individual types
+-- (or the master) off from Settings → Team email notifications.
+alter table public.communities
+  add column if not exists tax_staff_emails_master_enabled         boolean not null default true,
+  add column if not exists tax_staff_email_lead_enabled            boolean not null default true,
+  add column if not exists tax_staff_email_task_assigned_enabled   boolean not null default true,
+  add column if not exists tax_staff_email_message_enabled         boolean not null default true,
+  add column if not exists tax_staff_email_signature_signed_enabled boolean not null default true,
+  add column if not exists tax_staff_email_welcome_enabled         boolean not null default true;

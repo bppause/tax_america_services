@@ -291,6 +291,12 @@ export const taxApi = {
   adminSetCustomerEmailsMaster(auth, payload) {
     return request('PUT', '/admin/community-settings/customer-emails-master', payload, auth, { admin: true });
   },
+  adminSetStaffEmailEnabled(auth, payload) {
+    return request('PUT', '/admin/community-settings/staff-email-enabled', payload, auth, { admin: true });
+  },
+  adminSetStaffEmailsMaster(auth, payload) {
+    return request('PUT', '/admin/community-settings/staff-emails-master', payload, auth, { admin: true });
+  },
   adminSetTaskLookahead(auth, payload) {
     return request('PUT', '/admin/community-settings/task-lookahead-months', payload, auth, { admin: true });
   },
