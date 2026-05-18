@@ -908,10 +908,17 @@ module.exports = function createTaxRouter(deps) {
 
     // Welcome email — best-effort, never blocks the create. Looks up the
     // joined relationship rows so the email body can render localized
-    // service names.
+    // service names. Gated by the community-wide welcome-email toggle:
+    // if the owner has the type off, the create-time send is skipped.
+    // The manual "Resend welcome email" route stays unconditional so
+    // an owner can still kick one out one-off when needed.
     let welcomeResult = { sent: false, skipped: true };
     if (sendWelcome) {
-      welcomeResult = await sendWelcomeForCustomer(id);
+      if (await communityEmailFlag(communitySlug, 'tax_email_welcome_enabled')) {
+        welcomeResult = await sendWelcomeForCustomer(id);
+      } else {
+        welcomeResult = { sent: false, skipped: true, reason: 'welcome_emails_disabled' };
+      }
     }
 
     res.json({
@@ -2323,6 +2330,53 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, enabled });
   });
 
+  // Per-type customer-email toggles. Each maps to one boolean column on
+  // communities and gates the automatic send paths below. Owners flip
+  // each on from Settings → Customer email notifications; defaults
+  // are off so a fresh community never quietly emails customers.
+  const EMAIL_TYPE_COLUMNS = {
+    welcome:   'tax_email_welcome_enabled',
+    document:  'tax_email_document_enabled',
+    message:   'tax_email_message_enabled',
+    signature: 'tax_email_signature_enabled',
+  };
+  router.put('/admin/community-settings/customer-email-enabled', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const type = trim(body.type, 40);
+    const column = EMAIL_TYPE_COLUMNS[type];
+    if (!communitySlug || !column) {
+      return res.status(400).json({ error: 'communitySlug and a known type required.' });
+    }
+    const enabled = Boolean(body.enabled);
+    const { error } = await supabase.from('communities')
+      .update({ [column]: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.email', entityId: communitySlug,
+        action: `set_${type}_enabled`,
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { [column]: enabled },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, type, enabled });
+  });
+
+  // Helper: read one of the customer-email flags for a community. Used
+  // by the automatic send paths below to skip the email when the owner
+  // has the type turned off.
+  async function communityEmailFlag(communityId, column) {
+    if (!communityId || !column) return false;
+    try {
+      const { data } = await supabase.from('communities')
+        .select(column).eq('id', communityId).maybeSingle();
+      return !!(data && data[column] === true);
+    } catch { return false; }
+  }
+
   // Owner toggle for the customer portal itself. Default is OFF — when
   // disabled, the portal routes redirect to the landing page and every
   // outbound email swaps portal links for landing-page links.
@@ -2382,6 +2436,8 @@ module.exports = function createTaxRouter(deps) {
         tax_customer_portal_enabled, tax_customer_reminders_enabled, tax_task_lookahead_months,
         tax_task_urgent_days, tax_task_soon_days, tax_task_upcoming_days,
         tax_task_priority_colors, tax_task_urgency_colors,
+        tax_email_welcome_enabled, tax_email_document_enabled,
+        tax_email_message_enabled, tax_email_signature_enabled,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
         default_locale, calendly_url, landing_copy_i18n
@@ -5828,7 +5884,8 @@ module.exports = function createTaxRouter(deps) {
     // login to discover the request. Resolution failure here is non-fatal —
     // we want the request to exist even if the email is misconfigured.
     let emailResult = { sent: false, skipped: true };
-    if (typeof sendTaxSignatureRequestEmail === 'function') {
+    if (typeof sendTaxSignatureRequestEmail === 'function'
+        && await communityEmailFlag(emp.community_id, 'tax_email_signature_enabled')) {
       try {
         const [{ data: cust }, { data: community }] = await Promise.all([
           supabase.from('tax_customers')
@@ -5844,6 +5901,8 @@ module.exports = function createTaxRouter(deps) {
           });
         }
       } catch (e) { warn('[tax-sig] request email failed', e?.message || e); }
+    } else {
+      emailResult = { sent: false, skipped: true, reason: 'signature_emails_disabled' };
     }
     res.json({ ok: true, request: row, customerEmail: emailResult });
   });
@@ -6862,7 +6921,8 @@ module.exports = function createTaxRouter(deps) {
       },
       payload: { documentId: doc.id, fileName: doc.file_name, kind: doc.kind },
     });
-    if (typeof sendTaxDocumentEmail === 'function') {
+    if (typeof sendTaxDocumentEmail === 'function'
+        && await communityEmailFlag(doc.community_id, 'tax_email_document_enabled')) {
       try { await sendTaxDocumentEmail({ cust, community, doc, portalUrl }); }
       catch (e) { warn('[tax-docs] document email failed', e?.message || e); }
     }
@@ -7133,7 +7193,8 @@ module.exports = function createTaxRouter(deps) {
       payload: { threadId: thread.id, messageId: msg.id },
     });
 
-    if (typeof sendTaxMessageEmail === 'function') {
+    if (typeof sendTaxMessageEmail === 'function'
+        && await communityEmailFlag(thread.community_id, 'tax_email_message_enabled')) {
       const portalUrl = await customerLandingOrPortalUrl(thread.community_id, `/messages/${encodeURIComponent(thread.id)}`);
       try { await sendTaxMessageEmail({ cust, community, thread, message: msg, portalUrl }); }
       catch (e) { warn('[tax-msg] customer email failed', e?.message || e); }

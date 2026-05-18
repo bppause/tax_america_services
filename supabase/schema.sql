@@ -2686,3 +2686,14 @@ alter table public.communities
 -- carried into tax_customers on convert.
 alter table public.tax_leads
   add column if not exists whatsapp text not null default '';
+
+-- Per-type customer email notification toggles. Default off so a new
+-- community doesn't quietly start emailing customers on every action
+-- — the owner opts each type in from Settings → Customer email
+-- notifications. Existing tenants pick up `false` defaults on
+-- migration; they re-enable the types they want.
+alter table public.communities
+  add column if not exists tax_email_welcome_enabled   boolean not null default false,
+  add column if not exists tax_email_document_enabled  boolean not null default false,
+  add column if not exists tax_email_message_enabled   boolean not null default false,
+  add column if not exists tax_email_signature_enabled boolean not null default false;

@@ -285,6 +285,9 @@ export const taxApi = {
   adminSetRemindersEnabled(auth, payload) {
     return request('PUT', '/admin/community-settings/reminders-enabled', payload, auth, { admin: true });
   },
+  adminSetCustomerEmailEnabled(auth, payload) {
+    return request('PUT', '/admin/community-settings/customer-email-enabled', payload, auth, { admin: true });
+  },
   adminSetTaskLookahead(auth, payload) {
     return request('PUT', '/admin/community-settings/task-lookahead-months', payload, auth, { admin: true });
   },
