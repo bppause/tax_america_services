@@ -121,6 +121,26 @@ export default function OwnerSettings() {
       setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
     } finally { setBusy(false); }
   };
+  const onToggleStaffEmail = async (type, enabled) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetStaffEmailEnabled(auth, { communitySlug: community.id, type, enabled });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
+  const onToggleStaffEmailsMaster = async (enabled) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetStaffEmailsMaster(auth, { communitySlug: community.id, enabled });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
 
   const onToggleRemindersEnabled = async (enabled) => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
@@ -244,6 +264,10 @@ export default function OwnerSettings() {
       <CustomerEmailsSection settings={settings} busy={busy} t={t}
                              onToggle={onToggleCustomerEmail}
                              onToggleMaster={onToggleCustomerEmailsMaster} />
+
+      <StaffEmailsSection settings={settings} busy={busy} t={t}
+                          onToggle={onToggleStaffEmail}
+                          onToggleMaster={onToggleStaffEmailsMaster} />
 
       <CollapsibleSection
         storageKey="reminders"
@@ -477,6 +501,141 @@ function CustomerEmailsSection({ settings, busy, t, onToggle, onToggleMaster }) 
             sending — the master gate has to come back on first. The
             saved state still renders so the owner can plan ahead. */}
         {CUSTOMER_EMAIL_TYPES.map(row => {
+          const on = !!(settings && settings[row.column]);
+          const effective = masterOn && on;
+          const inputDisabled = busy || !masterOn;
+          return (
+            <label key={row.type} style={{
+              display: 'flex', gap: 12, alignItems: 'flex-start',
+              padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+              cursor: inputDisabled ? 'not-allowed' : 'pointer',
+              background: effective ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+              opacity: masterOn ? 1 : 0.55,
+            }}>
+              <input type="checkbox" disabled={inputDisabled}
+                     checked={on}
+                     onChange={(e) => onToggle(row.type, e.target.checked)}
+                     style={{ marginTop: 4 }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontWeight: 600 }}>
+                  {t(row.labelKey)}
+                  <span style={{
+                    marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+                    background: effective
+                      ? 'color-mix(in srgb, var(--tax-success, #16a34a) 12%, #fff)'
+                      : 'var(--tax-bg-alt)',
+                    color: effective ? 'var(--tax-success, #16a34a)' : 'var(--tax-muted)',
+                    border: '1px solid',
+                    borderColor: effective
+                      ? 'color-mix(in srgb, var(--tax-success, #16a34a) 35%, #fff)'
+                      : 'var(--tax-border)',
+                    fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                  }}>
+                    {effective
+                      ? t('owner.settings.statusOn')
+                      : (!masterOn && on
+                          ? t('owner.settings.customerEmails.pausedByMaster')
+                          : t('owner.settings.statusOff'))}
+                  </span>
+                </div>
+                <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                  {t(row.descKey)}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+// Mirror of CUSTOMER_EMAIL_TYPES but for owner/staff-facing automatic
+// emails (lead notifications, task-assignment, customer-messaged-
+// practice, signature-signed confirmation, staff welcome). Defaults
+// are ON server-side so existing tenants keep current behavior; the
+// owner flips individual types or the master off here.
+const STAFF_EMAIL_TYPES = [
+  { type: 'lead',             column: 'tax_staff_email_lead_enabled',
+    labelKey: 'owner.settings.staffEmails.lead.label',
+    descKey:  'owner.settings.staffEmails.lead.desc' },
+  { type: 'task_assigned',    column: 'tax_staff_email_task_assigned_enabled',
+    labelKey: 'owner.settings.staffEmails.taskAssigned.label',
+    descKey:  'owner.settings.staffEmails.taskAssigned.desc' },
+  { type: 'message',          column: 'tax_staff_email_message_enabled',
+    labelKey: 'owner.settings.staffEmails.message.label',
+    descKey:  'owner.settings.staffEmails.message.desc' },
+  { type: 'signature_signed', column: 'tax_staff_email_signature_signed_enabled',
+    labelKey: 'owner.settings.staffEmails.signatureSigned.label',
+    descKey:  'owner.settings.staffEmails.signatureSigned.desc' },
+  { type: 'staff_welcome',    column: 'tax_staff_email_welcome_enabled',
+    labelKey: 'owner.settings.staffEmails.staffWelcome.label',
+    descKey:  'owner.settings.staffEmails.staffWelcome.desc' },
+];
+
+// Twin of CustomerEmailsSection. Same UI shape — master row at the
+// top + per-type rows below — but pointed at the staff/owner-facing
+// columns and copy. Default-open is set to false like the customer
+// section so the owner only sees the rows when they want to tune
+// them.
+function StaffEmailsSection({ settings, busy, t, onToggle, onToggleMaster }) {
+  const masterOn = !!(settings && settings.tax_staff_emails_master_enabled);
+  const enabledCount = STAFF_EMAIL_TYPES
+    .filter(row => settings && settings[row.column]).length;
+  const effectiveOnCount = masterOn ? enabledCount : 0;
+  return (
+    <CollapsibleSection
+      storageKey="staffEmails"
+      defaultOpen={false}
+      title={t('owner.settings.staffEmails.title')}
+      subtitle={t('owner.settings.staffEmails.subtitle')}
+      statusLabel={!masterOn
+        ? t('owner.settings.customerEmails.masterOff')
+        : (enabledCount === 0
+            ? t('owner.settings.customerEmails.allOff')
+            : t('owner.settings.customerEmails.someOn', { count: effectiveOnCount }))}
+      enabled={masterOn && enabledCount > 0}>
+      <div style={{ display: 'grid', gap: 8, maxWidth: 720 }}>
+        <label style={{
+          display: 'flex', gap: 12, alignItems: 'flex-start',
+          padding: 14, border: '2px solid',
+          borderColor: masterOn
+            ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+            : 'var(--tax-border)',
+          borderRadius: 8, cursor: busy ? 'wait' : 'pointer',
+          background: masterOn
+            ? 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)'
+            : '#fff',
+        }}>
+          <input type="checkbox" disabled={busy}
+                 checked={masterOn}
+                 onChange={(e) => onToggleMaster(e.target.checked)}
+                 style={{ marginTop: 4 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 700 }}>
+              {t('owner.settings.staffEmails.master.label')}
+              <span style={{
+                marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+                background: masterOn
+                  ? 'color-mix(in srgb, var(--tax-success, #16a34a) 12%, #fff)'
+                  : 'color-mix(in srgb, #b91c1c 8%, #fff)',
+                color: masterOn ? 'var(--tax-success, #16a34a)' : '#7f1d1d',
+                border: '1px solid',
+                borderColor: masterOn
+                  ? 'color-mix(in srgb, var(--tax-success, #16a34a) 35%, #fff)'
+                  : 'color-mix(in srgb, #b91c1c 25%, #fff)',
+                fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+              }}>
+                {masterOn ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+              </span>
+            </div>
+            <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+              {t('owner.settings.staffEmails.master.desc')}
+            </div>
+          </div>
+        </label>
+
+        {STAFF_EMAIL_TYPES.map(row => {
           const on = !!(settings && settings[row.column]);
           const effective = masterOn && on;
           const inputDisabled = busy || !masterOn;
