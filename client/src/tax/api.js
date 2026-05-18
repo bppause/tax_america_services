@@ -288,6 +288,9 @@ export const taxApi = {
   adminSetCustomerEmailEnabled(auth, payload) {
     return request('PUT', '/admin/community-settings/customer-email-enabled', payload, auth, { admin: true });
   },
+  adminSetCustomerEmailsMaster(auth, payload) {
+    return request('PUT', '/admin/community-settings/customer-emails-master', payload, auth, { admin: true });
+  },
   adminSetTaskLookahead(auth, payload) {
     return request('PUT', '/admin/community-settings/task-lookahead-months', payload, auth, { admin: true });
   },

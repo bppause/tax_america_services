@@ -2697,3 +2697,12 @@ alter table public.communities
   add column if not exists tax_email_document_enabled  boolean not null default false,
   add column if not exists tax_email_message_enabled   boolean not null default false,
   add column if not exists tax_email_signature_enabled boolean not null default false;
+
+-- Master switch for all customer-email notifications. When off, every
+-- per-type toggle is overridden — no automatic customer email goes out
+-- regardless of welcome/document/message/signature individual state.
+-- Lets the owner pause everything for a vacation / quiet period and
+-- restore the prior per-type config in one click. Default off matches
+-- the per-type defaults (fresh communities start quiet).
+alter table public.communities
+  add column if not exists tax_customer_emails_master_enabled boolean not null default false;
