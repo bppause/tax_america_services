@@ -2365,15 +2365,42 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, type, enabled });
   });
 
+  // Owner master switch for every automatic customer email. Off →
+  // every per-type flag below is overridden so the practice goes
+  // quiet without losing the per-type config. On → per-type flags
+  // control individual sends as usual.
+  router.put('/admin/community-settings/customer-emails-master', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const enabled = Boolean(req.body?.enabled);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { error } = await supabase.from('communities')
+      .update({ tax_customer_emails_master_enabled: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.email', entityId: communitySlug,
+        action: 'set_master_enabled',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { tax_customer_emails_master_enabled: enabled },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, enabled });
+  });
+
   // Helper: read one of the customer-email flags for a community. Used
   // by the automatic send paths below to skip the email when the owner
-  // has the type turned off.
+  // has the type turned off. Honors the master switch first — if the
+  // master is off the per-type result doesn't matter.
   async function communityEmailFlag(communityId, column) {
     if (!communityId || !column) return false;
     try {
       const { data } = await supabase.from('communities')
-        .select(column).eq('id', communityId).maybeSingle();
-      return !!(data && data[column] === true);
+        .select(`tax_customer_emails_master_enabled, ${column}`)
+        .eq('id', communityId).maybeSingle();
+      if (!data || data.tax_customer_emails_master_enabled !== true) return false;
+      return data[column] === true;
     } catch { return false; }
   }
 
@@ -2436,6 +2463,7 @@ module.exports = function createTaxRouter(deps) {
         tax_customer_portal_enabled, tax_customer_reminders_enabled, tax_task_lookahead_months,
         tax_task_urgent_days, tax_task_soon_days, tax_task_upcoming_days,
         tax_task_priority_colors, tax_task_urgency_colors,
+        tax_customer_emails_master_enabled,
         tax_email_welcome_enabled, tax_email_document_enabled,
         tax_email_message_enabled, tax_email_signature_enabled,
         contact_email, phone, whatsapp,
