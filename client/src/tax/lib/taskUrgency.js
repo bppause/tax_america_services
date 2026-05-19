@@ -3,12 +3,12 @@
 // language everywhere.
 //
 // Two thresholds per community drive the model:
-//   urgent_days — due within N days → RED (matches the "overdue"
-//                 color so the brain reads "act today")
-//   soon_days   — due within N days → ORANGE
-// Anything past today is always overdue (red), and anything farther
-// out than soon_days has NO color so the operator's eye stays on
-// the items that need attention right now.
+//   urgent_days — due within N days → RED (act-now)
+//   soon_days   — due within N days → AMBER (heads-up)
+// Anything past today is OVERDUE — rendered in a darker crimson so
+// the eye distinguishes "already late" from "due imminently".
+// Anything farther out than soon_days has NO color so the operator's
+// eye stays on the items that need attention right now.
 
 const DEFAULTS = { urgent: 2, soon: 7 };
 
@@ -20,9 +20,9 @@ export function resolveThresholds(community) {
 }
 
 // Returns one of:
-//   'overdue' — strictly before today (red)
+//   'overdue' — strictly before today (deep crimson)
 //   'urgent'  — today + within urgent_days (red)
-//   'soon'    — within soon_days (orange)
+//   'soon'    — within soon_days (amber)
 //   'later'   — farther out, or no due date (NO color)
 export function urgencyOf(dueDate, thresholds, todayIso) {
   if (!dueDate) return 'later';
@@ -35,15 +35,20 @@ export function urgencyOf(dueDate, thresholds, todayIso) {
   return 'later';
 }
 
-// Default color tokens. 'later' renders transparent so it visually
-// disappears — the operator's eye lands on red and orange items
+// Default color tokens. Picked to read as a four-step gradient at
+// a glance: deep crimson (overdue) → red (urgent) → amber (soon)
+// → transparent (later). The dark/light split between overdue and
+// urgent is the important one — prior version used the same hex
+// for both, so the owner couldn't tell a past-due row from a
+// due-today row without reading the date. 'later' stays
+// transparent so the operator's eye lands on red and amber rows
 // only. Owners can override any of the four anchor colors per
 // community via tax_task_urgency_colors; the chip background is
 // then derived from the anchor as a light tint.
 export const URGENCY_DEFAULTS = {
-  overdue: '#dc2626',
+  overdue: '#7f1d1d',
   urgent:  '#dc2626',
-  soon:    '#ea580c',
+  soon:    '#f59e0b',
   later:   'transparent',
 };
 export const PRIORITY_DEFAULTS = {
