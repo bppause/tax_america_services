@@ -1273,7 +1273,7 @@ const PLATFORM_PRIORITY_DEFAULTS = {
   urgent: '#dc2626', high: '#ea580c', normal: '#3730a3', low: '#6b7280',
 };
 const PLATFORM_URGENCY_DEFAULTS = {
-  overdue: '#dc2626', urgent: '#dc2626', soon: '#ea580c', later: 'transparent',
+  overdue: '#7f1d1d', urgent: '#dc2626', soon: '#f59e0b', later: 'transparent',
 };
 
 function ColorOverridesEditor({ initialPriority, initialUrgency, busy, onSave, t }) {
