@@ -192,123 +192,11 @@ export default function OwnerSettings() {
              style={{ marginBottom: 16 }}>{msg.text}</div>
       )}
 
-      <CollapsibleSection
-        storageKey="notifLock"
-        defaultOpen={allowChange}
-        title={t('owner.settings.notifLock.title')}
-        subtitle={t('owner.settings.notifLock.subtitle')}
-        statusLabel={allowChange ? t('owner.settings.statusEnabled') : t('owner.settings.statusLocked')}
-        enabled={allowChange}>
-        <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
-          <label style={{
-            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
-            cursor: busy ? 'wait' : 'pointer',
-            background: !allowChange ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
-          }}>
-            <input type="radio" name="notif-lock" disabled={busy}
-                   checked={!allowChange} onChange={() => onToggleNotifLock(false)}
-                   style={{ marginTop: 2 }} />
-            <div>
-              <div style={{ fontWeight: 600 }}>{t('owner.settings.notifLock.locked')}</div>
-              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
-                {t('owner.settings.notifLock.lockedHint')}
-              </div>
-            </div>
-          </label>
-          <label style={{
-            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
-            cursor: busy ? 'wait' : 'pointer',
-            background: allowChange ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
-          }}>
-            <input type="radio" name="notif-lock" disabled={busy}
-                   checked={allowChange} onChange={() => onToggleNotifLock(true)}
-                   style={{ marginTop: 2 }} />
-            <div>
-              <div style={{ fontWeight: 600 }}>{t('owner.settings.notifLock.unlocked')}</div>
-              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
-                {t('owner.settings.notifLock.unlockedHint')}
-              </div>
-            </div>
-          </label>
-        </div>
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        storageKey="lookahead"
-        defaultOpen={true}
-        title={t('owner.settings.lookahead.title')}
-        subtitle={t('owner.settings.lookahead.subtitle')}>
-        <LookaheadEditor initial={lookaheadMonths} busy={busy}
-                         onSave={onSaveLookahead} onRefresh={onRefreshTasksNow} t={t} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        storageKey="urgency"
-        defaultOpen={true}
-        title={t('owner.settings.urgency.title')}
-        subtitle={t('owner.settings.urgency.subtitle')}>
-        <ThresholdEditor initial={thresholds} busy={busy} onSave={onSaveThresholds} t={t} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        storageKey="colors"
-        defaultOpen={true}
-        title={t('owner.settings.colors.title')}
-        subtitle={t('owner.settings.colors.subtitle')}>
-        <ColorOverridesEditor
-          initialPriority={settings.tax_task_priority_colors || {}}
-          initialUrgency={settings.tax_task_urgency_colors || {}}
-          busy={busy} onSave={onSaveColorOverrides} t={t} />
-      </CollapsibleSection>
-
-      <CustomerEmailsSection settings={settings} busy={busy} t={t}
-                             onToggle={onToggleCustomerEmail}
-                             onToggleMaster={onToggleCustomerEmailsMaster} />
-
-      <StaffEmailsSection settings={settings} busy={busy} t={t}
-                          onToggle={onToggleStaffEmail}
-                          onToggleMaster={onToggleStaffEmailsMaster} />
-
-      <CollapsibleSection
-        storageKey="reminders"
-        defaultOpen={remindersEnabled}
-        title={t('owner.settings.reminders.title')}
-        subtitle={t('owner.settings.reminders.subtitle')}
-        statusLabel={remindersEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
-        enabled={remindersEnabled}>
-        <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
-          <label style={{
-            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
-            cursor: busy ? 'wait' : 'pointer',
-            background: !remindersEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
-          }}>
-            <input type="radio" name="reminders-enabled" disabled={busy}
-                   checked={!remindersEnabled} onChange={() => onToggleRemindersEnabled(false)}
-                   style={{ marginTop: 2 }} />
-            <div>
-              <div style={{ fontWeight: 600 }}>{t('owner.settings.reminders.off')}</div>
-              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
-                {t('owner.settings.reminders.offHint')}
-              </div>
-            </div>
-          </label>
-          <label style={{
-            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
-            cursor: busy ? 'wait' : 'pointer',
-            background: remindersEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
-          }}>
-            <input type="radio" name="reminders-enabled" disabled={busy}
-                   checked={remindersEnabled} onChange={() => onToggleRemindersEnabled(true)}
-                   style={{ marginTop: 2 }} />
-            <div>
-              <div style={{ fontWeight: 600 }}>{t('owner.settings.reminders.on')}</div>
-              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
-                {t('owner.settings.reminders.onHint')}
-              </div>
-            </div>
-          </label>
-        </div>
-      </CollapsibleSection>
+      {/* Group 1 — Customer portal & access. Cards that decide what the
+          customer-facing side of the product does at all. */}
+      <SettingsGroupHeader
+        label={t('owner.settings.group.customerPortal.label')}
+        hint={t('owner.settings.group.customerPortal.hint')} />
 
       <CollapsibleSection
         storageKey="portal"
@@ -392,7 +280,145 @@ export default function OwnerSettings() {
         </div>
       </CollapsibleSection>
 
+      <CollapsibleSection
+        storageKey="notifLock"
+        defaultOpen={allowChange}
+        title={t('owner.settings.notifLock.title')}
+        subtitle={t('owner.settings.notifLock.subtitle')}
+        statusLabel={allowChange ? t('owner.settings.statusEnabled') : t('owner.settings.statusLocked')}
+        enabled={allowChange}>
+        <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: !allowChange ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="notif-lock" disabled={busy}
+                   checked={!allowChange} onChange={() => onToggleNotifLock(false)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.notifLock.locked')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.notifLock.lockedHint')}
+              </div>
+            </div>
+          </label>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: allowChange ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="notif-lock" disabled={busy}
+                   checked={allowChange} onChange={() => onToggleNotifLock(true)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.notifLock.unlocked')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.notifLock.unlockedHint')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </CollapsibleSection>
+
+      {/* Group 2 — Email notifications. All automatic email controls
+          together (customer-facing per type, team-facing per type, plus
+          the filing-reminder cadence which gates the daily cron). */}
+      <SettingsGroupHeader
+        label={t('owner.settings.group.emails.label')}
+        hint={t('owner.settings.group.emails.hint')} />
+
+      <CustomerEmailsSection settings={settings} busy={busy} t={t}
+                             onToggle={onToggleCustomerEmail}
+                             onToggleMaster={onToggleCustomerEmailsMaster} />
+
+      <StaffEmailsSection settings={settings} busy={busy} t={t}
+                          onToggle={onToggleStaffEmail}
+                          onToggleMaster={onToggleStaffEmailsMaster} />
+
+      <CollapsibleSection
+        storageKey="reminders"
+        defaultOpen={remindersEnabled}
+        title={t('owner.settings.reminders.title')}
+        subtitle={t('owner.settings.reminders.subtitle')}
+        statusLabel={remindersEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+        enabled={remindersEnabled}>
+        <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: !remindersEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="reminders-enabled" disabled={busy}
+                   checked={!remindersEnabled} onChange={() => onToggleRemindersEnabled(false)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.reminders.off')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.reminders.offHint')}
+              </div>
+            </div>
+          </label>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: remindersEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="reminders-enabled" disabled={busy}
+                   checked={remindersEnabled} onChange={() => onToggleRemindersEnabled(true)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.reminders.on')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.reminders.onHint')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </CollapsibleSection>
+
+      {/* Group 3 — Tasks & workflow. Everything that shapes how the
+          team's task board behaves. */}
+      <SettingsGroupHeader
+        label={t('owner.settings.group.tasks.label')}
+        hint={t('owner.settings.group.tasks.hint')} />
+
+      <CollapsibleSection
+        storageKey="lookahead"
+        defaultOpen={true}
+        title={t('owner.settings.lookahead.title')}
+        subtitle={t('owner.settings.lookahead.subtitle')}>
+        <LookaheadEditor initial={lookaheadMonths} busy={busy}
+                         onSave={onSaveLookahead} onRefresh={onRefreshTasksNow} t={t} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        storageKey="urgency"
+        defaultOpen={true}
+        title={t('owner.settings.urgency.title')}
+        subtitle={t('owner.settings.urgency.subtitle')}>
+        <ThresholdEditor initial={thresholds} busy={busy} onSave={onSaveThresholds} t={t} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        storageKey="colors"
+        defaultOpen={true}
+        title={t('owner.settings.colors.title')}
+        subtitle={t('owner.settings.colors.subtitle')}>
+        <ColorOverridesEditor
+          initialPriority={settings.tax_task_priority_colors || {}}
+          initialUrgency={settings.tax_task_urgency_colors || {}}
+          busy={busy} onSave={onSaveColorOverrides} t={t} />
+      </CollapsibleSection>
+
       <TaskStatusesSection auth={auth} community={community} t={t} />
+
+      {/* Group 4 — Public site. Contact info + the editable copy that
+          drives the public landing page (Hero, Services / Team / FAQs
+          headings, Get-started cards, About). */}
+      <SettingsGroupHeader
+        label={t('owner.settings.group.publicSite.label')}
+        hint={t('owner.settings.group.publicSite.hint')} />
 
       <CommunityContactSection settings={settings} auth={auth} community={community}
                                t={t} onSaved={load} />
@@ -400,6 +426,30 @@ export default function OwnerSettings() {
       <LandingCopySection settings={settings} auth={auth} community={community}
                           t={t} onSaved={load} />
     </EmployeeShell>
+  );
+}
+
+// Visual divider between clusters of settings cards. Renders as a small
+// uppercase label + a thin rule, so the owner scans the page by group
+// rather than having to read every collapsed card title to find the
+// area they care about.
+function SettingsGroupHeader({ label, hint }) {
+  return (
+    <div style={{ margin: '28px 0 10px' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+        textTransform: 'uppercase', letterSpacing: '.08em',
+      }}>
+        <span>{label}</span>
+        <span style={{ flex: 1, height: 1, background: 'var(--tax-border)' }} />
+      </div>
+      {hint && (
+        <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--tax-muted)' }}>
+          {hint}
+        </p>
+      )}
+    </div>
   );
 }
 
