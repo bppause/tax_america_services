@@ -491,7 +491,7 @@ module.exports = function createTaxRouter(deps) {
 
     const { data: community, error: cErr } = await supabase
       .from('communities')
-      .select('id, name, contact_email, business_type')
+      .select('id, name, contact_email, business_type, default_locale')
       .eq('id', communitySlug)
       .eq('business_type', TAX_BUSINESS_TYPE)
       .maybeSingle();
@@ -7313,7 +7313,7 @@ module.exports = function createTaxRouter(deps) {
     ]);
     if (!thread || !cust || !msg) return;
     const { data: community } = await supabase.from('communities')
-      .select('id, name, contact_email').eq('id', thread.community_id).maybeSingle();
+      .select('id, name, contact_email, default_locale').eq('id', thread.community_id).maybeSingle();
 
     await supabase.from('tax_notifications').insert({
       id: 'tnotif_' + uuidv4().slice(0, 12),
@@ -7348,7 +7348,7 @@ module.exports = function createTaxRouter(deps) {
     ]);
     if (!thread || !cust) return;
     const { data: community } = await supabase.from('communities')
-      .select('id, name, contact_email').eq('id', thread.community_id).maybeSingle();
+      .select('id, name, contact_email, default_locale').eq('id', thread.community_id).maybeSingle();
 
     // Fan out (Phase 3b): admins always get notified for any customer in
     // their community; staff get notified ONLY for customers they're

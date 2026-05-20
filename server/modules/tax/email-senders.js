@@ -1,9 +1,23 @@
-// Per-module email senders for the tax module (Phase 1).
+// Per-module email senders for the tax module.
 //
-// Phase 1 only sends the lead-arrival notification to the community's
-// configured contact email. It uses the generic sendSpanishEmail primitive
-// directly (no template row needed yet) — Phase 4b will move tax email copy
-// into the editable email_templates table with `tax_*` keys.
+// Recipient-language contract: every sender picks `lang` from the
+// language preference of whoever RECEIVES the email, never from a
+// third party in the metadata. Concretely:
+//
+//   • customer-facing senders (welcome, reminder, document, message,
+//     signature request) read cust.locale
+//   • staff-facing senders (welcome, task assigned, message-from-
+//     customer, signature signed, daily digest) read employee.locale
+//   • practice-level senders that go to community.contact_email
+//     (lead notification, message-fallback-when-no-staff) read
+//     community.default_locale — the address is owned by the
+//     practice operator, not the lead/customer who triggered it.
+//
+// Anything that ends up undefined falls back to the platform default
+// ('es') via the `=== 'en' ? 'en' : 'es'` shorthand each sender uses.
+// Owner-editable subject + intro overrides via loadTaxEmailTemplate
+// flow through the same lang value, so the override row is looked up
+// in the recipient's language too.
 
 'use strict';
 
@@ -128,15 +142,21 @@ module.exports = function createTaxSenders(deps) {
       lead_locale: lead.preferred_locale,
       lead_message: lead.message || '', lead_id: lead.id, lead_submitted: lead.created_at,
     };
+    // Recipient is the practice's contact_email, not the lead. Pick
+    // the owner's own preferred language (community.default_locale)
+    // so the subject + body arrive in the language the practice
+    // reads — the lead's own language stays visible in the body as
+    // metadata so the owner knows what language to reply in.
+    const recipientLang = community?.default_locale === 'en' ? 'en' : 'es';
     const finalCopy = await applyOverride({
       communityId: community.id, key: 'lead',
-      lang: lead.preferred_locale === 'en' ? 'en' : 'es',
+      lang: recipientLang,
       vars, defaults,
     });
     return sendSpanishEmail({
       to,
       subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html,
-      lang: lead.preferred_locale === 'en' ? 'en' : 'es-CO',
+      lang: recipientLang === 'en' ? 'en' : 'es-CO',
     });
   };
 
@@ -998,42 +1018,57 @@ module.exports = function createTaxSenders(deps) {
   };
 
   // ── Practice notification email (Phase 2f) ───────────────────────────────
-  // Sent to the community's contact_email when a CUSTOMER posts a message.
-  // English-only for v1 since it goes to the practice operator, not the
-  // customer. Full thread lives in the (future) owner dashboard; the email
-  // is a "go check it" signal.
+  // Sent to the community's contact_email when a CUSTOMER posts a message
+  // and no staff member is assigned to that customer. Localized to the
+  // owner's preference via community.default_locale — the recipient is
+  // the practice operator, not the customer, so the customer's locale
+  // doesn't apply.
   const sendTaxMessagePracticeEmail = async ({ community, customer, thread, message }) => {
     if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
     const to = String(community?.contact_email || '').trim();
     if (!to) return { sent: false, skipped: true, reason: 'community_contact_email_missing' };
 
-    const subject = `[${community.name}] New customer message from ${customer?.name || customer?.email || 'a customer'}`;
+    const lang = community?.default_locale === 'en' ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const practiceName = community?.name || 'Tax America Services';
+    const customerLabel = customer?.name || customer?.email || (lang === 'en' ? 'a customer' : 'un cliente');
+    const subject = lang === 'en'
+      ? `[${practiceName}] New customer message from ${customerLabel}`
+      : `[${practiceName}] Nuevo mensaje de cliente de ${customerLabel}`;
     const preview = String(message?.body || '').slice(0, 500);
     const truncated = (message?.body || '').length > 500;
     const previewLine = preview + (truncated ? '…' : '');
 
+    const labels = lang === 'en'
+      ? { intro: `New customer message via ${practiceName} portal:`,
+          from: 'From', subj: 'Subject', threadId: 'Thread', posted: 'Posted',
+          message: 'Message', heading: `New customer message — ${practiceName}` }
+      : { intro: `Nuevo mensaje de cliente vía el portal de ${practiceName}:`,
+          from: 'De', subj: 'Asunto', threadId: 'Hilo', posted: 'Publicado',
+          message: 'Mensaje', heading: `Nuevo mensaje de cliente — ${practiceName}` };
+
     const lines = [
-      `New customer message via ${community.name} portal:`,
+      labels.intro,
       '',
-      `From:     ${customer?.name || ''} <${customer?.email || ''}>`,
-      thread?.subject ? `Subject:  ${thread.subject}` : '',
-      `Thread:   ${thread?.id || ''}`,
-      `Posted:   ${message?.created_at || ''}`,
+      `${labels.from}:     ${customer?.name || ''} <${customer?.email || ''}>`,
+      thread?.subject ? `${labels.subj}:  ${thread.subject}` : '',
+      `${labels.threadId}:   ${thread?.id || ''}`,
+      `${labels.posted}:   ${message?.created_at || ''}`,
       '',
-      'Message:',
+      `${labels.message}:`,
       previewLine,
     ].filter(Boolean);
     const text = lines.join('\n');
 
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:640px;color:#111">
-        <h3 style="margin:0 0 12px">New customer message — ${escapeHtml(community.name)}</h3>
+        <h3 style="margin:0 0 12px">${escapeHtml(labels.heading)}</h3>
         <table style="border-collapse:collapse;width:100%">
-          <tr><td style="padding:6px 8px;color:#555">From</td><td style="padding:6px 8px"><strong>${escapeHtml(customer?.name || '')}</strong> &lt;${escapeHtml(customer?.email || '')}&gt;</td></tr>
-          ${thread?.subject ? `<tr><td style="padding:6px 8px;color:#555">Subject</td><td style="padding:6px 8px">${escapeHtml(thread.subject)}</td></tr>` : ''}
-          <tr><td style="padding:6px 8px;color:#555">Thread ID</td><td style="padding:6px 8px;color:#666;font-family:monospace;font-size:12px">${escapeHtml(thread?.id || '')}</td></tr>
+          <tr><td style="padding:6px 8px;color:#555">${escapeHtml(labels.from)}</td><td style="padding:6px 8px"><strong>${escapeHtml(customer?.name || '')}</strong> &lt;${escapeHtml(customer?.email || '')}&gt;</td></tr>
+          ${thread?.subject ? `<tr><td style="padding:6px 8px;color:#555">${escapeHtml(labels.subj)}</td><td style="padding:6px 8px">${escapeHtml(thread.subject)}</td></tr>` : ''}
+          <tr><td style="padding:6px 8px;color:#555">${escapeHtml(labels.threadId)}</td><td style="padding:6px 8px;color:#666;font-family:monospace;font-size:12px">${escapeHtml(thread?.id || '')}</td></tr>
         </table>
-        <h4>Message</h4>
+        <h4>${escapeHtml(labels.message)}</h4>
         <blockquote style="margin:8px 0;padding:12px 16px;background:#f7f7f7;border-radius:8px;white-space:pre-wrap">${escapeHtml(previewLine)}</blockquote>
       </div>
     `;
@@ -1041,14 +1076,14 @@ module.exports = function createTaxSenders(deps) {
     const pDefaults = { subject, text, html };
     const pVars = {
       customer_name: customer?.name || '', customer_email: customer?.email || '',
-      practice_name: community?.name || '', thread_subject: thread?.subject || '',
+      practice_name: practiceName, thread_subject: thread?.subject || '',
       thread_id: thread?.id || '', message_preview: previewLine,
     };
     const pFinal = await applyOverride({
-      communityId: community?.id, key: 'message_to_practice', lang: 'en', vars: pVars, defaults: pDefaults,
+      communityId: community?.id, key: 'message_to_practice', lang, vars: pVars, defaults: pDefaults,
     });
     return sendSpanishEmail({
-      to, subject: pFinal.subject, text: pFinal.text, html: pFinal.html, lang: 'en',
+      to, subject: pFinal.subject, text: pFinal.text, html: pFinal.html, lang: langTag,
     });
   };
 
@@ -1062,7 +1097,11 @@ module.exports = function createTaxSenders(deps) {
     const to = String(employee?.preferred_communication_email || employee?.email || '').trim();
     if (!to) return { sent: false, skipped: true, reason: 'employee_email_missing' };
 
-    const lang = employee?.locale === 'es' ? 'es' : 'en';
+    // Default to ES when employee.locale is missing so this sender
+    // matches every other employee-facing one (sendTaxStaffWelcomeEmail,
+    // sendTaxTaskAssignedEmail, sendTaxDailyDigestEmail,
+    // sendTaxSignatureSignedEmail) and the platform's DEFAULT_LOCALE.
+    const lang = employee?.locale === 'en' ? 'en' : 'es';
     const langTag = lang === 'en' ? 'en' : 'es-CO';
     const practiceName = community?.name || 'Your tax practice';
     const subject = lang === 'en'
