@@ -49,6 +49,19 @@ export default function OwnerCustomers() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');                 // debounced value
   const [relationshipFilter, setRelationshipFilter] = useState([]); // array of type ids
+  // 'all' | 'individual' | 'business'. Persists so the owner's last
+  // browse mode is honored across sessions.
+  const [customerTypeFilter, setCustomerTypeFilter] = useState(() => {
+    try {
+      const s = localStorage.getItem('tax.customers.typeFilter');
+      if (s === 'individual' || s === 'business' || s === 'all') return s;
+    } catch { /* ignore */ }
+    return 'all';
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tax.customers.typeFilter', customerTypeFilter); }
+    catch { /* ignore */ }
+  }, [customerTypeFilter]);
   const [allTypes, setAllTypes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -78,7 +91,11 @@ export default function OwnerCustomers() {
   const load = () => {
     if (!fbUser || !community) return;
     setLoading(true); setErr('');
-    const opts = { q: search, relationshipTypeIds: relationshipFilter };
+    const opts = {
+      q: search,
+      relationshipTypeIds: relationshipFilter,
+      customerType: customerTypeFilter !== 'all' ? customerTypeFilter : undefined,
+    };
     const p = isAdmin
       ? taxApi.adminListCustomers(auth, community.id, opts)
       : taxApi.listEmployeeCustomers(auth, opts);
@@ -86,7 +103,7 @@ export default function OwnerCustomers() {
      .catch(e => setErr(e?.message || t('error.loadFailed')))
      .finally(() => setLoading(false));
   };
-  useEffect(load, [fbUser, community, search, relationshipFilter, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [fbUser, community, search, relationshipFilter, customerTypeFilter, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load relationship-type catalog once for the chip filter. Both admin
   // and staff need it; the endpoint sits behind requireOwnerAdmin so staff
@@ -450,8 +467,39 @@ export default function OwnerCustomers() {
         </form>
       )}
 
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        {[
+          { key: 'all',        label: t('owner.customers.typeFilter.all') },
+          { key: 'individual', label: t('owner.customers.customerType.individual') },
+          { key: 'business',   label: t('owner.customers.customerType.business') },
+        ].map(opt => {
+          const active = customerTypeFilter === opt.key;
+          return (
+            <button key={opt.key} type="button"
+                    onClick={() => setCustomerTypeFilter(opt.key)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                      background: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                        : '#fff',
+                      color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                      border: '1px solid',
+                      borderColor: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                        : 'var(--tax-border)',
+                      fontWeight: active ? 700 : 500,
+                    }}>
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div style={{ marginBottom: 12 }}>
-        <input type="search" placeholder={t('owner.customers.searchPlaceholder')}
+        <input type="search"
+               placeholder={customerTypeFilter === 'business'
+                 ? t('owner.customers.searchPlaceholder.business')
+                 : t('owner.customers.searchPlaceholder')}
                value={searchInput} onChange={e => setSearchInput(e.target.value)}
                style={{
                  width: '100%', padding: '10px 12px',

@@ -704,6 +704,7 @@ module.exports = function createTaxRouter(deps) {
         communitySlug,
         q: req.query.q,
         relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
+        customerType: req.query.customerType,
         scopedCustomerIds: null,            // admin sees the whole community
       });
       res.json({ customers });
@@ -736,10 +737,10 @@ module.exports = function createTaxRouter(deps) {
   //   • Relationships are fetched as a second query keyed by customer_id
   //     to keep the select string simple and to avoid embedded-resource
   //     pagination quirks.
-  async function searchCustomers({ communitySlug, q, relationshipTypeIds, scopedCustomerIds }) {
+  async function searchCustomers({ communitySlug, q, relationshipTypeIds, customerType, scopedCustomerIds }) {
     let query = supabase.from('tax_customers')
       .select(`
-        id, email, name, business_name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email,
+        id, email, name, business_name, customer_type, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email,
         locale, status, last_sign_in_at, created_at,
         tax_subscriptions ( id, product_id, status, active_schedule_slugs, reminder_channels, reminder_offsets_days )
       `)
@@ -748,6 +749,13 @@ module.exports = function createTaxRouter(deps) {
     if (Array.isArray(scopedCustomerIds)) {
       if (!scopedCustomerIds.length) return [];
       query = query.in('id', scopedCustomerIds);
+    }
+    // Filter by classification when the caller asks. Unknown / blank
+    // values fall through (no filter) so the legacy "no type chip"
+    // browse experience keeps working.
+    const ctNorm = String(customerType || '').toLowerCase().trim();
+    if (ctNorm === 'business' || ctNorm === 'individual') {
+      query = query.eq('customer_type', ctNorm);
     }
 
     if (Array.isArray(relationshipTypeIds) && relationshipTypeIds.length) {
@@ -3220,6 +3228,13 @@ module.exports = function createTaxRouter(deps) {
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
     if (statusFilter) q = q.eq('status', statusFilter);
+    const ctNorm = String(req.query.customerType || '').toLowerCase().trim();
+    if (ctNorm === 'business' || ctNorm === 'individual') q = q.eq('customer_type', ctNorm);
+    // Optional business-name fragment filter, surfaces when the
+    // owner picks "Business" in the inbox and wants to narrow to a
+    // specific company without typing the full string.
+    const bizName = trim(req.query.businessName, 200);
+    if (bizName) q = q.ilike('company', `%${bizName.replace(/[%_]/g, ' ')}%`);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
     res.json({ leads: data || [] });
@@ -7782,6 +7797,7 @@ module.exports = function createTaxRouter(deps) {
         communitySlug: emp.community_id,
         q: req.query.q,
         relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
+        customerType: req.query.customerType,
         scopedCustomerIds: visible,         // null for admin, array for staff
       });
       res.json({ customers });
