@@ -70,6 +70,7 @@ export default function OwnerTasks() {
   // pickers.
   const [filters, setFilters] = useState({
     status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '',
+    customerType: 'all',   // 'all' | 'individual' | 'business'
     q: '',
   });
   // Phase 4n.45: view mode (list/calendar/kanban), group-by, and the
@@ -138,6 +139,7 @@ export default function OwnerTasks() {
       assignedTo: flat(filters.assignedTo),
       productId: flat(filters.productId),
       customerId: flat(filters.customerId),
+      customerType: filters.customerType && filters.customerType !== 'all' ? filters.customerType : undefined,
       due: filters.due,
       q: filters.q,
       sort: sortKey,
@@ -225,8 +227,16 @@ export default function OwnerTasks() {
     }
   }, [tasks]);
 
-  const onClearFilters = () => setFilters({ status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '', q: '' });
-  const filtersActive = Object.values(filters).some(v => Array.isArray(v) ? v.length > 0 : !!v);
+  const onClearFilters = () => setFilters({ status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '', customerType: 'all', q: '' });
+  // customerType always carries a string ('all' / 'individual' /
+  // 'business') so we only count it as "active" when it differs from
+  // the default. Other scalar filters fall back to truthy because
+  // empty string means "not picked".
+  const filtersActive = Object.entries(filters).some(([k, v]) => {
+    if (Array.isArray(v)) return v.length > 0;
+    if (k === 'customerType') return v && v !== 'all';
+    return !!v;
+  });
 
   if (err) return <EmployeeShell community={community} active="tasks">
     <div className="tax-msg tax-msg--error">{err}</div>
@@ -352,12 +362,18 @@ function FilterBar({ filters, setFilters, statuses, employees, products, custome
     return { ...prev, [k]: cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id] };
   });
   // Sort customers alphabetically by display name (company first when set)
-  // so the picker scans like a directory.
-  const customerOptions = [...customers].sort((a, b) => {
-    const an = (a.business_name || displayPersonName(a) || a.email || '').toLowerCase();
-    const bn = (b.business_name || displayPersonName(b) || b.email || '').toLowerCase();
-    return an.localeCompare(bn);
-  }).map(c => ({
+  // so the picker scans like a directory. Narrow to the chip-filter
+  // type so picking "Business" up top hides individuals in the
+  // dropdown too.
+  const customerOptions = [...customers]
+    .filter(c => (filters.customerType === 'all' || !filters.customerType)
+      ? true
+      : (c.customer_type || 'individual') === filters.customerType)
+    .sort((a, b) => {
+      const an = (a.business_name || displayPersonName(a) || a.email || '').toLowerCase();
+      const bn = (b.business_name || displayPersonName(b) || b.email || '').toLowerCase();
+      return an.localeCompare(bn);
+    }).map(c => ({
     id: c.id,
     label: c.business_name || displayPersonName(c) || c.email,
     sub: c.business_name && (c.first_name || c.last_name)
@@ -381,6 +397,36 @@ function FilterBar({ filters, setFilters, statuses, employees, products, custome
   return (
     <div style={{ display: 'grid', gap: 8, marginBottom: 16,
                   padding: 12, background: 'var(--tax-bg-alt)', borderRadius: 8 }}>
+      {/* Customer-type chip row. Mirrors the same control on the
+          Customers list + Leads inbox so the filter language is the
+          same across the employee portal. */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {[
+          { key: 'all',        label: t('owner.customers.typeFilter.all') },
+          { key: 'individual', label: t('owner.customers.customerType.individual') },
+          { key: 'business',   label: t('owner.customers.customerType.business') },
+        ].map(opt => {
+          const active = (filters.customerType || 'all') === opt.key;
+          return (
+            <button key={opt.key} type="button"
+                    onClick={() => set('customerType', opt.key)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                      background: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                        : '#fff',
+                      color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                      border: '1px solid',
+                      borderColor: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                        : 'var(--tax-border)',
+                      fontWeight: active ? 700 : 500,
+                    }}>
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
       <input type="search" value={filters.q}
              onChange={e => set('q', e.target.value)}
              placeholder={t('owner.tasks.searchPlaceholder')}

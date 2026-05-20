@@ -5483,6 +5483,18 @@ module.exports = function createTaxRouter(deps) {
     q = applyListFilter(q, req.query.assignedTo, 'assigned_employee_id', 200);
     q = applyListFilter(q, req.query.customerId, 'customer_id',          200);
     q = applyListFilter(q, req.query.productId,  'product_id',           200);
+    // Narrow to tasks whose customer is the chosen type. Pre-resolves
+    // matching customer IDs because PostgREST embedded-resource
+    // filters get awkward when combined with the customer_id list
+    // filter above. Stacks as an intersection with that filter.
+    const ctNorm = String(req.query.customerType || '').toLowerCase().trim();
+    if (ctNorm === 'business' || ctNorm === 'individual') {
+      const { data: matchedCust } = await supabase.from('tax_customers')
+        .select('id').eq('community_id', communitySlug).eq('customer_type', ctNorm);
+      const matchedIds = (matchedCust || []).map(r => r.id);
+      if (!matchedIds.length) return res.json({ tasks: [] });
+      q = q.in('customer_id', matchedIds);
+    }
     if (req.query.priority) q = q.eq('priority', trim(req.query.priority, 20));
     // Period-rollup drill-down: caller wants every task generated
     // by a specific auto-task on a specific due-date.
@@ -5626,6 +5638,16 @@ module.exports = function createTaxRouter(deps) {
     q = applyListFilter(q, req.query.assignedTo, 'assigned_employee_id', 200);
     q = applyListFilter(q, req.query.customerId, 'customer_id',          200);
     q = applyListFilter(q, req.query.productId,  'product_id',           200);
+    // Same customer-type filter as /admin/tasks above so the Periods
+    // view stays in sync when the owner picks Individual / Business.
+    const ctNormP = String(req.query.customerType || '').toLowerCase().trim();
+    if (ctNormP === 'business' || ctNormP === 'individual') {
+      const { data: matchedCust } = await supabase.from('tax_customers')
+        .select('id').eq('community_id', communitySlug).eq('customer_type', ctNormP);
+      const matchedIds = (matchedCust || []).map(r => r.id);
+      if (!matchedIds.length) return res.json({ periods: [] });
+      q = q.in('customer_id', matchedIds);
+    }
     if (req.query.priority) q = q.eq('priority', trim(req.query.priority, 20));
 
     const due = trim(req.query.due, 20);
