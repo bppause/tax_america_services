@@ -144,6 +144,7 @@ export const taxApi = {
     if (opts.relationshipTypeIds && opts.relationshipTypeIds.length) {
       qs.set('relationshipTypeIds', opts.relationshipTypeIds.join(','));
     }
+    if (opts.customerType) qs.set('customerType', opts.customerType);
     return request('GET',  `/admin/customers?${qs.toString()}`, undefined, auth, { admin: true });
   },
 
@@ -154,6 +155,7 @@ export const taxApi = {
     if (opts.relationshipTypeIds && opts.relationshipTypeIds.length) {
       qs.set('relationshipTypeIds', opts.relationshipTypeIds.join(','));
     }
+    if (opts.customerType) qs.set('customerType', opts.customerType);
     const path = '/employee/customers' + (qs.toString() ? `?${qs.toString()}` : '');
     return request('GET',  path, undefined, auth);
   },
@@ -357,6 +359,8 @@ export const taxApi = {
   adminListLeads(auth, communitySlug, opts = {}) {
     const qs = new URLSearchParams({ communitySlug });
     if (opts.status) qs.set('status', opts.status);
+    if (opts.customerType) qs.set('customerType', opts.customerType);
+    if (opts.businessName) qs.set('businessName', opts.businessName);
     return request('GET',  `/admin/leads?${qs.toString()}`, undefined, auth, { admin: true });
   },
   adminUpdateLead(auth, leadId, payload)         { return request('PUT',  `/admin/leads/${encodeURIComponent(leadId)}`, payload, auth, { admin: true }); },

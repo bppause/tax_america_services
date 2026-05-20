@@ -31,20 +31,35 @@ export default function OwnerLeads() {
   // Force the filter to "all" when we have a target lead so the row
   // never gets hidden by the current filter (closed / converted / etc).
   const [filter, setFilter] = useState(focusLeadId ? 'all' : 'open'); // 'open' = new|contacted, 'all', or specific status
+  // Customer-type chip filter — mirrors the customer-list one so the
+  // two surfaces feel like the same product.
+  const [typeFilter, setTypeFilter] = useState('all'); // 'all' | 'individual' | 'business'
+  // Business-name fragment input that surfaces only when typeFilter
+  // is 'business' so the inbox can narrow to a single company.
+  const [businessNameInput, setBusinessNameInput] = useState('');
+  const [businessName, setBusinessName] = useState('');
   const [products, setProducts] = useState([]);
   const [relTypes, setRelTypes] = useState([]);
   const [err, setErr] = useState('');
+
+  // Debounce the business-name input so each keystroke doesn't refetch.
+  useEffect(() => {
+    const id = setTimeout(() => setBusinessName(businessNameInput.trim()), 300);
+    return () => clearTimeout(id);
+  }, [businessNameInput]);
 
   const load = () => {
     if (!fbUser || !community) return;
     const opts = {};
     // 'open' is a virtual bucket — fetch all and filter client-side.
     if (STATUS_VALUES.includes(filter)) opts.status = filter;
+    if (typeFilter !== 'all') opts.customerType = typeFilter;
+    if (typeFilter === 'business' && businessName) opts.businessName = businessName;
     taxApi.adminListLeads(auth, community.id, opts)
       .then(d => setLeads(d.leads || []))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
   };
-  useEffect(load, [fbUser, community, filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [fbUser, community, filter, typeFilter, businessName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Products + relationship types — needed by the convert dialog to
   // suggest relationships based on the lead's requested services.
@@ -76,7 +91,7 @@ export default function OwnerLeads() {
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
         {[
           { id: 'open',      labelKey: 'owner.leads.filter.open' },
           { id: 'converted', labelKey: 'owner.leads.filter.converted' },
@@ -90,6 +105,49 @@ export default function OwnerLeads() {
             {t(f.labelKey)}
           </button>
         ))}
+      </div>
+
+      {/* Customer-type chip row. Mirrors the customer list so the two
+          inboxes feel like the same product. When 'business' is on,
+          a business-name fragment input also surfaces so the owner
+          can narrow to a specific company without scanning the list. */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 16 }}>
+        {[
+          { key: 'all',        label: t('owner.customers.typeFilter.all') },
+          { key: 'individual', label: t('owner.customers.customerType.individual') },
+          { key: 'business',   label: t('owner.customers.customerType.business') },
+        ].map(opt => {
+          const active = typeFilter === opt.key;
+          return (
+            <button key={opt.key} type="button"
+                    onClick={() => setTypeFilter(opt.key)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                      background: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                        : '#fff',
+                      color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                      border: '1px solid',
+                      borderColor: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                        : 'var(--tax-border)',
+                      fontWeight: active ? 700 : 500,
+                    }}>
+              {opt.label}
+            </button>
+          );
+        })}
+        {typeFilter === 'business' && (
+          <input type="search"
+                 placeholder={t('owner.leads.businessNameFilter.placeholder')}
+                 value={businessNameInput}
+                 onChange={e => setBusinessNameInput(e.target.value)}
+                 style={{
+                   marginLeft: 4, flex: '1 1 200px', minWidth: 200,
+                   padding: '6px 10px', border: '1px solid var(--tax-border)',
+                   borderRadius: 999, fontSize: 13,
+                 }} />
+        )}
       </div>
 
       {shown === null ? <p>{t('loading')}</p>
