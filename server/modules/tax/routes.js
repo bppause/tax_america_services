@@ -4647,6 +4647,21 @@ module.exports = function createTaxRouter(deps) {
     // automatically — KPI cards reflect only what's visible.
     const filterAssignee = trim(req.query.assignedTo || '', 200);
     const filterCustomer = trim(req.query.customerId || '', 200);
+    // Same customer-type filter as the Tasks page so the Service-
+    // progress dashboard matches what an owner is looking at when
+    // they cross over from the Tasks list. Resolves matching
+    // customer IDs once and intersects with any specific customerId
+    // the caller also passed.
+    const ctNorm = String(req.query.customerType || '').toLowerCase().trim();
+    let typeCustomerIds = null;
+    if (ctNorm === 'business' || ctNorm === 'individual') {
+      const { data: matched } = await supabase.from('tax_customers')
+        .select('id').eq('community_id', communitySlug).eq('customer_type', ctNorm);
+      typeCustomerIds = (matched || []).map(r => r.id);
+      if (!typeCustomerIds.length) {
+        return res.json({ totals: { open: 0, in_progress: 0, done: 0, overdue: 0 }, byService: [] });
+      }
+    }
     let q = supabase.from('tax_tasks')
       .select(`
         id, customer_id, product_id, status_key, due_date, completed_at,
@@ -4658,6 +4673,7 @@ module.exports = function createTaxRouter(deps) {
       .limit(5000);
     if (filterAssignee) q = q.eq('assigned_employee_id', filterAssignee);
     if (filterCustomer) q = q.eq('customer_id', filterCustomer);
+    if (typeCustomerIds) q = q.in('customer_id', typeCustomerIds);
     const { data: tasks, error } = await q;
     if (error) return sendSupabaseError(res, error);
 

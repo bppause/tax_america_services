@@ -282,6 +282,7 @@ export const taxApi = {
     if (opts.communitySlug) qs.set('communitySlug', opts.communitySlug);
     if (opts.assignedTo)    qs.set('assignedTo', opts.assignedTo);
     if (opts.customerId)    qs.set('customerId', opts.customerId);
+    if (opts.customerType)  qs.set('customerType', opts.customerType);
     return request('GET', `/admin/progress?${qs.toString()}`, undefined, auth);
   },
   adminSetRemindersEnabled(auth, payload) {
