@@ -393,7 +393,13 @@ export const taxApi = {
 
   // Phase 5 — platform admin (cross-tenant). Auth uses x-firebase-uid +
   // x-firebase-email; the server checks against GLOBAL_ADMIN_EMAILS.
-  platformVerify(auth)                         { return request('POST', '/platform/auth/verify', {}, auth); },
-  platformListCommunities(auth)                { return request('GET',  '/platform/communities', undefined, auth); },
-  platformCreateCommunity(auth, payload)       { return request('POST', '/platform/communities', payload, auth); },
+  // Phase 5 — platform admin (cross-tenant). Server's requirePlatformAdmin
+  // reads the signed-in email from x-firebase-email or x-admin-email and
+  // checks it against GLOBAL_ADMIN_EMAILS. The non-admin authHeaders path
+  // refuses to attach Firebase headers when uid is empty, so all three
+  // platform calls go through the admin header path which always sends
+  // x-admin-email (and optionally x-firebase-* when present).
+  platformVerify(auth)                         { return request('POST', '/platform/auth/verify', {}, auth, { admin: true }); },
+  platformListCommunities(auth)                { return request('GET',  '/platform/communities', undefined, auth, { admin: true }); },
+  platformCreateCommunity(auth, payload)       { return request('POST', '/platform/communities', payload, auth, { admin: true }); },
 };
