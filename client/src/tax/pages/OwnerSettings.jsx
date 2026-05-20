@@ -621,6 +621,9 @@ const STAFF_EMAIL_TYPES = [
   { type: 'staff_welcome',    column: 'tax_staff_email_welcome_enabled',
     labelKey: 'owner.settings.staffEmails.staffWelcome.label',
     descKey:  'owner.settings.staffEmails.staffWelcome.desc' },
+  { type: 'digest',           column: 'tax_staff_email_digest_enabled',
+    labelKey: 'owner.settings.staffEmails.digest.label',
+    descKey:  'owner.settings.staffEmails.digest.desc' },
 ];
 
 // Twin of CustomerEmailsSection. Same UI shape — master row at the

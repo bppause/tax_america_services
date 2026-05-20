@@ -477,6 +477,10 @@ module.exports = function createTaxRouter(deps) {
       return res.status(400).json({ error: 'business_name_required',
         message: 'Business name is required for a business lead.' });
     }
+    if (productSlugs.length === 0) {
+      return res.status(400).json({ error: 'service_required',
+        message: 'Please pick at least one service so we route you to the right specialist.' });
+    }
     if (!phone) return res.status(400).json({ error: 'phone_required',
       message: 'A phone number is required so we can reach you.' });
 
@@ -870,6 +874,10 @@ module.exports = function createTaxRouter(deps) {
     if (customerType === 'business' && !businessName) {
       return res.status(400).json({ error: 'business_name_required',
         message: 'Business name is required for a business customer.' });
+    }
+    if (requestedRels.length === 0) {
+      return res.status(400).json({ error: 'service_required',
+        message: 'Pick at least one service so the customer\'s tasks can be generated.' });
     }
 
     // Reject if a customer with this email already exists in the community.
@@ -2443,6 +2451,7 @@ module.exports = function createTaxRouter(deps) {
     message:           'tax_staff_email_message_enabled',
     signature_signed:  'tax_staff_email_signature_signed_enabled',
     staff_welcome:     'tax_staff_email_welcome_enabled',
+    digest:            'tax_staff_email_digest_enabled',
   };
   router.put('/admin/community-settings/staff-email-enabled', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
@@ -2563,7 +2572,7 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_emails_master_enabled,
         tax_staff_email_lead_enabled, tax_staff_email_task_assigned_enabled,
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
-        tax_staff_email_welcome_enabled,
+        tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
         default_locale, calendly_url, landing_copy_i18n

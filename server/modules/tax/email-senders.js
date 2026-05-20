@@ -1513,9 +1513,159 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // Daily digest for owners + staff. Composed by the digest cron from
+  // counts + a list of priority items the employee should act on today.
+  // Skipped at the caller level when there's nothing to report (no
+  // open tasks, no new leads, no new messages) so the practice never
+  // gets a "you have 0 things today" email.
+  const sendTaxDailyDigestEmail = async ({ community, employee, digest, dashboardUrl, tasksUrl, leadsUrl }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
+    const to = String(employee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'employee_email_missing' };
+
+    const lang = (employee && employee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const practiceName = community?.name || 'Tax America Services';
+    const greeting = lang === 'en'
+      ? (firstNameOf(employee) ? `Hi ${firstNameOf(employee)},` : 'Hi,')
+      : (firstNameOf(employee) ? `Hola ${firstNameOf(employee)},` : 'Hola,');
+    const subject = lang === 'en'
+      ? `Your day at ${practiceName} — ${digest.overdueCount} overdue · ${digest.dueTodayCount} due today`
+      : `Tu día en ${practiceName} — ${digest.overdueCount} atrasada(s) · ${digest.dueTodayCount} hoy`;
+
+    const labels = lang === 'en' ? {
+      intro:   "Here's what's on your plate today.",
+      overdue: 'Overdue', dueToday: 'Due today', upcoming: 'Coming up this week',
+      newLeads: 'New leads (last 24h)', newMessages: 'New customer messages',
+      openTasks: 'Open all my tasks →', openLeads: 'Open leads inbox →',
+      openDash: 'Open my dashboard →',
+      noPriority: 'Nothing urgent on the board — good day to chip away at the upcoming list.',
+      andMore: (n) => `…and ${n} more.`,
+    } : {
+      intro:   'Esto es lo que tienes para hoy.',
+      overdue: 'Atrasadas', dueToday: 'Vencen hoy', upcoming: 'Próximas (esta semana)',
+      newLeads: 'Nuevos prospectos (últimas 24 h)', newMessages: 'Mensajes nuevos de clientes',
+      openTasks: 'Abrir todas mis tareas →', openLeads: 'Abrir bandeja de prospectos →',
+      openDash: 'Abrir mi panel →',
+      noPriority: 'Nada urgente en el tablero — buen día para avanzar con lo que viene.',
+      andMore: (n) => `…y ${n} más.`,
+    };
+
+    const renderTaskLineText = (t) => {
+      const due = t.due_date ? ` (${t.due_date})` : '';
+      const cust = t.customer ? ` — ${t.customer.business_name || t.customer.name || t.customer.email}` : '';
+      return `  • ${t.title}${due}${cust}`;
+    };
+    const renderTaskRowHtml = (t) => {
+      const due = t.due_date ? `<span style="color:#7f1d1d;font-weight:600">${escapeHtml(t.due_date)}</span>` : '';
+      const cust = t.customer ? `<div style="color:#555;font-size:12px">${escapeHtml(t.customer.business_name || t.customer.name || t.customer.email || '')}</div>` : '';
+      return `
+        <div style="padding:8px 0;border-bottom:1px solid #eee">
+          <div style="display:flex;justify-content:space-between;gap:8px"><div style="font-weight:600">${escapeHtml(t.title)}</div>${due}</div>
+          ${cust}
+        </div>`;
+    };
+    const renderLeadRowHtml = (l) => `
+      <div style="padding:8px 0;border-bottom:1px solid #eee">
+        <div style="font-weight:600">${escapeHtml(l.name || l.email)}${l.customer_type === 'business' ? ' <span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700">BUSINESS</span>' : ''}</div>
+        <div style="color:#555;font-size:12px">${escapeHtml(l.email)}</div>
+      </div>`;
+
+    const sections = [];
+    if (digest.overdue.length) sections.push({ label: labels.overdue, items: digest.overdue, kind: 'task' });
+    if (digest.dueToday.length) sections.push({ label: labels.dueToday, items: digest.dueToday, kind: 'task' });
+    if (digest.upcoming.length) sections.push({ label: labels.upcoming, items: digest.upcoming, kind: 'task' });
+    if (employee.role === 'admin' && digest.newLeads.length) sections.push({ label: labels.newLeads, items: digest.newLeads, kind: 'lead' });
+
+    // Text body
+    const textLines = [greeting, '', labels.intro, ''];
+    if (sections.length === 0) {
+      textLines.push(labels.noPriority);
+    } else {
+      for (const s of sections) {
+        textLines.push(`${s.label.toUpperCase()} (${s.items.length})`);
+        const shown = s.items.slice(0, 5);
+        for (const it of shown) textLines.push(s.kind === 'task' ? renderTaskLineText(it) : `  • ${it.name || it.email}`);
+        if (s.items.length > 5) textLines.push(`  ${labels.andMore(s.items.length - 5)}`);
+        textLines.push('');
+      }
+    }
+    if (digest.newMessageCount > 0) {
+      textLines.push(`${labels.newMessages}: ${digest.newMessageCount}`, '');
+    }
+    textLines.push(`${labels.openDash} ${dashboardUrl}`);
+    textLines.push(`${labels.openTasks} ${tasksUrl}`);
+    if (employee.role === 'admin') textLines.push(`${labels.openLeads} ${leadsUrl}`);
+    const text = textLines.join('\n');
+
+    // HTML body
+    const statRow = `
+      <div style="display:flex;gap:8px;margin:14px 0">
+        ${[
+          { label: labels.overdue, value: digest.overdueCount, color: '#7f1d1d' },
+          { label: labels.dueToday, value: digest.dueTodayCount, color: '#dc2626' },
+          { label: labels.upcoming, value: digest.upcomingCount, color: '#f59e0b' },
+        ].map(s => `<div style="flex:1;background:#f7f7f7;border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:20px;font-weight:700;color:${s.color}">${s.value}</div>
+          <div style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.6px">${escapeHtml(s.label)}</div>
+        </div>`).join('')}
+      </div>`;
+
+    const sectionsHtml = sections.length === 0
+      ? `<p style="color:#555">${escapeHtml(labels.noPriority)}</p>`
+      : sections.map(s => `
+          <h3 style="margin:18px 0 6px;font-size:14px;color:#333">${escapeHtml(s.label)} (${s.items.length})</h3>
+          <div>${s.items.slice(0, 5).map(it => s.kind === 'task' ? renderTaskRowHtml(it) : renderLeadRowHtml(it)).join('')}</div>
+          ${s.items.length > 5 ? `<div style="color:#555;font-size:12px;margin-top:4px">${escapeHtml(labels.andMore(s.items.length - 5))}</div>` : ''}
+        `).join('');
+
+    const msgsHtml = digest.newMessageCount > 0
+      ? `<p style="margin:14px 0;color:#333"><strong>${escapeHtml(labels.newMessages)}:</strong> ${digest.newMessageCount}</p>`
+      : '';
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:600px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(labels.intro)}</p>
+        ${statRow}
+        ${sectionsHtml}
+        ${msgsHtml}
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(dashboardUrl)}" style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">${escapeHtml(labels.openDash)}</a>
+        </p>
+        <p style="color:#888;font-size:12px;margin-top:24px">
+          <a href="${escapeHtml(tasksUrl)}" style="color:#1d3a6d">${escapeHtml(labels.openTasks)}</a>
+          ${employee.role === 'admin' ? ` · <a href="${escapeHtml(leadsUrl)}" style="color:#1d3a6d">${escapeHtml(labels.openLeads)}</a>` : ''}
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: practiceName,
+      employee_name: displayNameOf(employee) || employee.email || '',
+      employee_first_name: firstNameOf(employee),
+      overdue_count: String(digest.overdueCount),
+      due_today_count: String(digest.dueTodayCount),
+      upcoming_count: String(digest.upcomingCount),
+      new_leads_count: String(digest.newLeads.length),
+      new_message_count: String(digest.newMessageCount),
+      dashboard_url: dashboardUrl,
+      tasks_url: tasksUrl,
+      leads_url: leadsUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'daily_digest', lang, vars,
+      defaults: { subject, text, html },
+    });
+    return sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+  };
+
   return {
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
+    sendTaxDailyDigestEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,

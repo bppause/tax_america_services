@@ -216,6 +216,10 @@ export default function OwnerCustomers() {
   const onAdd = async (e) => {
     e.preventDefault();
     if (!form.email.trim()) { setAddMsg({ kind: 'error', text: t('owner.customers.errEmailRequired') }); return; }
+    if (form.relationshipTypeIds.length === 0) {
+      setAddMsg({ kind: 'error', text: t('owner.customers.errServiceRequired') });
+      return;
+    }
     setBusyAdd(true); setAddMsg({ kind: 'idle', text: '' });
     try {
       const r = await taxApi.adminCreateCustomer(auth, {
@@ -377,7 +381,7 @@ export default function OwnerCustomers() {
           {allTypes.length > 0 && (
             <div>
               <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: 'block' }}>
-                {t('owner.customers.fieldRelationships')}
+                {t('owner.customers.fieldRelationships')} *
               </label>
               <p style={{ fontSize: 12, color: 'var(--tax-muted)', margin: '0 0 8px' }}>
                 {t('owner.customers.fieldRelationshipsHint')}
