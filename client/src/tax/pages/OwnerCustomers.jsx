@@ -57,6 +57,8 @@ export default function OwnerCustomers() {
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
   const [form, setForm] = useState({
+    customerType: 'individual',
+    businessName: '',
     firstName: '', middleName: '', lastName: '',
     email: '', phone: '', locale: 'es',
     relationshipTypeIds: [],
@@ -219,6 +221,8 @@ export default function OwnerCustomers() {
       const r = await taxApi.adminCreateCustomer(auth, {
         communitySlug: community.id,
         email: form.email.trim().toLowerCase(),
+        customerType: form.customerType,
+        businessName: form.customerType === 'business' ? form.businessName.trim() : '',
         firstName: form.firstName.trim(),
         middleName: form.middleName.trim(),
         lastName: form.lastName.trim(),
@@ -231,7 +235,10 @@ export default function OwnerCustomers() {
       // server; we just trust the response for the redirect. The detail
       // page can re-send manually if needed.
       setAddMsg({ kind: 'success', text: t('owner.customers.addedSuccess') });
-      setForm({ firstName: '', middleName: '', lastName: '', email: '', phone: '', locale: 'es', relationshipTypeIds: [], sendWelcomeEmail: true });
+      setForm({ customerType: 'individual', businessName: '',
+                firstName: '', middleName: '', lastName: '',
+                email: '', phone: '', locale: 'es',
+                relationshipTypeIds: [], sendWelcomeEmail: true });
       window.location.href = `/tax/${community.id}/employee/customers/${encodeURIComponent(r.id)}`;
     } catch (err) {
       setAddMsg({ kind: 'error', text: err?.message || t('respond.error.generic') });
@@ -285,6 +292,46 @@ export default function OwnerCustomers() {
 
       {isAdmin && adding && (
         <form className="tax-form" onSubmit={onAdd} noValidate style={{ marginBottom: 24 }}>
+          {/* Individual vs Business toggle. Business unlocks the
+              required Business name field and tags the customer row
+              with the "Business" pill so the owner can later filter
+              / scan by type. */}
+          <div role="radiogroup" aria-label={t('owner.customers.fieldCustomerType')}
+               style={{ display: 'flex', gap: 8 }}>
+            {['individual', 'business'].map(opt => {
+              const active = form.customerType === opt;
+              return (
+                <button key={opt} type="button"
+                        role="radio" aria-checked={active}
+                        onClick={() => setForm(p => ({ ...p, customerType: opt }))}
+                        style={{
+                          flex: '1 1 auto', padding: '10px 14px', borderRadius: 8,
+                          background: active
+                            ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                            : '#fff',
+                          color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                          border: '1px solid',
+                          borderColor: active
+                            ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                            : 'var(--tax-border)',
+                          fontSize: 14, fontWeight: active ? 700 : 500,
+                          cursor: 'pointer', textAlign: 'center',
+                        }}>
+                  {active ? '✓ ' : ''}{t(`owner.customers.customerType.${opt}`)}
+                </button>
+              );
+            })}
+          </div>
+          {form.customerType === 'business' && (
+            <div>
+              <label htmlFor="oc-biz">{t('owner.customers.fieldBusinessName')}</label>
+              <input id="oc-biz" type="text"
+                     required autoComplete="organization"
+                     value={form.businessName}
+                     onChange={e => setForm(p => ({ ...p, businessName: e.target.value }))}
+                     maxLength={200} />
+            </div>
+          )}
           <div className="tax-form__row3">
             <div>
               <label htmlFor="oc-first">{t('owner.customers.fieldFirstName')}</label>
@@ -562,8 +609,22 @@ function CustomerRow({ c, base, locale, t }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
             {displayPersonName(c) || c.email}
+            {c.customer_type === 'business' && (
+              <span style={{
+                marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+                background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+                color: 'var(--tax-brand-primary)',
+                border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 30%, #fff)',
+                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>{t('owner.customers.customerType.business')}</span>
+            )}
             <HealthChip health={c.health} t={t} />
           </div>
+          {c.business_name && (
+            <div style={{ fontSize: 13, color: 'var(--tax-text)', fontWeight: 500, marginTop: 2 }}>
+              {c.business_name}
+            </div>
+          )}
           <div style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 2 }}>
             {c.email}
             {c.phone ? ` • ${c.phone}` : ''}

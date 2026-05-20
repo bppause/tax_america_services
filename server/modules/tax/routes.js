@@ -459,7 +459,13 @@ module.exports = function createTaxRouter(deps) {
       .slice(0, 20);                                  // cap so we can't be flooded
     const productSlug = productSlugs[0] || '';
     const message = trim(body.message, MAX_TEXT_LEN);
-    const company = trim(body.company, 200);
+    const customerType = (String(body.customerType || '').toLowerCase() === 'business')
+      ? 'business' : 'individual';
+    // For individuals we deliberately drop any company string the
+    // client might still send — keeps the row tidy and prevents a
+    // stale "(formerly business)" value from sticking around if the
+    // visitor flipped the toggle mid-form.
+    const company = customerType === 'business' ? trim(body.company, 200) : '';
     const preferredLocale = localeOf(body.locale);
     const userAgent = trim(req.get('user-agent') || '', 500);
     const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
@@ -467,6 +473,10 @@ module.exports = function createTaxRouter(deps) {
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     if (!name) return res.status(400).json({ error: 'Name is required.' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'A valid email is required.' });
+    if (customerType === 'business' && !company) {
+      return res.status(400).json({ error: 'business_name_required',
+        message: 'Business name is required for a business lead.' });
+    }
     if (!phone) return res.status(400).json({ error: 'phone_required',
       message: 'A phone number is required so we can reach you.' });
 
@@ -492,6 +502,7 @@ module.exports = function createTaxRouter(deps) {
       middle_name: nameParts.middle,
       last_name: nameParts.last,
       company,
+      customer_type: customerType,
       product_slug: productSlug,
       product_slugs: productSlugs,
       message,
@@ -841,7 +852,11 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(body.communitySlug, 200);
     const email = trim(body.email, 200).toLowerCase();
     const np = resolveNamePayload(body);
-    const businessName = trim(body.businessName, 200);
+    const customerType = (String(body.customerType || '').toLowerCase() === 'business')
+      ? 'business' : 'individual';
+    // Drop businessName when the row is marked individual so a flipped
+    // toggle never leaves a stale company name on the customer.
+    const businessName = customerType === 'business' ? trim(body.businessName, 200) : '';
     const phone = trim(body.phone, MAX_PHONE_LEN);
     const locale = (body.locale === 'en') ? 'en' : 'es';
     // Phase: relationships (array of type ids) + sendWelcomeEmail (bool,
@@ -852,6 +867,10 @@ module.exports = function createTaxRouter(deps) {
 
     if (!communitySlug || !email) return res.status(400).json({ error: 'communitySlug and email required.' });
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Email is not valid.' });
+    if (customerType === 'business' && !businessName) {
+      return res.status(400).json({ error: 'business_name_required',
+        message: 'Business name is required for a business customer.' });
+    }
 
     // Reject if a customer with this email already exists in the community.
     const { data: existing } = await supabase.from('tax_customers')
@@ -863,6 +882,7 @@ module.exports = function createTaxRouter(deps) {
       id, community_id: communitySlug, email,
       name: np.name, first_name: np.first, middle_name: np.middle, last_name: np.last,
       business_name: businessName,
+      customer_type: customerType,
       phone, locale, status: 'active',
     });
     if (error) return sendSupabaseError(res, error);
@@ -1648,7 +1668,7 @@ module.exports = function createTaxRouter(deps) {
     // duplicates and (in update mode) merge their fields. Index by lower-
     // cased email for case-insensitive matching.
     const { data: existing } = await supabase.from('tax_customers')
-      .select('id, email, name, business_name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notes')
+      .select('id, email, name, business_name, customer_type, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notes')
       .eq('community_id', communitySlug);
     const byEmail = new Map();
     for (const c of existing || []) {
@@ -1949,7 +1969,7 @@ module.exports = function createTaxRouter(deps) {
     if (!(await requireOwnerAdmin(req, res))) return;
     const id = trim(req.params.id, 200);
     const { data: cust, error: cErr } = await supabase.from('tax_customers')
-      .select('id, community_id, email, name, business_name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, status, notes, firebase_uid, last_sign_in_at, created_at, updated_at')
+      .select('id, community_id, email, name, business_name, customer_type, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, status, notes, firebase_uid, last_sign_in_at, created_at, updated_at')
       .eq('id', id).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cust) return res.status(404).json({ error: 'Customer not found.' });
@@ -3186,7 +3206,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -3267,7 +3287,7 @@ module.exports = function createTaxRouter(deps) {
     const leadId = trim(req.params.id, 200);
 
     const { data: lead, error: lErr } = await supabase.from('tax_leads')
-      .select('id, community_id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
+      .select('id, community_id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
       .eq('id', leadId).maybeSingle();
     if (lErr) return sendSupabaseError(res, lErr);
     if (!lead) return res.status(404).json({ error: 'Lead not found.' });
@@ -3313,6 +3333,7 @@ module.exports = function createTaxRouter(deps) {
         phone: lead.phone || '',
         whatsapp: lead.whatsapp || '',
         business_name: lead.company || '',
+        customer_type: lead.customer_type === 'business' ? 'business' : 'individual',
         locale: lead.preferred_locale === 'en' ? 'en' : 'es',
         status: 'active',
         notes: noteLines.join('\n\n').slice(0, MAX_TEXT_LEN),

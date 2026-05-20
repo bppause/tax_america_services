@@ -11,6 +11,7 @@ import { taxApi } from '../api';
 export default function LeadForm({ community, products, initialProductSlug }) {
   const { locale, t } = useT();
   const [form, setForm] = useState({
+    customerType: 'individual',
     firstName: '', middleName: '', lastName: '',
     email: '', phone: '', whatsapp: '', company: '',
     productSlugs: [], message: '', website: '',
@@ -45,20 +46,22 @@ export default function LeadForm({ community, products, initialProductSlug }) {
     try {
       await taxApi.submitLead({
         communitySlug: community.id,
+        customerType: form.customerType,
         firstName: form.firstName,
         middleName: form.middleName,
         lastName: form.lastName,
         email: form.email,
         phone: form.phone,
         whatsapp: form.whatsapp,
-        company: form.company,
+        company: form.customerType === 'business' ? form.company : '',
         productSlugs: form.productSlugs,
         message: form.message,
         locale,
         website: form.website,
       });
       setStatus({ kind: 'success', message: '' });
-      setForm({ firstName: '', middleName: '', lastName: '',
+      setForm({ customerType: 'individual',
+                firstName: '', middleName: '', lastName: '',
                 email: '', phone: '', whatsapp: '', company: '',
                 productSlugs: [], message: '', website: '' });
     } catch (err) {
@@ -83,6 +86,36 @@ export default function LeadForm({ community, products, initialProductSlug }) {
 
   return (
     <form className="tax-form" onSubmit={onSubmit} noValidate>
+      {/* Two-state classification toggle. Drives whether the Business
+          name field is shown + required. Default 'individual' matches
+          the server-side default and keeps the form lean for the
+          common case. */}
+      <div role="radiogroup" aria-label={t('lead.field.customerType')}
+           style={{ display: 'flex', gap: 8 }}>
+        {['individual', 'business'].map(opt => {
+          const active = form.customerType === opt;
+          return (
+            <button key={opt} type="button"
+                    role="radio" aria-checked={active}
+                    onClick={() => setForm(f => ({ ...f, customerType: opt }))}
+                    style={{
+                      flex: '1 1 auto', padding: '10px 14px', borderRadius: 8,
+                      background: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                        : '#fff',
+                      color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                      border: '1px solid',
+                      borderColor: active
+                        ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                        : 'var(--tax-border)',
+                      fontSize: 14, fontWeight: active ? 700 : 500,
+                      cursor: 'pointer', textAlign: 'center',
+                    }}>
+              {active ? '✓ ' : ''}{t(`lead.field.customerType.${opt}`)}
+            </button>
+          );
+        })}
+      </div>
       <div className="tax-form__row3">
         <div>
           <label htmlFor="lead-first">{t('lead.field.firstName')}</label>
@@ -122,12 +155,19 @@ export default function LeadForm({ community, products, initialProductSlug }) {
             {t('lead.field.whatsapp.hint')}
           </p>
         </div>
-        <div>
-          <label htmlFor="lead-company">{t('lead.field.company')}</label>
-          <input id="lead-company" name="company" type="text" autoComplete="organization"
-                 placeholder={t('lead.field.company.placeholder')}
-                 value={form.company} onChange={onChange} maxLength={200} />
-        </div>
+        {form.customerType === 'business' ? (
+          <div>
+            <label htmlFor="lead-company">{t('lead.field.businessName')}</label>
+            <input id="lead-company" name="company" type="text"
+                   required autoComplete="organization"
+                   placeholder={t('lead.field.businessName.placeholder')}
+                   value={form.company} onChange={onChange} maxLength={200} />
+          </div>
+        ) : (
+          /* Empty slot keeps the row's 2-column rhythm so phone +
+             WhatsApp stay aligned when the visitor is an individual. */
+          <div />
+        )}
       </div>
 
       {visibleProducts.length > 0 && (
