@@ -42,6 +42,10 @@ export default function LeadForm({ community, products, initialProductSlug }) {
   const onSubmit = async (e) => {
     e.preventDefault();
     if (status.kind === 'submitting') return;
+    if (form.productSlugs.length === 0) {
+      setStatus({ kind: 'error', message: t('lead.error.serviceRequired') });
+      return;
+    }
     setStatus({ kind: 'submitting', message: '' });
     try {
       await taxApi.submitLead({
@@ -172,7 +176,7 @@ export default function LeadForm({ community, products, initialProductSlug }) {
 
       {visibleProducts.length > 0 && (
         <div>
-          <label>{t('lead.field.services')}</label>
+          <label>{t('lead.field.services')} *</label>
           <p style={{ margin: '4px 0 8px', fontSize: 12, color: 'var(--tax-muted)' }}>
             {t('lead.field.services.hint')}
           </p>

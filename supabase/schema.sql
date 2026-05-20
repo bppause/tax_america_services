@@ -2753,3 +2753,25 @@ update public.tax_leads
   set customer_type = 'business'
   where customer_type = 'individual'
     and coalesce(trim(company), '') <> '';
+
+-- Daily-digest dedupe + per-type toggle.
+-- The digest cron logs one row per (community, employee, sent_date)
+-- so we never send the same person two summaries in one calendar day,
+-- even across multiple cron ticks or app restarts. item_counts is a
+-- denormalized snapshot of what each digest carried (overdue/today/
+-- upcoming/leads/messages) for debugging + future "did the practice
+-- act on it?" analytics.
+create table if not exists public.tax_digest_log (
+  community_id text not null,
+  employee_id  text not null,
+  sent_date    date not null,
+  sent_at      timestamptz not null default now(),
+  item_counts  jsonb not null default '{}'::jsonb,
+  primary key (community_id, employee_id, sent_date)
+);
+
+-- Per-type toggle for the digest, gated underneath the team master
+-- switch. Default on so existing tenants start receiving the daily
+-- summary once their cron picks up the new column.
+alter table public.communities
+  add column if not exists tax_staff_email_digest_enabled boolean not null default true;

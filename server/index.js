@@ -139,7 +139,8 @@ async function logTaxEmailDelivery({ resendId, communityId, customerId, workflow
 }
 
 const {
-  sendTaxLeadEmail, sendTaxTaskAssignedEmail, sendTaxReminderEmail, sendTaxDocumentEmail,
+  sendTaxLeadEmail, sendTaxTaskAssignedEmail, sendTaxDailyDigestEmail,
+  sendTaxReminderEmail, sendTaxDocumentEmail,
   sendTaxMessageEmail, sendTaxMessagePracticeEmail, sendTaxMessageEmployeeEmail,
   sendTaxWelcomeEmail, sendTaxStaffWelcomeEmail,
   sendTaxSignatureRequestEmail, sendTaxSignatureSignedEmail,
@@ -155,6 +156,15 @@ const taxRemindersCron = require('./modules/tax/reminders')({
   publicAppUrl: () => publicAppUrl(),
   emailConfigured,
   sendTaxReminderEmail,
+  auditLog,
+});
+
+const taxDigestCron = require('./modules/tax/digest')({
+  supabase,
+  isSupabaseConfigured: Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY),
+  publicAppUrl: () => publicAppUrl(),
+  emailConfigured,
+  sendTaxDailyDigestEmail,
   auditLog,
 });
 
@@ -186,6 +196,12 @@ app.use('/api/m/tax', taxRouter);
 // reminders at the configured offsets. Daily cadence (12h interval) keeps it
 // well within Render's free-tier restart window.
 taxRemindersCron.start({ intervalMs: 12 * 60 * 60 * 1000, initialDelayMs: 60 * 1000 });
+
+// Daily-digest cron — per-employee summary of priority work for the day.
+// 6h interval is intentional: dedupe via tax_digest_log ensures at most
+// one email per (community, employee, UTC day), but multiple ticks
+// catch staff added partway through the day.
+taxDigestCron.start({ intervalMs: 6 * 60 * 60 * 1000, initialDelayMs: 90 * 1000 });
 
 // Public SEO endpoint — lists active tax community landings. Lives at root
 // (search-engine convention). robots.txt is static under client/public/.
