@@ -175,6 +175,15 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, focu
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
             {displayPersonName(lead) || lead.email}
+            {lead.customer_type === 'business' && (
+              <span style={{
+                marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+                background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+                color: 'var(--tax-brand-primary)',
+                border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 30%, #fff)',
+                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>{t('owner.customers.customerType.business')}</span>
+            )}
             {lead.company && (
               <span style={{ marginLeft: 8, fontWeight: 500, color: 'var(--tax-muted)' }}>
                 · {lead.company}

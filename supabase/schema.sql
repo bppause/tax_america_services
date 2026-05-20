@@ -2719,3 +2719,37 @@ alter table public.communities
   add column if not exists tax_staff_email_message_enabled         boolean not null default true,
   add column if not exists tax_staff_email_signature_signed_enabled boolean not null default true,
   add column if not exists tax_staff_email_welcome_enabled         boolean not null default true;
+
+-- Lead / customer classification. Drives a small set of UX rules:
+-- when 'business', a business name is required (lead.company /
+-- customer.business_name); when 'individual', the business name slot
+-- is suppressed. Defaults to 'individual' so existing rows + new
+-- contact-form submissions without an explicit choice keep the
+-- shape they had before.
+alter table public.tax_leads
+  add column if not exists customer_type text not null default 'individual';
+do $$ begin
+  alter table public.tax_leads add constraint tax_leads_customer_type_chk
+    check (customer_type in ('individual','business'));
+exception when duplicate_object then null; end $$;
+
+alter table public.tax_customers
+  add column if not exists customer_type text not null default 'individual';
+do $$ begin
+  alter table public.tax_customers add constraint tax_customers_customer_type_chk
+    check (customer_type in ('individual','business'));
+exception when duplicate_object then null; end $$;
+
+-- One-time backfill: any pre-existing row that already carried a
+-- non-empty business_name (customer) or company (lead) was effectively
+-- a business — tag them as such so the new UI pill reads correctly on
+-- legacy data. Idempotent — re-running the file leaves already-tagged
+-- rows alone (status is 'business', the WHERE filters it out).
+update public.tax_customers
+  set customer_type = 'business'
+  where customer_type = 'individual'
+    and coalesce(trim(business_name), '') <> '';
+update public.tax_leads
+  set customer_type = 'business'
+  where customer_type = 'individual'
+    and coalesce(trim(company), '') <> '';
