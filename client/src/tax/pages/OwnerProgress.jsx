@@ -19,7 +19,10 @@ export default function OwnerProgress() {
   const [expanded, setExpanded] = useState({});
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
-  const [filters, setFilters] = useState({ assignedTo: '', customerId: '' });
+  // customerType is a chip filter ('all' | 'individual' | 'business')
+  // that mirrors the Customers list, Leads inbox, and Tasks page so
+  // the filter language stays the same across the employee portal.
+  const [filters, setFilters] = useState({ customerType: 'all', assignedTo: '', customerId: '' });
 
   // Reference data for the filter dropdowns. Load once per community.
   useEffect(() => {
@@ -41,11 +44,12 @@ export default function OwnerProgress() {
       communitySlug: community.id,
       assignedTo: filters.assignedTo,
       customerId: filters.customerId,
+      customerType: filters.customerType !== 'all' ? filters.customerType : undefined,
     })
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community, filters.assignedTo, filters.customerId]);
+  }, [fbUser, community, filters.assignedTo, filters.customerId, filters.customerType]);
 
   if (err) return <EmployeeShell community={community} active="progress">
     <div className="tax-msg tax-msg--error">{err}</div>
@@ -63,49 +67,86 @@ export default function OwnerProgress() {
       <h2 style={{ margin: 0 }}>{t('owner.progress.title')}</h2>
       <p className="tax-section__lede">{t('owner.progress.subtitle')}</p>
 
-      <div style={{ display: 'grid', gap: 8, marginBottom: 16,
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+      {/* Filter container — same tax-bg-alt panel pattern the Tasks
+          page uses, with the same All / Individual / Business chip
+          row up top so the surfaces feel like one product. */}
+      <div style={{ display: 'grid', gap: 10, marginBottom: 16,
                     padding: 12, background: 'var(--tax-bg-alt)', borderRadius: 8 }}>
-        <label style={{ display: 'grid', gap: 4 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
-                         textTransform: 'uppercase', letterSpacing: '.04em' }}>
-            {t('owner.progress.filter.owner')}
-          </span>
-          <select value={filters.assignedTo}
-                  onChange={e => setFilters(prev => ({ ...prev, assignedTo: e.target.value }))}>
-            <option value="">{t('owner.progress.filter.anyOwner')}</option>
-            {employees.map(em => (
-              <option key={em.id} value={em.id}>
-                {displayPersonName(em) || em.email}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label style={{ display: 'grid', gap: 4 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
-                         textTransform: 'uppercase', letterSpacing: '.04em' }}>
-            {t('owner.progress.filter.customer')}
-          </span>
-          <select value={filters.customerId}
-                  onChange={e => setFilters(prev => ({ ...prev, customerId: e.target.value }))}>
-            <option value="">{t('owner.progress.filter.anyCustomer')}</option>
-            {customers.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.business_name || displayPersonName(c) || c.email}
-              </option>
-            ))}
-          </select>
-        </label>
-        {(filters.assignedTo || filters.customerId) && (
-          <button type="button"
-                  onClick={() => setFilters({ assignedTo: '', customerId: '' })}
-                  style={{ alignSelf: 'end', justifySelf: 'start',
-                           border: 0, background: 'transparent',
-                           color: 'var(--tax-brand-primary)', cursor: 'pointer',
-                           fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>
-            × {t('owner.progress.filter.clear')}
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {[
+            { key: 'all',        label: t('owner.customers.typeFilter.all') },
+            { key: 'individual', label: t('owner.customers.customerType.individual') },
+            { key: 'business',   label: t('owner.customers.customerType.business') },
+          ].map(opt => {
+            const active = (filters.customerType || 'all') === opt.key;
+            return (
+              <button key={opt.key} type="button"
+                      onClick={() => setFilters(prev => ({ ...prev, customerType: opt.key }))}
+                      style={{
+                        padding: '4px 12px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+                        background: active
+                          ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                          : '#fff',
+                        color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                        border: '1px solid',
+                        borderColor: active
+                          ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                          : 'var(--tax-border)',
+                        fontWeight: active ? 700 : 500,
+                      }}>
+                {opt.label}
+              </button>
+            );
+          })}
+          {(filters.customerType !== 'all' || filters.assignedTo || filters.customerId) && (
+            <button type="button"
+                    onClick={() => setFilters({ customerType: 'all', assignedTo: '', customerId: '' })}
+                    style={{
+                      marginLeft: 'auto', border: 0, background: 'transparent',
+                      color: 'var(--tax-brand-primary)', cursor: 'pointer',
+                      fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: '.04em',
+                    }}>
+              × {t('owner.progress.filter.clear')}
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'grid', gap: 8,
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.progress.filter.owner')}
+            </span>
+            <select value={filters.assignedTo}
+                    onChange={e => setFilters(prev => ({ ...prev, assignedTo: e.target.value }))}>
+              <option value="">{t('owner.progress.filter.anyOwner')}</option>
+              {employees.map(em => (
+                <option key={em.id} value={em.id}>
+                  {displayPersonName(em) || em.email}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.progress.filter.customer')}
+            </span>
+            <select value={filters.customerId}
+                    onChange={e => setFilters(prev => ({ ...prev, customerId: e.target.value }))}>
+              <option value="">{t('owner.progress.filter.anyCustomer')}</option>
+              {customers
+                .filter(c => filters.customerType === 'all'
+                  || (c.customer_type || 'individual') === filters.customerType)
+                .map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.business_name || displayPersonName(c) || c.email}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', marginBottom: 20 }}>
