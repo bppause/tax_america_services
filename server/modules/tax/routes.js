@@ -2526,6 +2526,73 @@ module.exports = function createTaxRouter(deps) {
     } catch (_e) {}
     res.json({ ok: true, enabled });
   });
+
+  // Daily-digest schedule. Accepts an hour (0–23), a comma-delimited
+  // weekday list (subset of sun,mon,tue,wed,thu,fri,sat), and an IANA
+  // timezone string. The cron honors all three on each tick — see
+  // server/modules/tax/digest.js. Body is partial: anything not in
+  // the payload keeps its current value, so the UI can save each
+  // control independently if needed.
+  const DAY_CODE_SET = new Set(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']);
+  router.put('/admin/community-settings/digest-schedule', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+
+    const update = { updated_at: new Date().toISOString() };
+    if (body.sendHour !== undefined) {
+      const h = Number(body.sendHour);
+      if (!Number.isFinite(h) || h < 0 || h > 23) {
+        return res.status(400).json({ error: 'invalid_hour',
+          message: 'Send hour must be 0–23 (24-hour clock).' });
+      }
+      update.tax_digest_send_hour = Math.floor(h);
+    }
+    if (body.timezone !== undefined) {
+      const tz = trim(body.timezone, 100);
+      // Verify the timezone is recognized by the runtime — if Intl
+      // rejects it the cron would silently fall back to UTC, which
+      // would surprise the owner.
+      try { new Intl.DateTimeFormat('en-US', { timeZone: tz }); }
+      catch {
+        return res.status(400).json({ error: 'invalid_timezone',
+          message: 'Timezone must be a valid IANA identifier (e.g. America/New_York).' });
+      }
+      update.tax_digest_send_timezone = tz;
+    }
+    if (body.sendDays !== undefined) {
+      const codes = Array.isArray(body.sendDays)
+        ? body.sendDays
+        : String(body.sendDays || '').split(',');
+      const cleaned = codes
+        .map(d => String(d || '').trim().toLowerCase())
+        .filter(d => DAY_CODE_SET.has(d));
+      if (!cleaned.length) {
+        return res.status(400).json({ error: 'no_days',
+          message: 'Pick at least one day the digest should send.' });
+      }
+      update.tax_digest_send_days = Array.from(new Set(cleaned)).join(',');
+    }
+    if (Object.keys(update).length === 1) {
+      return res.status(400).json({ error: 'Nothing to update.' });
+    }
+
+    const { error } = await supabase.from('communities')
+      .update(update)
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.email', entityId: communitySlug,
+        action: 'set_digest_schedule',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: Object.fromEntries(Object.entries(update).filter(([k]) => k !== 'updated_at')),
+      });
+    } catch (_e) {}
+    res.json({ ok: true, schedule: update });
+  });
+
   async function communityStaffEmailFlag(communityId, column) {
     if (!communityId || !column) return false;
     try {
@@ -2603,6 +2670,7 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_email_lead_enabled, tax_staff_email_task_assigned_enabled,
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
+        tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
         default_locale, calendly_url, landing_copy_i18n

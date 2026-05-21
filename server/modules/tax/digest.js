@@ -1,25 +1,36 @@
 // Daily-digest cron for the tax module.
 //
-// Runs every 6 hours; for each active community whose team-emails master
-// + per-type digest flags are both on, walks the active staff list and
-// builds a per-employee summary of priority work for the day:
+// Fires once per configured day per community — by default 8 AM
+// America/New_York Monday–Friday. Each community can override the
+// hour, timezone, and weekday set from Owner Settings → Team email
+// notifications. The cron runs hourly; for each community on each
+// tick it checks "is today a send day, is the local hour at or past
+// the send hour, has today's digest already gone out?" before
+// composing.
 //
-//   - Overdue tasks they own
-//   - Tasks due today
-//   - Upcoming tasks (next 7 days)
-//   - New leads in the last 24h (admins only)
-//   - New customer messages in the last 24h
+// Unlike v1 the digest always sends — even when the employee has no
+// overdue / due-today / upcoming items — so the email functions as
+// the team's daily "log into the app" nudge. The body branches on
+// item counts so the empty-day case reads as a soft reminder
+// instead of a wall of zero-counts.
 //
-// Skips employees whose digest has no items, and dedupes via
-// tax_digest_log (community_id, employee_id, sent_date) so multiple
-// cron ticks in the same UTC day never double-send.
+// Dedupe: tax_digest_log (community_id, employee_id, sent_date) is
+// the per-employee guard. A separate community-level lookup against
+// the same table prevents two ticks within the configured window
+// from each picking up the work — only the first tick that crosses
+// the threshold sends.
 
 'use strict';
 
 const { warn } = require('../../../logger');
 
-const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_INITIAL_DELAY_MS = 2 * 60 * 1000;
+// 5min interval keeps the cron lightweight while still landing
+// inside the same hour the owner configured. Initial delay (90s)
+// gives the rest of the app time to wire up before the first tick.
+const DEFAULT_INTERVAL_MS      = 5 * 60 * 1000;
+const DEFAULT_INITIAL_DELAY_MS = 90 * 1000;
+
+const DAY_CODES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 module.exports = function createTaxDigestCron(deps) {
   const {
@@ -31,7 +42,6 @@ module.exports = function createTaxDigestCron(deps) {
     auditLog,
   } = deps;
 
-  const todayUtcIso = () => new Date().toISOString().slice(0, 10);
   const isoDaysAgo = (n) => {
     const d = new Date();
     d.setUTCDate(d.getUTCDate() - n);
@@ -43,19 +53,54 @@ module.exports = function createTaxDigestCron(deps) {
     return d.toISOString().slice(0, 10);
   };
 
-  // Build the per-employee digest payload. Returns null when the
-  // employee has nothing to surface today (no overdue, no due-today,
-  // no upcoming, no new leads, no new messages) so we never send a
-  // "you have 0 items today" email.
+  // Resolve a community's local "now" given an IANA timezone. Returns
+  // { year, month, day, hour, weekdayCode } so callers can compare to
+  // the configured send-day + send-hour. Falls back to UTC when the
+  // tz string is invalid so a typo never silently freezes the cron.
+  function localNowFor(timezone) {
+    const tz = String(timezone || 'America/New_York');
+    try {
+      const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+        weekday: 'short', hour12: false,
+      });
+      const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
+      const weekdayMap = { Sun: 'sun', Mon: 'mon', Tue: 'tue', Wed: 'wed', Thu: 'thu', Fri: 'fri', Sat: 'sat' };
+      return {
+        year: parts.year, month: parts.month, day: parts.day,
+        hour: Number(parts.hour) || 0,
+        minute: Number(parts.minute) || 0,
+        weekdayCode: weekdayMap[parts.weekday] || 'mon',
+        sendDate: `${parts.year}-${parts.month}-${parts.day}`,
+      };
+    } catch {
+      const d = new Date();
+      const utcDate = d.toISOString().slice(0, 10);
+      return {
+        year: utcDate.slice(0, 4), month: utcDate.slice(5, 7), day: utcDate.slice(8, 10),
+        hour: d.getUTCHours(), minute: d.getUTCMinutes(),
+        weekdayCode: DAY_CODES[d.getUTCDay()],
+        sendDate: utcDate,
+      };
+    }
+  }
+
+  function parseSendDays(raw) {
+    return new Set(String(raw || '')
+      .toLowerCase().split(/[,\s]+/).filter(Boolean)
+      .filter(d => DAY_CODES.includes(d)));
+  }
+
+  // Per-employee digest payload. Counts may all be zero — the cron
+  // still sends in that case (the "log into the app" nudge).
   async function digestForEmployee({ employee, community, terminalKeys, today }) {
     if (!employee || employee.status !== 'active' || !employee.email) return null;
     const todayIso = today;
     const upcomingCutoff = isoDaysAhead(7);
     const sinceIso = isoDaysAgo(1);
 
-    // Tasks the employee owns. Admins still get only their own
-    // assignments here — the cross-community admin view is a separate
-    // surface; the digest is intentionally a personal worklist.
     const { data: tasks } = await supabase.from('tax_tasks')
       .select(`
         id, title, status_key, priority, due_date,
@@ -94,10 +139,6 @@ module.exports = function createTaxDigestCron(deps) {
       newMessageCount = count || 0;
     } catch (_e) { /* best-effort */ }
 
-    if (overdue.length === 0 && dueToday.length === 0 && upcoming.length === 0
-        && newLeads.length === 0 && newMessageCount === 0) {
-      return null;
-    }
     return {
       overdue, dueToday, upcoming, newLeads, newMessageCount,
       overdueCount: overdue.length,
@@ -106,12 +147,27 @@ module.exports = function createTaxDigestCron(deps) {
     };
   }
 
-  async function digestForCommunity({ community, today }) {
-    // Gate by the team-master + per-type flag. Master defaults on, the
-    // per-type digest flag defaults on too — so an opted-in community
-    // sees this fire automatically.
+  async function digestForCommunity({ community }) {
     if (community.tax_staff_emails_master_enabled !== true) return { skipped: 'master_off' };
     if (community.tax_staff_email_digest_enabled !== true) return { skipped: 'type_off' };
+
+    const now = localNowFor(community.tax_digest_send_timezone);
+    const sendDays = parseSendDays(community.tax_digest_send_days || 'mon,tue,wed,thu,fri');
+    if (!sendDays.has(now.weekdayCode)) return { skipped: 'wrong_day', day: now.weekdayCode };
+
+    const sendHour = Number.isFinite(Number(community.tax_digest_send_hour))
+      ? Number(community.tax_digest_send_hour) : 8;
+    if (now.hour < sendHour) return { skipped: 'too_early', hour: now.hour, sendHour };
+
+    // Community-level dedupe — any digest already sent today for this
+    // community (any employee) means we already crossed the threshold
+    // this morning. Prevents two ticks at e.g. 8:00 + 8:05 from
+    // racing to send.
+    const { data: existing } = await supabase.from('tax_digest_log')
+      .select('employee_id')
+      .eq('community_id', community.id).eq('sent_date', now.sendDate)
+      .limit(1);
+    if (existing && existing.length) return { skipped: 'already_sent_today', day: now.sendDate };
 
     const { data: statusOpts } = await supabase.from('tax_task_status_options')
       .select('key, is_terminal').eq('community_id', community.id);
@@ -128,18 +184,16 @@ module.exports = function createTaxDigestCron(deps) {
     const leadsUrl     = `${base}/tax/${encodeURIComponent(community.id)}/employee/leads`;
 
     let sentCount = 0;
-    let skippedNoItems = 0;
     let alreadySent = 0;
     for (const emp of (employees || [])) {
-      // Dedupe per UTC day so a 6h cron interval never double-sends.
-      const { data: existing } = await supabase.from('tax_digest_log')
+      const { data: row } = await supabase.from('tax_digest_log')
         .select('employee_id')
-        .eq('community_id', community.id).eq('employee_id', emp.id).eq('sent_date', today)
+        .eq('community_id', community.id).eq('employee_id', emp.id).eq('sent_date', now.sendDate)
         .maybeSingle();
-      if (existing) { alreadySent++; continue; }
+      if (row) { alreadySent++; continue; }
 
-      const digest = await digestForEmployee({ employee: emp, community, terminalKeys, today });
-      if (!digest) { skippedNoItems++; continue; }
+      const digest = await digestForEmployee({ employee: emp, community, terminalKeys, today: now.sendDate });
+      if (!digest) continue; // missing email / archived — defensive
 
       try {
         const r = await sendTaxDailyDigestEmail({
@@ -149,7 +203,7 @@ module.exports = function createTaxDigestCron(deps) {
         if (r && r.sent !== false) {
           sentCount++;
           await supabase.from('tax_digest_log').insert({
-            community_id: community.id, employee_id: emp.id, sent_date: today,
+            community_id: community.id, employee_id: emp.id, sent_date: now.sendDate,
             item_counts: {
               overdue: digest.overdueCount,
               dueToday: digest.dueTodayCount,
@@ -163,21 +217,24 @@ module.exports = function createTaxDigestCron(deps) {
         warn('[tax-digest] send failed', e?.message || e);
       }
     }
-    return { sentCount, skippedNoItems, alreadySent };
+    return { sentCount, alreadySent, sendDate: now.sendDate, hour: now.hour, weekday: now.weekdayCode };
   }
 
   async function run() {
     if (!isSupabaseConfigured) return { skipped: true, reason: 'supabase_not_configured' };
     if (!emailConfigured) return { skipped: true, reason: 'email_not_configured' };
     try {
-      const today = todayUtcIso();
       const { data: communities } = await supabase.from('communities')
-        .select('id, name, tax_staff_emails_master_enabled, tax_staff_email_digest_enabled')
+        .select(`
+          id, name,
+          tax_staff_emails_master_enabled, tax_staff_email_digest_enabled,
+          tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days
+        `)
         .eq('business_type', 'tax');
       const out = [];
       for (const community of (communities || [])) {
         try {
-          const r = await digestForCommunity({ community, today });
+          const r = await digestForCommunity({ community });
           out.push({ communityId: community.id, ...r });
         } catch (e) {
           warn('[tax-digest] community failed', community?.id, e?.message || e);

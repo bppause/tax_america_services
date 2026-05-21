@@ -302,6 +302,9 @@ export const taxApi = {
   adminSetStaffEmailsMaster(auth, payload) {
     return request('PUT', '/admin/community-settings/staff-emails-master', payload, auth, { admin: true });
   },
+  adminSetDigestSchedule(auth, payload) {
+    return request('PUT', '/admin/community-settings/digest-schedule', payload, auth, { admin: true });
+  },
   adminSetTaskLookahead(auth, payload) {
     return request('PUT', '/admin/community-settings/task-lookahead-months', payload, auth, { admin: true });
   },

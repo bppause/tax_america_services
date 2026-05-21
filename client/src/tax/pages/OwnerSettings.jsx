@@ -729,12 +729,158 @@ function StaffEmailsSection({ settings, busy, t, onToggle, onToggleMaster }) {
                 <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
                   {t(row.descKey)}
                 </div>
+                {/* Digest carries an extra schedule sub-panel since
+                    "when it sends" is part of the contract. Other
+                    rows are just on/off and don't need it. */}
+                {row.type === 'digest' && masterOn && on && (
+                  <DigestScheduleEditor settings={settings} busy={busy} t={t} />
+                )}
               </div>
             </label>
           );
         })}
       </div>
     </CollapsibleSection>
+  );
+}
+
+// Schedule sub-panel under the Daily digest toggle. Lets the owner
+// pick the local send hour, timezone, and weekday set. Saves
+// independently of the toggle — the toggle controls whether the
+// digest sends at all; this controls when.
+function DigestScheduleEditor({ settings, busy, t }) {
+  const { fbUser, community } = useEmployeeAuth();
+  const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
+  const initial = {
+    sendHour: Number.isFinite(Number(settings?.tax_digest_send_hour))
+      ? Number(settings.tax_digest_send_hour) : 8,
+    timezone: settings?.tax_digest_send_timezone || 'America/New_York',
+    sendDays: String(settings?.tax_digest_send_days || 'mon,tue,wed,thu,fri').split(',')
+      .map(s => s.trim().toLowerCase()).filter(Boolean),
+  };
+  const [draft, setDraft] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+  useEffect(() => { setDraft(initial); /* eslint-disable-next-line */ },
+    [settings?.tax_digest_send_hour, settings?.tax_digest_send_timezone, settings?.tax_digest_send_days]);
+
+  const toggleDay = (code) => setDraft(p => {
+    const has = p.sendDays.includes(code);
+    return { ...p, sendDays: has ? p.sendDays.filter(d => d !== code) : [...p.sendDays, code] };
+  });
+
+  const dirty =
+    draft.sendHour !== initial.sendHour ||
+    draft.timezone !== initial.timezone ||
+    draft.sendDays.slice().sort().join(',') !== initial.sendDays.slice().sort().join(',');
+
+  const onSave = async (e) => {
+    e?.preventDefault?.(); e?.stopPropagation?.();
+    setSaving(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetDigestSchedule(auth, {
+        communitySlug: community.id,
+        sendHour: draft.sendHour,
+        timezone: draft.timezone,
+        sendDays: draft.sendDays,
+      });
+      setMsg({ kind: 'success', text: t('owner.settings.staffEmails.digest.scheduleSaved') });
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div onClick={e => e.stopPropagation()}
+         style={{
+           marginTop: 10, padding: 12,
+           background: '#fff', borderRadius: 8,
+           border: '1px solid var(--tax-border)',
+         }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tax-muted)',
+                    textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>
+        {t('owner.settings.staffEmails.digest.scheduleHeading')}
+      </div>
+      <div style={{ display: 'grid', gap: 10,
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+          <span style={{ color: 'var(--tax-muted)' }}>
+            {t('owner.settings.staffEmails.digest.sendHour')}
+          </span>
+          <select value={draft.sendHour} disabled={busy || saving}
+                  onChange={e => setDraft(p => ({ ...p, sendHour: Number(e.target.value) }))}>
+            {Array.from({ length: 24 }, (_, h) => h).map(h => (
+              <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
+            ))}
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 4, fontSize: 12 }}>
+          <span style={{ color: 'var(--tax-muted)' }}>
+            {t('owner.settings.staffEmails.digest.timezone')}
+          </span>
+          <select value={draft.timezone} disabled={busy || saving}
+                  onChange={e => setDraft(p => ({ ...p, timezone: e.target.value }))}>
+            {[
+              'America/New_York',
+              'America/Chicago',
+              'America/Denver',
+              'America/Los_Angeles',
+              'America/Phoenix',
+              'America/Anchorage',
+              'America/Bogota',
+              'America/Mexico_City',
+              'America/Sao_Paulo',
+              'America/Buenos_Aires',
+              'UTC',
+            ].map(tz => <option key={tz} value={tz}>{tz}</option>)}
+          </select>
+        </label>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginBottom: 6 }}>
+          {t('owner.settings.staffEmails.digest.sendDays')}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map(code => {
+            const active = draft.sendDays.includes(code);
+            return (
+              <button key={code} type="button"
+                      onClick={() => toggleDay(code)}
+                      disabled={busy || saving}
+                      style={{
+                        padding: '4px 12px', borderRadius: 999, fontSize: 12,
+                        cursor: 'pointer',
+                        background: active
+                          ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                          : '#fff',
+                        color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                        border: '1px solid',
+                        borderColor: active
+                          ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                          : 'var(--tax-border)',
+                        fontWeight: active ? 700 : 500,
+                      }}>
+                {t(`owner.settings.staffEmails.digest.day.${code}`)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+        <button type="button"
+                className="tax-btn tax-btn--primary tax-btn--sm"
+                disabled={!dirty || saving}
+                onClick={onSave}>
+          {saving ? t('lead.submitting') : t('owner.settings.staffEmails.digest.saveSchedule')}
+        </button>
+        {msg.text && (
+          <span style={{ fontSize: 12,
+                         color: msg.kind === 'error' ? 'var(--tax-error)' : 'var(--tax-success)' }}>
+            {msg.text}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

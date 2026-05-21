@@ -197,11 +197,12 @@ app.use('/api/m/tax', taxRouter);
 // well within Render's free-tier restart window.
 taxRemindersCron.start({ intervalMs: 12 * 60 * 60 * 1000, initialDelayMs: 60 * 1000 });
 
-// Daily-digest cron — per-employee summary of priority work for the day.
-// 6h interval is intentional: dedupe via tax_digest_log ensures at most
-// one email per (community, employee, UTC day), but multiple ticks
-// catch staff added partway through the day.
-taxDigestCron.start({ intervalMs: 6 * 60 * 60 * 1000, initialDelayMs: 90 * 1000 });
+// Daily-digest cron — sends once per configured day per community
+// (default 8 AM America/New_York, Mon–Fri). 5-min interval keeps the
+// landing window tight to the owner's chosen hour; per-community
+// dedupe via tax_digest_log makes sure only the first tick that
+// crosses the threshold sends.
+taxDigestCron.start({ intervalMs: 5 * 60 * 1000, initialDelayMs: 90 * 1000 });
 
 // Public SEO endpoint — lists active tax community landings. Lives at root
 // (search-engine convention). robots.txt is static under client/public/.
