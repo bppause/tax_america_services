@@ -21,7 +21,7 @@ export default function OwnerSettings() {
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminGetCommunitySettings(auth, community.id)
       .then(d => setSettings(d.settings))
       .catch(e => setErr(e?.message || t('error.loadFailed')));

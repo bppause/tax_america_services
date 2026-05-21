@@ -30,14 +30,14 @@ export default function OwnerReminders() {
   const searchTimer = useRef(null);
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListUpcomingReminders(auth, { communitySlug: community.id, ...filters })
       .then(d => setRows(d.rows || []))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
   };
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListProducts(auth, community.id)
       .then(d => setProducts(d.products || []))
       .catch(() => setProducts([]));

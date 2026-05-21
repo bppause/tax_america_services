@@ -58,7 +58,7 @@ export default function OwnerRelationshipTypes() {
   const [editMsg, setEditMsg] = useState({});
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     setLoading(true); setErr('');
     taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id, includeInactive: true })
       .then(d => setTypes(d.types || []))

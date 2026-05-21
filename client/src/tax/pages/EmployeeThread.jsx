@@ -26,7 +26,7 @@ export default function EmployeeThread({ threadId }) {
       .catch(e => setState({ kind: e?.status === 404 ? 'not-found' : 'error', error: e?.message || '' }));
   };
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, threadId]);

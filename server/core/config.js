@@ -109,14 +109,19 @@ module.exports = function createConfigHelpers(supabase, { EMAIL_FROM }) {
       // delivery without affecting other communities. The global kill-switch
       // takes precedence: if email_kill_switch is true, no community sends.
       email_enabled:'true',
-      complex_name_es: 'Propietarios Airbnb KAI',
-      complex_name_en: 'KAI Airbnb Owners',
-      complex_location: 'Serena del Mar · Cartagena 🇨🇴',
+      // Tax-app fallback brand strings. The communities table row (Layer 3
+      // of getAppConfig) overrides these via community.name / community.name_en
+      // for the practice the email is being sent on behalf of. Kept neutral
+      // so a missing/misconfigured community row never leaks Airbnb-era
+      // strings ("Morros KAI", "Airbnb KAI") into tax outbound emails.
+      complex_name_es: 'Tax America Services',
+      complex_name_en: 'Tax America Services',
+      complex_location: '',
       complex_logo: '',
-      complex_bg: '/morros-kai-bg.jpg',
-      email_from_name: 'Comunidad Morros KAI',
+      complex_bg: '',
+      email_from_name: 'Tax America Services',
       email_from_address: (EMAIL_FROM.match(/<([^>]+)>/) || [])[1]?.trim() || EMAIL_FROM,
-      email_from_name_en: 'Morros KAI Community',
+      email_from_name_en: 'Tax America Services',
       email_from_address_en: (EMAIL_FROM.match(/<([^>]+)>/) || [])[1]?.trim() || EMAIL_FROM,
       mission_title_es:'Misión y normas de la comunidad',
       mission_body_es:'Crear una comunidad organizada, informada y proactiva que proteja el valor de nuestras propiedades y eleve la experiencia en Morros KAI.',

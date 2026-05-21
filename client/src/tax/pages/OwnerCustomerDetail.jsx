@@ -71,7 +71,7 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [err, setErr] = useState('');
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminGetCustomer(auth, customerId)
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));

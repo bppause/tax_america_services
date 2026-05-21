@@ -11,7 +11,7 @@ import { displayPersonName } from '../lib/personName';
 // to their assignments — the server enforces the filter.
 export default function OwnerProgress() {
   const { locale, t } = useT();
-  const { fbUser, community } = useEmployeeAuth();
+  const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
   const [data, setData] = useState(null);
@@ -26,7 +26,7 @@ export default function OwnerProgress() {
 
   // Reference data for the filter dropdowns. Load once per community.
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     Promise.all([
       taxApi.adminListEmployees(auth, community.id).catch(() => ({ employees: [] })),
       taxApi.adminListCustomers(auth, community.id).catch(() => ({ customers: [] })),
@@ -38,7 +38,7 @@ export default function OwnerProgress() {
   }, [fbUser, community]);
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     setData(null);
     taxApi.adminTaskProgress(auth, {
       communitySlug: community.id,

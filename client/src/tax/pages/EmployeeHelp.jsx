@@ -20,7 +20,7 @@ const CATEGORY_KEY = {
 // for their audience).
 export default function EmployeeHelp() {
   const { locale, t } = useT();
-  const { fbUser, community } = useEmployeeAuth();
+  const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
   const [articles, setArticles] = useState(null);
@@ -28,7 +28,7 @@ export default function EmployeeHelp() {
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.getEmployeeHelp(auth)
       .then(d => {
         const list = d.articles || [];

@@ -49,7 +49,7 @@ export default function OwnerLeads() {
   }, [businessNameInput]);
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     const opts = {};
     // 'open' is a virtual bucket — fetch all and filter client-side.
     if (STATUS_VALUES.includes(filter)) opts.status = filter;
@@ -64,7 +64,7 @@ export default function OwnerLeads() {
   // Products + relationship types — needed by the convert dialog to
   // suggest relationships based on the lead's requested services.
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     Promise.all([
       taxApi.adminListProducts(auth, community.id).catch(() => ({ products: [] })),
       taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id }).catch(() => ({ types: [] })),

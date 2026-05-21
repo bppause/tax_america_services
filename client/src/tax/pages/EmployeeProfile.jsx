@@ -59,7 +59,7 @@ export default function EmployeeProfile() {
   // current per-type prefs. Falls back to the type's default_channels when
   // no pref is stored for a type.
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     let cancelled = false;
     taxApi.getEmployeeNotificationTypes(auth)
       .then(d => {

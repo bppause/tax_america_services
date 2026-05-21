@@ -16,17 +16,20 @@ const { v4: uuidv4 } = require('uuid');
 const { normalizeRecipients, normalizeLanguage } = require('./utils');
 
 module.exports = function createEmailHelpers({ resend, emailConfigured, EMAIL_FROM, getAppConfig }) {
-  const getEffectiveEmailFrom = async (lang='es-CO') => {
+  const getEffectiveEmailFrom = async (lang='es-CO', communityId='tax-america-services') => {
     try {
-      const cfg = await getAppConfig();
+      const cfg = await getAppConfig(communityId);
       const isEn = normalizeLanguage(lang) === 'en';
       const addr = ((isEn ? cfg.email_from_address_en : cfg.email_from_address) || '').trim();
       if (!addr) return EMAIL_FROM;
-      const explicitName = ((isEn ? cfg.email_from_name_en : cfg.email_from_name) || '').trim();
-      const communityName = ((isEn ? cfg.complex_name_en : cfg.complex_name_es) || '').trim();
-      const name = explicitName || (communityName
-        ? (isEn ? `${communityName} Community` : `Comunidad ${communityName}`)
-        : '');
+      // Derive the From-name from the community record (overlaid into
+      // complex_name_* at Layer 3 of getAppConfig). The legacy
+      // email_from_name / email_from_name_en keys are intentionally ignored
+      // here because they live in the shared app_config table and would
+      // surface Airbnb-era strings like "Morros KAI Community" on tax-app
+      // emails. Practice names are used as-is — no "Community"/"Comunidad"
+      // wrapper, since this is a tax practice, not a residential community.
+      const name = ((isEn ? cfg.complex_name_en : cfg.complex_name_es) || '').trim();
       return name ? `${name} <${addr}>` : addr;
     } catch(e) { /* fall through */ }
     return EMAIL_FROM;
