@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { pickI18n, useT } from '../i18n';
+import { hasSavedLocale, pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
@@ -14,7 +14,7 @@ function normalizeWhatsappForCheck(raw) {
 // addition: notification channel preferences — defaulting to portal-only
 // per the owner spec, switchable to "portal + email" via the checkboxes.
 export default function EmployeeProfile() {
-  const { t } = useT();
+  const { locale, setLocale, t } = useT();
   const { fbUser, employee, community, assignments, refreshMe } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
@@ -135,6 +135,7 @@ export default function EmployeeProfile() {
         notificationPrefs: prefs,
         locale: form.locale,
       });
+      if (form.locale !== locale) setLocale(form.locale);
       setMsg({ kind: 'success', text: t('portal.profile.saved') });
       refreshMe();
     } catch (err) {
@@ -143,6 +144,16 @@ export default function EmployeeProfile() {
       setBusy(false);
     }
   };
+
+  // First-load sync: pull the saved profile locale into the UI when the
+  // browser has no explicit user choice yet, so the preference follows
+  // the employee across devices.
+  useEffect(() => {
+    if (!employee) return;
+    const profileLocale = employee.locale === 'en' ? 'en' : 'es';
+    if (!hasSavedLocale() && profileLocale !== locale) setLocale(profileLocale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee?.id]);
 
   return (
     <EmployeeShell community={community} active="profile">

@@ -205,7 +205,7 @@
   "portal.profile.email": "Email",
   "portal.profile.phone": "Phone",
   "portal.profile.language": "Language",
-  "portal.profile.language.hint": "Drives the language of the emails we send you.",
+  "portal.profile.language.hint": "Drives the app interface and the emails we send you.",
   "portal.profile.notifications": "Notification preferences",
   "portal.profile.notifications.editable": "Choose how you would like us to remind you about upcoming filings.",
   "portal.profile.notifications.locked": "Your notification channels are managed by your tax practice. Both email and portal notifications are active.",

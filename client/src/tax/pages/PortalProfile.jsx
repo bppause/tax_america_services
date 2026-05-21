@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { pickI18n, useT } from '../i18n';
+import { hasSavedLocale, pickI18n, useT } from '../i18n';
 import { useTaxAuth } from '../auth/AuthProvider';
 import { taxApi } from '../api';
 import PortalShell from '../components/PortalShell';
@@ -21,7 +21,7 @@ function normalizeWhatsappForCheck(raw) {
 }
 
 export default function PortalProfile() {
-  const { locale, t } = useT();
+  const { locale, setLocale, t } = useT();
   const { fbUser, customer, community, prefs, relationships, refreshMe } = useTaxAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
@@ -90,6 +90,9 @@ export default function PortalProfile() {
         preferredCommunicationEmail: form.preferredEmail.trim(),
         locale: form.locale,
       });
+      // Profile locale is the user's source of truth — apply it to the UI
+      // immediately so the saved preference takes effect without a reload.
+      if (form.locale !== locale) setLocale(form.locale);
       setProfileMsg({ kind: 'success', text: t('portal.profile.saved') });
       refreshMe();
     } catch (err) {
@@ -98,6 +101,16 @@ export default function PortalProfile() {
       setSavingProfile(false);
     }
   };
+
+  // First-load sync: if the customer has a saved profile locale and the
+  // browser has no explicit user choice yet (no localStorage), apply the
+  // profile locale to the UI so it follows the user across devices.
+  useEffect(() => {
+    if (!customer) return;
+    const profileLocale = customer.locale === 'en' ? 'en' : 'es';
+    if (!hasSavedLocale() && profileLocale !== locale) setLocale(profileLocale);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer?.id]);
 
   // ── Notification preferences state (unchanged from Phase 2a/2b) ────────
   const allowChange = Boolean(prefs?.allowChange);
