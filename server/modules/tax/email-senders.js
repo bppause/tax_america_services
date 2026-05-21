@@ -1568,9 +1568,17 @@ module.exports = function createTaxSenders(deps) {
     const greeting = lang === 'en'
       ? (firstNameOf(employee) ? `Hi ${firstNameOf(employee)},` : 'Hi,')
       : (firstNameOf(employee) ? `Hola ${firstNameOf(employee)},` : 'Hola,');
+    // Subject branches on whether the employee has urgent items so
+    // the inbox preview reads either as a "go act on these" call or
+    // as the quieter "your daily check-in" nudge.
+    const hasUrgent = digest.overdueCount > 0 || digest.dueTodayCount > 0;
     const subject = lang === 'en'
-      ? `Your day at ${practiceName} — ${digest.overdueCount} overdue · ${digest.dueTodayCount} due today`
-      : `Tu día en ${practiceName} — ${digest.overdueCount} atrasada(s) · ${digest.dueTodayCount} hoy`;
+      ? (hasUrgent
+          ? `Your day at ${practiceName} — ${digest.overdueCount} overdue · ${digest.dueTodayCount} due today`
+          : `Your daily check-in at ${practiceName} — no urgent items`)
+      : (hasUrgent
+          ? `Tu día en ${practiceName} — ${digest.overdueCount} atrasada(s) · ${digest.dueTodayCount} hoy`
+          : `Tu revisión diaria en ${practiceName} — sin pendientes urgentes`);
 
     const labels = lang === 'en' ? {
       intro:   "Here's what's on your plate today.",

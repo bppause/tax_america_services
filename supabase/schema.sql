@@ -2775,3 +2775,18 @@ create table if not exists public.tax_digest_log (
 -- summary once their cron picks up the new column.
 alter table public.communities
   add column if not exists tax_staff_email_digest_enabled boolean not null default true;
+
+-- Daily-digest scheduling. The cron used to run every 6h and skip
+-- when an employee had no items; now it fires once per configured
+-- day at a configured local hour and always sends so owners + staff
+-- treat the email as the "log into the app" nudge.
+-- Defaults: 8am America/New_York, Mon–Fri. Owners override per
+-- community from Owner Settings → Team email notifications.
+alter table public.communities
+  add column if not exists tax_digest_send_hour      smallint not null default 8,
+  add column if not exists tax_digest_send_timezone  text     not null default 'America/New_York',
+  add column if not exists tax_digest_send_days      text     not null default 'mon,tue,wed,thu,fri';
+do $$ begin
+  alter table public.communities add constraint tax_digest_send_hour_chk
+    check (tax_digest_send_hour between 0 and 23);
+exception when duplicate_object then null; end $$;
