@@ -145,6 +145,7 @@ export const taxApi = {
       qs.set('relationshipTypeIds', opts.relationshipTypeIds.join(','));
     }
     if (opts.customerType) qs.set('customerType', opts.customerType);
+    if (opts.includeArchived) qs.set('includeArchived', 'true');
     return request('GET',  `/admin/customers?${qs.toString()}`, undefined, auth, { admin: true });
   },
 
@@ -156,6 +157,7 @@ export const taxApi = {
       qs.set('relationshipTypeIds', opts.relationshipTypeIds.join(','));
     }
     if (opts.customerType) qs.set('customerType', opts.customerType);
+    if (opts.includeArchived) qs.set('includeArchived', 'true');
     const path = '/employee/customers' + (qs.toString() ? `?${qs.toString()}` : '');
     return request('GET',  path, undefined, auth);
   },

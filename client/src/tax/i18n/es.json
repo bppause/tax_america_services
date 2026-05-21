@@ -816,6 +816,8 @@
   "owner.customers.customerType.business": "Negocio",
   "owner.customers.fieldBusinessName": "Nombre del negocio *",
   "owner.customers.typeFilter.all": "Todos los tipos",
+  "owner.customers.includeArchived": "Mostrar archivados",
+  "owner.customers.archivedBadge": "Archivado",
   "owner.customers.searchPlaceholder.business": "Buscar por nombre del negocio, contacto, correo, teléfono…",
   "owner.leads.businessNameFilter.placeholder": "Filtrar por nombre del negocio…",
   "owner.customers.fieldMiddleName": "Segundo (opcional)",

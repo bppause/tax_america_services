@@ -705,6 +705,7 @@ module.exports = function createTaxRouter(deps) {
         q: req.query.q,
         relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
         customerType: req.query.customerType,
+        includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
         scopedCustomerIds: null,            // admin sees the whole community
       });
       res.json({ customers });
@@ -737,7 +738,7 @@ module.exports = function createTaxRouter(deps) {
   //   • Relationships are fetched as a second query keyed by customer_id
   //     to keep the select string simple and to avoid embedded-resource
   //     pagination quirks.
-  async function searchCustomers({ communitySlug, q, relationshipTypeIds, customerType, scopedCustomerIds }) {
+  async function searchCustomers({ communitySlug, q, relationshipTypeIds, customerType, includeArchived, scopedCustomerIds }) {
     let query = supabase.from('tax_customers')
       .select(`
         id, email, name, business_name, customer_type, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email,
@@ -745,6 +746,14 @@ module.exports = function createTaxRouter(deps) {
         tax_subscriptions ( id, product_id, status, active_schedule_slugs, reminder_channels, reminder_offsets_days )
       `)
       .eq('community_id', communitySlug);
+
+    // Hide archived customers by default so the working list stays
+    // focused on people the practice is currently serving. Callers
+    // pass includeArchived=true (the "Show archived" toggle on
+    // OwnerCustomers) to widen the view.
+    if (!includeArchived) {
+      query = query.neq('status', 'archived');
+    }
 
     if (Array.isArray(scopedCustomerIds)) {
       if (!scopedCustomerIds.length) return [];
@@ -1628,14 +1637,27 @@ module.exports = function createTaxRouter(deps) {
       .eq('id', customerId);
     if (error) return sendSupabaseError(res, error);
 
-    // When archiving, deactivate relationships so the cron stops generating
-    // periods for this customer. Restoring (-> active) leaves the existing
-    // relationship rows untouched — owner can re-activate per-relationship
-    // via the existing customer-detail editor.
+    // When archiving, deactivate relationships AND clean up open tasks
+    // tied to them so the Tasks page + Service-progress dashboard stop
+    // showing work for someone who's no longer a customer. Completed
+    // tasks (completed_at set) survive for the work-done history — same
+    // rule the per-relationship removal already applies. Restoring
+    // (-> active) leaves the deactivated relationships untouched; owner
+    // re-activates per-relationship via the customer-detail editor.
     if (status === 'archived') {
+      const { data: rels } = await supabase.from('tax_customer_relationships')
+        .select('relationship_type_id').eq('customer_id', customerId).eq('active', true);
       await supabase.from('tax_customer_relationships')
         .update({ active: false, updated_at: new Date().toISOString() })
         .eq('customer_id', customerId).eq('active', true);
+      const actorEmail = trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase();
+      for (const r of (rels || [])) {
+        try {
+          await removeTasksForRelationship({
+            customerId, relationshipTypeId: r.relationship_type_id, actorEmail,
+          });
+        } catch (e) { warn('[tax-customer-archive] task delete failed', e?.message || e); }
+      }
     }
 
     try {
@@ -7836,6 +7858,7 @@ module.exports = function createTaxRouter(deps) {
         q: req.query.q,
         relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
         customerType: req.query.customerType,
+        includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
         scopedCustomerIds: visible,         // null for admin, array for staff
       });
       res.json({ customers });

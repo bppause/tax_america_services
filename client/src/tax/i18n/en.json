@@ -817,6 +817,8 @@
   "owner.customers.customerType.business": "Business",
   "owner.customers.fieldBusinessName": "Business name *",
   "owner.customers.typeFilter.all": "All types",
+  "owner.customers.includeArchived": "Show archived",
+  "owner.customers.archivedBadge": "Archived",
   "owner.customers.searchPlaceholder.business": "Search by business name, contact name, email, phone…",
   "owner.leads.businessNameFilter.placeholder": "Filter by business name…",
   "owner.customers.fieldMiddleName": "Middle (optional)",
