@@ -62,6 +62,18 @@ export default function OwnerCustomers() {
     try { localStorage.setItem('tax.customers.typeFilter', customerTypeFilter); }
     catch { /* ignore */ }
   }, [customerTypeFilter]);
+
+  // Archived customers are hidden by default — the working list focuses
+  // on people the practice is currently serving. Owner flips this on
+  // when they're hunting for a past customer (e.g. to restore them).
+  const [includeArchived, setIncludeArchived] = useState(() => {
+    try { return localStorage.getItem('tax.customers.includeArchived') === '1'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tax.customers.includeArchived', includeArchived ? '1' : '0'); }
+    catch { /* ignore */ }
+  }, [includeArchived]);
   const [allTypes, setAllTypes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
@@ -95,6 +107,7 @@ export default function OwnerCustomers() {
       q: search,
       relationshipTypeIds: relationshipFilter,
       customerType: customerTypeFilter !== 'all' ? customerTypeFilter : undefined,
+      includeArchived,
     };
     const p = isAdmin
       ? taxApi.adminListCustomers(auth, community.id, opts)
@@ -103,7 +116,7 @@ export default function OwnerCustomers() {
      .catch(e => setErr(e?.message || t('error.loadFailed')))
      .finally(() => setLoading(false));
   };
-  useEffect(load, [fbUser, community, search, relationshipFilter, customerTypeFilter, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [fbUser, community, search, relationshipFilter, customerTypeFilter, includeArchived, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load relationship-type catalog once for the chip filter. Both admin
   // and staff need it; the endpoint sits behind requireOwnerAdmin so staff
@@ -467,7 +480,7 @@ export default function OwnerCustomers() {
         </form>
       )}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 10 }}>
         {[
           { key: 'all',        label: t('owner.customers.typeFilter.all') },
           { key: 'individual', label: t('owner.customers.customerType.individual') },
@@ -493,6 +506,23 @@ export default function OwnerCustomers() {
             </button>
           );
         })}
+        {/* Lives on the same row as the type chips so the owner sees
+            every "what's in this list" lever at a glance. Default off
+            — the working list never includes archived customers
+            until the owner asks. */}
+        <label style={{
+          marginLeft: 'auto', display: 'inline-flex', alignItems: 'center',
+          gap: 6, fontSize: 12, color: 'var(--tax-muted)', cursor: 'pointer',
+          padding: '2px 6px', borderRadius: 6,
+          background: includeArchived ? 'color-mix(in srgb, #b91c1c 6%, #fff)' : 'transparent',
+          border: includeArchived
+            ? '1px solid color-mix(in srgb, #b91c1c 20%, #fff)'
+            : '1px solid transparent',
+        }}>
+          <input type="checkbox" checked={includeArchived}
+                 onChange={e => setIncludeArchived(e.target.checked)} />
+          {t('owner.customers.includeArchived')}
+        </label>
       </div>
 
       <div style={{ marginBottom: 12 }}>
@@ -654,13 +684,27 @@ export default function OwnerCustomers() {
 // path and the grouped-by-letter path. Kept identical to the prior
 // inline markup so existing visual + interaction patterns survive.
 function CustomerRow({ c, base, locale, t }) {
+  const isArchived = c.status === 'archived';
   return (
     <a href={`${base}/${encodeURIComponent(c.id)}`}
-       className="tax-contact-item" style={{ textDecoration: 'none', color: 'inherit' }}>
+       className="tax-contact-item"
+       style={{
+         textDecoration: 'none', color: 'inherit',
+         opacity: isArchived ? 0.7 : 1,
+       }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
             {displayPersonName(c) || c.email}
+            {isArchived && (
+              <span style={{
+                marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+                background: 'color-mix(in srgb, #b91c1c 8%, #fff)',
+                color: '#7f1d1d',
+                border: '1px solid color-mix(in srgb, #b91c1c 20%, #fff)',
+                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>{t('owner.customers.archivedBadge')}</span>
+            )}
             {c.customer_type === 'business' && (
               <span style={{
                 marginLeft: 8, padding: '1px 8px', borderRadius: 999,
