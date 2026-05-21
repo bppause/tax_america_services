@@ -2790,3 +2790,16 @@ do $$ begin
   alter table public.communities add constraint tax_digest_send_hour_chk
     check (tax_digest_send_hour between 0 and 23);
 exception when duplicate_object then null; end $$;
+
+-- Owner-configurable From-name and From-address for outbound notifications.
+-- Per-locale because the practice may want a Spanish-flavored name on
+-- Spanish emails ("Tax America Servicios") and an English-flavored one on
+-- English emails. Empty = fall back to the community name and the
+-- EMAIL_FROM env address (see core/email.js getEffectiveEmailFrom).
+-- The address's domain must be verified with the Resend sending account
+-- or delivery will fail at send time; UI warns about that.
+alter table public.communities
+  add column if not exists tax_email_from_name        text not null default '',
+  add column if not exists tax_email_from_name_en     text not null default '',
+  add column if not exists tax_email_from_address     text not null default '',
+  add column if not exists tax_email_from_address_en  text not null default '';

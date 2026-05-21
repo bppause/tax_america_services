@@ -328,6 +328,9 @@ export default function OwnerSettings() {
         label={t('owner.settings.group.emails.label')}
         hint={t('owner.settings.group.emails.hint')} />
 
+      <EmailFromSection settings={settings} auth={auth} community={community}
+                        t={t} onSaved={load} />
+
       <CustomerEmailsSection settings={settings} busy={busy} t={t}
                              onToggle={onToggleCustomerEmail}
                              onToggleMaster={onToggleCustomerEmailsMaster} />
@@ -1289,6 +1292,140 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
               {busy ? t('lead.submitting') : t('owner.settings.community.saveBtn')}
             </button>
             <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                    disabled={busy} onClick={() => setEditing(false)}>
+              {t('preview.close')}
+            </button>
+          </div>
+        </div>
+      )}
+    </CollapsibleSection>
+  );
+}
+
+// Outbound email "From" identity editor. Lets the owner set the
+// display name and address used as the sender on every notification
+// the platform emits. Per-locale so a Spanish-named practice can
+// stay Spanish on es emails and use the English variant on en emails.
+// Empty values mean "use the default" — the community name + the
+// platform's EMAIL_FROM env address.
+function EmailFromSection({ settings, auth, community, t, onSaved }) {
+  const [form, setForm] = useState({
+    email_from_name: '', email_from_name_en: '',
+    email_from_address: '', email_from_address_en: '',
+  });
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  useEffect(() => {
+    if (!settings) return;
+    setForm({
+      email_from_name:        settings.tax_email_from_name        || '',
+      email_from_name_en:     settings.tax_email_from_name_en     || '',
+      email_from_address:     settings.tax_email_from_address     || '',
+      email_from_address_en:  settings.tax_email_from_address_en  || '',
+    });
+  }, [settings]);
+
+  const onField = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const onSave = async () => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetEmailFrom(auth, {
+        communitySlug: community.id,
+        email_from_name:       form.email_from_name.trim(),
+        email_from_name_en:    form.email_from_name_en.trim(),
+        email_from_address:    form.email_from_address.trim(),
+        email_from_address_en: form.email_from_address_en.trim(),
+      });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
+
+  // Effective preview: what the customer/employee actually sees as the
+  // sender today, given the current saved overrides + the community
+  // name fallback. Address fallback is platform-managed (EMAIL_FROM env),
+  // so we just show "(platform default)" when the owner hasn't set one.
+  const fallbackNameEs  = settings?.name || '';
+  const fallbackNameEn  = settings?.name_en || settings?.name || '';
+  const previewNameEs   = (settings?.tax_email_from_name        || fallbackNameEs).trim();
+  const previewNameEn   = (settings?.tax_email_from_name_en     || fallbackNameEn).trim();
+  const previewAddrEs   = (settings?.tax_email_from_address     || '').trim();
+  const previewAddrEn   = (settings?.tax_email_from_address_en  || '').trim();
+
+  return (
+    <CollapsibleSection
+      storageKey="emailFrom"
+      defaultOpen={false}
+      title={t('owner.settings.emailFrom.title')}
+      subtitle={t('owner.settings.emailFrom.subtitle')}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        {!editing && (
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={() => setEditing(true)}>
+            {t('owner.settings.community.editBtn')}
+          </button>
+        )}
+      </div>
+
+      {msg.text && (
+        <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginBottom: 12 }}>{msg.text}</div>
+      )}
+
+      {!editing ? (
+        <div className="tax-contact-grid">
+          <ReadRow label={t('owner.settings.emailFrom.nameEs')}
+                   value={previewNameEs} />
+          <ReadRow label={t('owner.settings.emailFrom.addressEs')}
+                   value={previewAddrEs || t('owner.settings.emailFrom.platformDefault')} />
+          <ReadRow label={t('owner.settings.emailFrom.nameEn')}
+                   value={previewNameEn} />
+          <ReadRow label={t('owner.settings.emailFrom.addressEn')}
+                   value={previewAddrEn || t('owner.settings.emailFrom.platformDefault')} />
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--tax-muted)' }}>
+            {t('owner.settings.emailFrom.lede')}
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field id="ef-name-es"
+                   label={t('owner.settings.emailFrom.nameEs')}
+                   placeholder={fallbackNameEs}
+                   hint={t('owner.settings.emailFrom.nameHint')}
+                   value={form.email_from_name}
+                   onChange={v => onField('email_from_name', v)} />
+            <Field id="ef-addr-es" type="email"
+                   label={t('owner.settings.emailFrom.addressEs')}
+                   placeholder="notifications@yourpractice.com"
+                   hint={t('owner.settings.emailFrom.addressHint')}
+                   value={form.email_from_address}
+                   onChange={v => onField('email_from_address', v)} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <Field id="ef-name-en"
+                   label={t('owner.settings.emailFrom.nameEn')}
+                   placeholder={fallbackNameEn}
+                   value={form.email_from_name_en}
+                   onChange={v => onField('email_from_name_en', v)} />
+            <Field id="ef-addr-en" type="email"
+                   label={t('owner.settings.emailFrom.addressEn')}
+                   placeholder="notifications@yourpractice.com"
+                   value={form.email_from_address_en}
+                   onChange={v => onField('email_from_address_en', v)} />
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="tax-btn tax-btn--primary"
+                    disabled={busy} onClick={onSave}>
+              {busy ? t('lead.submitting') : t('owner.settings.community.saveBtn')}
+            </button>
+            <button type="button" className="tax-btn tax-btn--ghost"
                     disabled={busy} onClick={() => setEditing(false)}>
               {t('preview.close')}
             </button>

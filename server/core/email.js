@@ -20,16 +20,19 @@ module.exports = function createEmailHelpers({ resend, emailConfigured, EMAIL_FR
     try {
       const cfg = await getAppConfig(communityId);
       const isEn = normalizeLanguage(lang) === 'en';
-      const addr = ((isEn ? cfg.email_from_address_en : cfg.email_from_address) || '').trim();
+      // Address: owner-set per-locale override (Layer 3) → EMAIL_FROM env.
+      // The Layer-1 (shared app_config) values are wiped in core/config.js
+      // so they can't surface here.
+      const ownerAddr = ((isEn ? cfg.email_from_address_en : cfg.email_from_address) || '').trim();
+      const envAddrMatch = String(EMAIL_FROM || '').match(/<([^>]+)>/);
+      const envAddr = (envAddrMatch ? envAddrMatch[1] : EMAIL_FROM || '').trim();
+      const addr = ownerAddr || envAddr;
       if (!addr) return EMAIL_FROM;
-      // Derive the From-name from the community record (overlaid into
-      // complex_name_* at Layer 3 of getAppConfig). The legacy
-      // email_from_name / email_from_name_en keys are intentionally ignored
-      // here because they live in the shared app_config table and would
-      // surface Airbnb-era strings like "Morros KAI Community" on tax-app
-      // emails. Practice names are used as-is — no "Community"/"Comunidad"
-      // wrapper, since this is a tax practice, not a residential community.
-      const name = ((isEn ? cfg.complex_name_en : cfg.complex_name_es) || '').trim();
+      // Name: owner-set per-locale override (Layer 3) → community name
+      // (community.name / name_en, overlaid into cfg.complex_name_*).
+      const ownerName = ((isEn ? cfg.email_from_name_en : cfg.email_from_name) || '').trim();
+      const communityName = ((isEn ? cfg.complex_name_en : cfg.complex_name_es) || '').trim();
+      const name = ownerName || communityName;
       return name ? `${name} <${addr}>` : addr;
     } catch(e) { /* fall through */ }
     return EMAIL_FROM;

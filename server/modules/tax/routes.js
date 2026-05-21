@@ -2659,7 +2659,7 @@ module.exports = function createTaxRouter(deps) {
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     const { data, error } = await supabase.from('communities')
       .select(`
-        id, name, tax_allow_customer_notif_pref_change, tax_customer_documents_enabled,
+        id, name, name_en, tax_allow_customer_notif_pref_change, tax_customer_documents_enabled,
         tax_customer_portal_enabled, tax_customer_reminders_enabled, tax_task_lookahead_months,
         tax_task_urgent_days, tax_task_soon_days, tax_task_upcoming_days,
         tax_task_priority_colors, tax_task_urgency_colors,
@@ -2671,6 +2671,8 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
+        tax_email_from_name, tax_email_from_name_en,
+        tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
         default_locale, calendly_url, landing_copy_i18n
@@ -2743,6 +2745,61 @@ module.exports = function createTaxRouter(deps) {
       await auditLog({
         entity: 'tax.community.contact', entityId: communitySlug,
         action: 'update_contact', actorEmail: '',
+        after: Object.keys(update).filter(k => k !== 'updated_at'),
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // PUT /admin/community-settings/email-from — owner-set From-name and
+  // From-address used as the sender on outbound notifications. Per-locale
+  // because the practice may want a Spanish name on Spanish emails and an
+  // English name on English emails. Empty strings clear the override and
+  // the platform falls back to the community name + EMAIL_FROM env.
+  //
+  // The address's domain must be verified with the configured Resend
+  // sending account or Resend will reject the send; we accept the value
+  // and let the send-time error surface if the domain isn't allowed.
+  router.put('/admin/community-settings/email-from', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+
+    const update = { updated_at: new Date().toISOString() };
+    const name = (k, max = 120) => {
+      if (body[k] === undefined) return;
+      update[`tax_${k}`] = trim(String(body[k] || ''), max);
+    };
+    const addr = (k) => {
+      if (body[k] === undefined) return;
+      const raw = String(body[k] || '').trim();
+      if (raw === '') { update[`tax_${k}`] = ''; return null; }
+      if (!isValidEmail(raw)) return `${k}_invalid`;
+      update[`tax_${k}`] = raw.slice(0, 200);
+      return null;
+    };
+    name('email_from_name');
+    name('email_from_name_en');
+    const e1 = addr('email_from_address');
+    const e2 = addr('email_from_address_en');
+    if (e1 || e2) {
+      return res.status(400).json({
+        error: e1 || e2,
+        message: 'From-address must be a valid email (e.g., notifications@yourpractice.com). The domain must be verified with the platform email provider.',
+      });
+    }
+    if (Object.keys(update).length === 1) {
+      return res.status(400).json({ error: 'Nothing to update.' });
+    }
+
+    const { error } = await supabase.from('communities').update(update)
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.email_from', entityId: communitySlug,
+        action: 'update_email_from', actorEmail: '',
         after: Object.keys(update).filter(k => k !== 'updated_at'),
       });
     } catch (_e) {}
