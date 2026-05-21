@@ -24,7 +24,7 @@ export default function OwnerServicesAdmin() {
   const [err, setErr] = useState('');
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     Promise.all([
       taxApi.adminListProducts(auth, community.id),
       taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id }).catch(() => ({ types: [] })),

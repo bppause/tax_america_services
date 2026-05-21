@@ -36,7 +36,7 @@ export default function OwnerFaqAdmin() {
   const [customTypeId, setCustomTypeId] = useState('');
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListCommunityFaqs(auth, community.id)
       .then(d => setGroups(d.groups || []))
       .catch(e => setErr(e?.message || t('error.loadFailed')));

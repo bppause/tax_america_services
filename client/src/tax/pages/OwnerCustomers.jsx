@@ -101,7 +101,7 @@ export default function OwnerCustomers() {
   }, [searchInput]);
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     setLoading(true); setErr('');
     const opts = {
       q: search,
@@ -123,7 +123,7 @@ export default function OwnerCustomers() {
   // would 403. Wrap in try/catch so a 403 doesn't blow up the page —
   // staff just won't see the chip filter (search still works fine).
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id })
       .then(d => setAllTypes(d.types || []))
       .catch(() => setAllTypes([]));

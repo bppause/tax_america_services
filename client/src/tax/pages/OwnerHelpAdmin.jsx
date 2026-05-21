@@ -44,7 +44,7 @@ export default function OwnerHelpAdmin() {
   const [showCustom, setShowCustom] = useState(false);
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListHelp(auth, community.id, audience)
       .then(d => setArticles(d.articles?.[audience] || []))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
@@ -52,7 +52,7 @@ export default function OwnerHelpAdmin() {
   useEffect(load, [fbUser, community, audience]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id })
       .then(d => setTypes(d.types || []))
       .catch(() => {});

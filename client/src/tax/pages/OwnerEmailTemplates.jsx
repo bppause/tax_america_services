@@ -47,7 +47,7 @@ export default function OwnerEmailTemplates() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     setLoading(true); setErr('');
     taxApi.adminListEmailTemplates(auth, community.id)
       .then(d => {

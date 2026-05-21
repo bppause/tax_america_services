@@ -51,7 +51,7 @@ export default function OwnerAudit() {
   const [err, setErr] = useState('');
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListAudit(auth, {
       ...filters,
       limit: PAGE_SIZE,

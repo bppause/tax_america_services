@@ -21,7 +21,7 @@ export default function OwnerStaff() {
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.adminListEmployees(auth, community.id)
       .then(d => setEmployees(d.employees || []))
       .catch(e => setErr(e?.message || t('error.loadFailed')));

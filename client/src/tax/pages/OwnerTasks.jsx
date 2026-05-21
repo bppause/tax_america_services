@@ -128,7 +128,7 @@ export default function OwnerTasks() {
   });
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     // Flatten array filters to comma-separated strings for the API.
     // Empty arrays drop out so the server doesn't see "?status=".
     const flat = (v) => Array.isArray(v) ? v.join(',') : v;
@@ -173,7 +173,7 @@ export default function OwnerTasks() {
   // Reference data (statuses / employees / customers / products) is loaded
   // once per community — the picker dropdowns + filter chips depend on it.
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     Promise.all([
       taxApi.adminListTaskStatuses(auth, community.id).catch(() => ({ statuses: [] })),
       taxApi.adminListEmployees(auth, community.id).catch(() => ({ employees: [] })),

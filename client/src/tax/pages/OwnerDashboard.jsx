@@ -19,12 +19,14 @@ export default function OwnerDashboard() {
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    // Gate on `employee` (set after both Firebase link AND impersonation
+    // resolve) instead of `fbUser`, which stays null during impersonation.
+    if (!employee || !community) return;
     taxApi.adminDashboard(auth, community.id)
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community]);
+  }, [employee, community]);
 
   if (err) return <EmployeeShell community={community} active="dashboard">
     <div className="tax-msg tax-msg--error">{err}</div>

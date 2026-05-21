@@ -58,7 +58,7 @@ export default function OwnerStaffDetail({ employeeId }) {
     .catch(() => {});
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!me || !community) return;
     loadEmployee(); loadCustomers(); loadAssignments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, employeeId]);

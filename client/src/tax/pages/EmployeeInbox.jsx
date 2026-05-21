@@ -19,7 +19,7 @@ function relTime(iso) {
 
 export default function EmployeeInbox() {
   const { t } = useT();
-  const { fbUser, community } = useEmployeeAuth();
+  const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
   const [threads, setThreads] = useState(null);
@@ -27,7 +27,7 @@ export default function EmployeeInbox() {
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     taxApi.getEmployeeThreads(auth)
       .then(d => setThreads(d.threads || []))
       .catch(e => setErr(e?.message || t('error.loadFailed')));

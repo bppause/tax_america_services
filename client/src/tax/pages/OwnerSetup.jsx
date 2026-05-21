@@ -29,7 +29,7 @@ export default function OwnerSetup() {
   const [err, setErr] = useState('');
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     setErr('');
     taxApi.adminGetSetupStatus(auth, community.id)
       .then(d => setData(d))

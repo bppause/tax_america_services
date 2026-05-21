@@ -55,7 +55,7 @@ export default function OwnerRelationshipWorkflows() {
   }, [advanced]);
 
   const load = () => {
-    if (!fbUser || !community) return;
+    if (!employee || !community) return;
     setLoading(true); setErr('');
     Promise.all([
       taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id }),
