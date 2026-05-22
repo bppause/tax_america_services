@@ -266,30 +266,64 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], onC
     } finally { setBusy(false); }
   };
 
+  // Auto-task count surfaced from the list endpoint. A "0" badge means
+  // this service won't generate recurring work for tagged customers —
+  // worth flagging in red so the owner notices missing setup.
+  const autoTasksActive = Number(p.auto_tasks_active || 0);
+  const autoTasksTotal  = Number(p.auto_tasks_total  || 0);
+
   return (
     <div className="tax-contact-item">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 600 }}>
-            {name}
+          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span>{name}</span>
             <span style={{
-              marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+              padding: '1px 8px', borderRadius: 999,
               background: 'var(--tax-bg-alt)', color: 'var(--tax-muted)',
               fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
             }}>{p.category}</span>
             {!p.enabled && (
               <span style={{
-                marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+                padding: '1px 8px', borderRadius: 999,
                 background: '#fee2e2', color: '#991b1b',
                 fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
               }}>{t('owner.services.hidden')}</span>
             )}
+            {/* Recurring-task badge: green when configured, red when
+                empty so the missing setup pops visually. */}
+            <span
+              title={autoTasksActive > 0
+                ? t('owner.services.autoTasksBadge.titleConfigured', { n: autoTasksActive })
+                : t('owner.services.autoTasksBadge.titleEmpty')}
+              style={{
+                padding: '1px 8px', borderRadius: 999,
+                background: autoTasksActive > 0 ? '#dcfce7' : '#fee2e2',
+                color:      autoTasksActive > 0 ? '#166534' : '#991b1b',
+                fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+              }}>
+              {autoTasksActive > 0
+                ? t('owner.services.autoTasksBadge.count', { n: autoTasksActive })
+                : t('owner.services.autoTasksBadge.none')}
+            </span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
             {t('owner.services.slug')}: {p.slug} • {t('owner.services.displayOrder')}: {p.display_order}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          {!editing && (
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                    onClick={() => setEditing(true)}
+                    style={{
+                      color: autoTasksActive > 0 ? 'var(--tax-brand-primary)' : 'var(--tax-error)',
+                      borderColor: autoTasksActive > 0 ? 'var(--tax-brand-primary)' : 'var(--tax-error)',
+                    }}>
+              {autoTasksActive > 0
+                ? t('owner.services.viewRecurring')
+                : t('owner.services.addRecurring')}
+            </button>
+          )}
           {!editing && (
             <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                     onClick={() => setEditing(true)} style={{ color: 'var(--tax-text)' }}>
