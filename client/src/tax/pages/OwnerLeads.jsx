@@ -422,6 +422,10 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
 
   const onSubmit = async (e) => {
     e?.preventDefault?.();
+    if (selected.size === 0) {
+      setErr(t('owner.customers.errServiceRequired'));
+      return;
+    }
     setBusy(true); setErr('');
     try {
       const r = await taxApi.adminConvertLead(auth, lead.id, {
@@ -450,7 +454,19 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
 
         <form onSubmit={onSubmit} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
-            <label style={{ fontWeight: 600 }}>{t('owner.leads.convert.services')}</label>
+            <label style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span>{t('owner.leads.convert.services')} *</span>
+              <span style={{
+                padding: '1px 8px', borderRadius: 999,
+                background: selected.size === 0 ? '#fee2e2' : '#dcfce7',
+                color: selected.size === 0 ? '#991b1b' : '#166534',
+                fontSize: 11, fontWeight: 700,
+              }}>
+                {selected.size === 0
+                  ? t('owner.customers.fieldRelationships.empty')
+                  : t('owner.customers.fieldRelationships.count', { n: selected.size })}
+              </span>
+            </label>
             <p style={{ margin: '4px 0 10px', fontSize: 12, color: 'var(--tax-muted)' }}>
               {t('owner.leads.convert.servicesHint')}
             </p>

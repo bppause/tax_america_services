@@ -232,6 +232,7 @@ export const taxApi = {
   adminListCustomerNotes(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/notes`, undefined, auth, { admin: true }); },
   adminCreateCustomerNote(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/notes`, payload, auth, { admin: true }); },
   adminGetCustomerActivity(auth, customerId, limit = 100) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/activity?limit=${limit}`, undefined, auth, { admin: true }); },
+  adminUndoCustomerActivity(auth, customerId, auditId) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/activity/undo`, { auditId }, auth, { admin: true }); },
   getEmployeeTriage(auth, windowDays = 7) { return request('GET', `/employee/triage?windowDays=${windowDays}`, undefined, auth); },
 
   // Phase 4n.24: signature requests
@@ -263,6 +264,7 @@ export const taxApi = {
   adminSetPortalEnabled(auth, payload)           { return request('PUT',  '/admin/community-settings/portal-enabled', payload, auth, { admin: true }); },
 
   adminListProducts(auth, communitySlug)         { return request('GET',  `/admin/products?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminCreateProduct(auth, payload)              { return request('POST', '/admin/products', payload, auth, { admin: true }); },
   adminUpdateProduct(auth, productId, payload)   { return request('PUT',  `/admin/products/${encodeURIComponent(productId)}`, payload, auth, { admin: true }); },
   adminDeleteProduct(auth, productId, opts = {}) {
     const qs = opts.force ? '?force=1' : '';

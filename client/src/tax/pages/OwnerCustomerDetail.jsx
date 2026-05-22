@@ -193,12 +193,29 @@ function ActivityTimelineSection({ auth, customerId, locale, t }) {
   const [events, setEvents] = useState(null);
   const [filter, setFilter] = useState('all');
   const [err, setErr] = useState('');
-  useEffect(() => {
+  const [undoing, setUndoing] = useState('');
+  const [undoMsg, setUndoMsg] = useState({ kind: 'idle', text: '' });
+  const reload = () => {
     setErr(''); setEvents(null);
     taxApi.adminGetCustomerActivity(auth, customerId, 100)
       .then(d => setEvents(d.events || []))
       .catch(e => setErr(e?.message || ''));
-  }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
+  };
+  useEffect(() => { reload(); }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onUndo = async (auditId) => {
+    setUndoing(auditId); setUndoMsg({ kind: 'idle', text: '' });
+    try {
+      const r = await taxApi.adminUndoCustomerActivity(auth, customerId, auditId);
+      setUndoMsg({ kind: 'success',
+        text: t('owner.activity.undo.success', { n: r.tasksCreated || 0 }) });
+      reload();
+    } catch (e) {
+      setUndoMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally {
+      setUndoing('');
+    }
+  };
 
   function fmt(iso) {
     if (!iso) return '';
@@ -267,6 +284,10 @@ function ActivityTimelineSection({ auth, customerId, locale, t }) {
           {t('owner.activity.empty')}
         </p>
       )}
+      {undoMsg.text && (
+        <div className={`tax-msg tax-msg--${undoMsg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginTop: 12 }}>{undoMsg.text}</div>
+      )}
       {events && shown.length > 0 && (
         <div style={{ marginTop: 16, position: 'relative' }}>
           {/* Vertical rail behind the dots. */}
@@ -276,7 +297,8 @@ function ActivityTimelineSection({ auth, customerId, locale, t }) {
           }} />
           <div style={{ display: 'grid', gap: 12 }}>
             {shown.map((e, i) => (
-              <ActivityRow key={i} event={e} fmt={fmt} relTime={relTime} t={t} />
+              <ActivityRow key={i} event={e} fmt={fmt} relTime={relTime} t={t}
+                           undoing={undoing === e.ref?.id} onUndo={onUndo} />
             ))}
           </div>
         </div>
@@ -285,7 +307,7 @@ function ActivityTimelineSection({ auth, customerId, locale, t }) {
   );
 }
 
-function ActivityRow({ event, fmt, relTime, t }) {
+function ActivityRow({ event, fmt, relTime, t, undoing, onUndo }) {
   const ICON = {
     note_added: '📝',
     sig_requested: '✎',  sig_signed: '✓',  sig_declined: '✕',  sig_cancelled: '⊘',
@@ -294,6 +316,7 @@ function ActivityRow({ event, fmt, relTime, t }) {
     email_sent: '✉',  email_delivered: '✉',  email_opened: '👁',  email_clicked: '🖱',
     email_bounced: '!',
     customer_created: '★',
+    service_removed: '⊗',  relationship_removed: '⊗',
     audit: '⚙',
   };
   const TONE = {
@@ -306,11 +329,24 @@ function ActivityRow({ event, fmt, relTime, t }) {
   const tone = TONE[event.tone] || TONE.muted;
   const icon = ICON[event.kind] || '•';
 
+  // Hover tooltip — gives the full untruncated detail (the inline row
+  // keeps the 280-char clamp so the timeline stays scannable). Built as
+  // a multi-line string so the browser's native tooltip renders it.
+  const hoverLines = [
+    event.title,
+    event.detail ? event.detail : null,
+    event.actor ? t('owner.activity.by', { name: event.actor }) : null,
+    fmt(event.ts),
+  ].filter(Boolean);
+  const hoverText = hoverLines.join('\n');
+
+  const canUndo = event.undoable && event.ref?.id;
+
   return (
     <div style={{
       display: 'grid', gridTemplateColumns: '24px 1fr', gap: 12, alignItems: 'flex-start',
       paddingLeft: 0, position: 'relative',
-    }}>
+    }} title={hoverText}>
       <div style={{
         width: 24, height: 24, borderRadius: '50%',
         background: tone.bg, color: tone.fg,
@@ -321,9 +357,24 @@ function ActivityRow({ event, fmt, relTime, t }) {
       <div style={{ minWidth: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
           <strong style={{ fontSize: 14 }}>{event.title}</strong>
-          <span style={{ fontSize: 12, color: 'var(--tax-muted)', whiteSpace: 'nowrap' }}
-                title={fmt(event.ts)}>
-            {relTime(event.ts)}
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {canUndo && (
+              <button type="button"
+                      onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); onUndo(event.ref.id); }}
+                      disabled={undoing}
+                      style={{
+                        padding: '2px 10px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        background: '#fff', color: 'var(--tax-brand-primary)',
+                        border: '1px solid var(--tax-brand-primary)', cursor: undoing ? 'wait' : 'pointer',
+                        textTransform: 'uppercase', letterSpacing: '.04em',
+                      }}>
+                {undoing ? t('owner.activity.undo.busy') : t('owner.activity.undo.button')}
+              </button>
+            )}
+            <span style={{ fontSize: 12, color: 'var(--tax-muted)', whiteSpace: 'nowrap' }}
+                  title={fmt(event.ts)}>
+              {relTime(event.ts)}
+            </span>
           </span>
         </div>
         {event.detail && (

@@ -1283,7 +1283,7 @@ module.exports = function createTaxRouter(deps) {
   // belonging to the removed relationship goes, because keeping
   // mid-flight work pinned to a relationship that no longer exists just
   // leaves orphans on the board.
-  async function removeTasksForRelationship({ customerId, relationshipTypeId, actorEmail = '' }) {
+  async function removeTasksForRelationship({ customerId, relationshipTypeId, actorEmail = '', skipAudit = false }) {
     if (!customerId || !relationshipTypeId) return { deleted: 0 };
     const { data: cur } = await supabase.from('tax_tasks')
       .select('id')
@@ -1300,13 +1300,19 @@ module.exports = function createTaxRouter(deps) {
       warn('[tax-task-gen] delete failed', error.message);
       return { deleted: 0, error: error.message };
     }
-    try {
-      await auditLog({
-        entity: 'tax.customer', entityId: customerId, action: 'tasks_deleted',
-        actorEmail: actorEmail || '',
-        after: { relationshipTypeId, deleted: dropIds.length },
-      });
-    } catch (_e) {}
+    // Audit suppression is used by callers that write a richer
+    // higher-level audit (e.g., DELETE /admin/customers/:id/relationships/:relId
+    // writes a single `relationship_remove` row instead of the generic
+    // `tasks_deleted` so the activity timeline shows one undoable event).
+    if (!skipAudit) {
+      try {
+        await auditLog({
+          entity: 'tax.customer', entityId: customerId, action: 'tasks_deleted',
+          actorEmail: actorEmail || '',
+          after: { relationshipTypeId, deleted: dropIds.length },
+        });
+      } catch (_e) {}
+    }
     return { deleted: dropIds.length };
   }
 
@@ -2903,6 +2909,90 @@ module.exports = function createTaxRouter(deps) {
   //   • enabled               toggle the card on/off without deleting
   // Other fields (slug, category, workflow, sla_hours, pricing) stay
   // owner-edit-via-SQL for now.
+  // POST /admin/products — owner-created service.
+  // Body: { communitySlug, slug, category?, nameI18n, descriptionI18n?,
+  //         longDescriptionI18n?, requiredDocuments?, displayOrder?,
+  //         videoUrl?, icon? }
+  // Slug is the per-community unique handle (lowercased, dash-separated).
+  // The composite primary key is `${communitySlug}:${slug}` to match the
+  // pattern the seed inserts use, so the public landing page picks the
+  // service up without a separate routing layer.
+  router.post('/admin/products', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const rawSlug = trim(body.slug, 80).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!communitySlug || !rawSlug) {
+      return res.status(400).json({ error: 'communitySlug and slug required.' });
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(rawSlug)) {
+      return res.status(400).json({ error: 'invalid_slug',
+        message: 'Slug must be lowercase letters, digits, and dashes (e.g., "annual-report").' });
+    }
+    const nameEn = String(body.nameI18n?.en || '').slice(0, MAX_NAME_LEN).trim();
+    const nameEs = String(body.nameI18n?.es || '').slice(0, MAX_NAME_LEN).trim();
+    if (!nameEn && !nameEs) {
+      return res.status(400).json({ error: 'name_required',
+        message: 'Provide the service name in English or Spanish.' });
+    }
+    // Reject collisions explicitly so the owner gets a clean message
+    // instead of a Postgres unique-violation echo.
+    const id = `${communitySlug}:${rawSlug}`;
+    const { data: existing } = await supabase.from('tax_products')
+      .select('id').eq('id', id).maybeSingle();
+    if (existing) {
+      return res.status(409).json({ error: 'slug_in_use',
+        message: 'A service with that slug already exists in this community.' });
+    }
+
+    const allowedCategories = ['tax_prep','recurring','one_off'];
+    const category = allowedCategories.includes(String(body.category || ''))
+      ? body.category : 'one_off';
+
+    const row = {
+      id, community_id: communitySlug, slug: rawSlug, category,
+      enabled: true,
+      display_order: Math.max(0, Math.min(10000, Number(body.displayOrder) || 0)),
+      icon: String(body.icon || '').slice(0, 40),
+      name_i18n: {
+        en: nameEn || nameEs,
+        es: nameEs || nameEn,
+      },
+      description_i18n: (body.descriptionI18n && typeof body.descriptionI18n === 'object') ? {
+        en: String(body.descriptionI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.descriptionI18n.es || '').slice(0, MAX_TEXT_LEN),
+      } : {},
+      long_description_i18n: (body.longDescriptionI18n && typeof body.longDescriptionI18n === 'object') ? {
+        en: String(body.longDescriptionI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.longDescriptionI18n.es || '').slice(0, MAX_TEXT_LEN),
+      } : {},
+      required_documents: Array.isArray(body.requiredDocuments)
+        ? body.requiredDocuments.slice(0, 30).map(d => {
+            if (typeof d === 'string') return String(d).slice(0, MAX_NAME_LEN);
+            if (d && typeof d === 'object') return {
+              en: String(d.en || '').slice(0, MAX_NAME_LEN),
+              es: String(d.es || '').slice(0, MAX_NAME_LEN),
+            };
+            return '';
+          }).filter(d => (typeof d === 'string' ? d : (d.en || d.es)))
+        : [],
+      video_url: String(body.videoUrl || '').trim().slice(0, 500),
+    };
+
+    const { error } = await supabase.from('tax_products').insert(row);
+    if (error) return sendSupabaseError(res, error);
+
+    try {
+      await auditLog({
+        entity: 'tax.product', entityId: id, action: 'create',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { slug: rawSlug, category },
+      });
+    } catch (_e) {}
+
+    res.json({ ok: true, id, slug: rawSlug });
+  });
+
   router.put('/admin/products/:id', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
     const productId = trim(req.params.id, 200);
@@ -3545,6 +3635,10 @@ module.exports = function createTaxRouter(deps) {
           .select('id, product_id').in('id', relIds);
         requestedProductIds = (rt || []).map(r => r.product_id).filter(Boolean);
       }
+    }
+    if (requestedProductIds.length === 0) {
+      return res.status(400).json({ error: 'service_required',
+        message: 'Pick at least one service so the customer\'s tasks can be generated.' });
     }
     let servicesAdded = 0;
     let tasksCreated = 0;
@@ -5436,8 +5530,99 @@ module.exports = function createTaxRouter(deps) {
       });
     }
 
+    // Look up product + relationship names referenced by audit rows so
+    // the timeline can render friendly labels ("Service removed:
+    // Bookkeeping") instead of opaque action strings. Cheap because the
+    // audit set is already capped at 50 rows.
+    const auditProductIds = new Set();
+    const auditRelTypeIds = new Set();
+    for (const a of (auditQ.data || [])) {
+      const after = (a.after_data && typeof a.after_data === 'object') ? a.after_data : {};
+      if (after.productId) auditProductIds.add(String(after.productId));
+      if (after.relationshipTypeId) auditRelTypeIds.add(String(after.relationshipTypeId));
+    }
+    const productNameById = new Map();
+    if (auditProductIds.size) {
+      const { data } = await supabase.from('tax_products')
+        .select('id, slug, name_i18n').in('id', Array.from(auditProductIds));
+      for (const p of (data || [])) {
+        productNameById.set(p.id, p.name_i18n?.es || p.name_i18n?.en || p.slug || p.id);
+      }
+    }
+    const relTypeNameById = new Map();
+    if (auditRelTypeIds.size) {
+      const { data } = await supabase.from('tax_relationship_types')
+        .select('id, slug, name_i18n').in('id', Array.from(auditRelTypeIds));
+      for (const r of (data || [])) {
+        relTypeNameById.set(r.id, r.name_i18n?.es || r.name_i18n?.en || r.slug || r.id);
+      }
+    }
+    // Undo is offered only for recent removals — a week is long enough
+    // for a typical "oops, didn't mean to do that" loop but short enough
+    // that the team's intervening work doesn't get clobbered by a stale
+    // restore. The button hides itself once the window closes.
+    const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+
     for (const a of (auditQ.data || [])) {
       if (a.entity !== 'tax.customer' && a.entity !== 'tax.customer.contact') continue;
+      const after = (a.after_data && typeof a.after_data === 'object') ? a.after_data : {};
+      const ageMs = nowMs - new Date(a.created_at).getTime();
+      const inUndoWindow = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= UNDO_WINDOW_MS;
+
+      // Service removal: friendly title + undo button. The audit row
+      // carries the productId in after_data, so the undo endpoint can
+      // re-activate the service link and regenerate tasks.
+      if (a.action === 'service_remove' && after.productId) {
+        const pname = productNameById.get(String(after.productId)) || String(after.productId);
+        push(a.created_at, {
+          kind: 'service_removed', tone: 'danger',
+          title: `Service removed: ${pname}`,
+          detail: after.tasksDeleted
+            ? `${after.tasksDeleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+          undoable: inUndoWindow,
+          undoAction: 'service_restore',
+        });
+        continue;
+      }
+      // Relationship removal: new `relationship_remove` audit (carries
+      // both the customer-relationship row id and the relationship-type
+      // id) is undoable. Legacy `tasks_deleted` audits — pre-dating the
+      // endpoint-level audit — still get the friendly label but no
+      // button, since the soft-deleted relationship row's id wasn't
+      // recorded with them.
+      if (a.action === 'relationship_remove' && after.relationshipTypeId) {
+        const rname = relTypeNameById.get(String(after.relationshipTypeId)) || String(after.relationshipTypeId);
+        push(a.created_at, {
+          kind: 'relationship_removed', tone: 'danger',
+          title: `Relationship removed: ${rname}`,
+          detail: after.tasksDeleted
+            ? `${after.tasksDeleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+          undoable: inUndoWindow,
+          undoAction: 'relationship_restore',
+        });
+        continue;
+      }
+      if (a.action === 'tasks_deleted' && after.relationshipTypeId) {
+        const rname = relTypeNameById.get(String(after.relationshipTypeId)) || String(after.relationshipTypeId);
+        push(a.created_at, {
+          kind: 'relationship_removed', tone: 'warn',
+          title: `Relationship removed: ${rname}`,
+          detail: after.deleted
+            ? `${after.deleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+        });
+        continue;
+      }
+
       push(a.created_at, {
         kind: 'audit', tone: 'muted',
         title: `${a.entity}.${a.action}`,
@@ -6662,6 +6847,111 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, tasksDeleted });
   });
 
+  // POST /admin/customers/:id/activity/undo
+  // Body { auditId }. Reverses an undoable action recorded in the
+  // activity timeline. Only `service_remove` is currently undoable;
+  // older or non-matching audits return 400 so the owner gets a clear
+  // "can't undo this" instead of a silent no-op. Re-uses the
+  // generate-tasks helper so the restore lands exactly where the
+  // original add would have.
+  router.post('/admin/customers/:id/activity/undo', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.id, 200);
+    const auditId = trim(req.body?.auditId, 200);
+    if (!customerId || !auditId) return res.status(400).json({ error: 'customerId and auditId required.' });
+
+    const { data: audit } = await supabase.from('audit_logs')
+      .select('id, entity, entity_id, action, before_data, after_data, created_at')
+      .eq('id', auditId).maybeSingle();
+    if (!audit) return res.status(404).json({ error: 'Audit row not found.' });
+    if (audit.entity !== 'tax.customer' || String(audit.entity_id) !== String(customerId)) {
+      return res.status(403).json({ error: 'Audit row does not belong to this customer.' });
+    }
+    const ageMs = Date.now() - new Date(audit.created_at).getTime();
+    if (!(ageMs >= 0 && ageMs <= 7 * 24 * 60 * 60 * 1000)) {
+      return res.status(400).json({ error: 'undo_window_expired',
+        message: 'This action is older than the undo window (7 days).' });
+    }
+
+    const after = (audit.after_data && typeof audit.after_data === 'object') ? audit.after_data : {};
+    if (audit.action === 'service_remove' && after.productId) {
+      const productId = String(after.productId);
+      // Re-activate the existing link (or upsert a fresh one). Either
+      // way the row ends up active=true and task generation runs.
+      const { data: link } = await supabase.from('tax_customer_services')
+        .select('id, active').eq('customer_id', customerId).eq('product_id', productId).maybeSingle();
+      if (link) {
+        const { error } = await supabase.from('tax_customer_services')
+          .update({ active: true, updated_at: new Date().toISOString() })
+          .eq('id', link.id);
+        if (error) return sendSupabaseError(res, error);
+      } else {
+        const { error } = await supabase.from('tax_customer_services').insert({
+          id: 'csvc_' + uuidv4().slice(0, 12),
+          customer_id: customerId, product_id: productId,
+          active: true,
+        });
+        if (error) return sendSupabaseError(res, error);
+      }
+      let tasksCreated = 0;
+      try {
+        const r = await generateTasksForService({
+          customerId, productId, actorEmail: actor.email || '',
+        });
+        tasksCreated = r.created || 0;
+      } catch (e) { warn('[tax-cust-svc-undo] task gen failed', e?.message || e); }
+      try {
+        await auditLog({
+          entity: 'tax.customer', entityId: customerId, action: 'service_restore',
+          actorEmail: actor.email || '',
+          after: { productId, tasksCreated, undoOfAuditId: auditId },
+        });
+      } catch (_e) {}
+      return res.json({ ok: true, action: 'service_restore', tasksCreated });
+    }
+
+    if (audit.action === 'relationship_remove' && after.customerRelationshipId) {
+      const relId = String(after.customerRelationshipId);
+      const { data: rel } = await supabase.from('tax_customer_relationships')
+        .select('id, customer_id, relationship_type_id, active').eq('id', relId).maybeSingle();
+      if (!rel || rel.customer_id !== customerId) {
+        return res.status(404).json({ error: 'Relationship row not found for this customer.' });
+      }
+      if (!rel.active) {
+        const { error } = await supabase.from('tax_customer_relationships')
+          .update({ active: true, updated_at: new Date().toISOString() })
+          .eq('id', relId);
+        if (error) return sendSupabaseError(res, error);
+      }
+      let tasksCreated = 0;
+      if (rel.relationship_type_id) {
+        try {
+          const r = await generateTasksForRelationship({
+            customerId, relationshipTypeId: rel.relationship_type_id,
+            actorEmail: actor.email || '',
+          });
+          tasksCreated = r.created || 0;
+        } catch (e) { warn('[tax-rel-undo] task gen failed', e?.message || e); }
+      }
+      try {
+        await auditLog({
+          entity: 'tax.customer', entityId: customerId, action: 'relationship_restore',
+          actorEmail: actor.email || '',
+          after: {
+            customerRelationshipId: relId,
+            relationshipTypeId: rel.relationship_type_id,
+            tasksCreated, undoOfAuditId: auditId,
+          },
+        });
+      } catch (_e) {}
+      return res.json({ ok: true, action: 'relationship_restore', tasksCreated });
+    }
+
+    return res.status(400).json({ error: 'not_undoable',
+      message: 'This activity is not undoable.' });
+  });
+
   router.post('/admin/customers/:id/relationships', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res))) return;
     const customerId = trim(req.params.id, 200);
@@ -6714,6 +7004,7 @@ module.exports = function createTaxRouter(deps) {
     if (!(await requireOwnerAdmin(req, res))) return;
     const customerId = trim(req.params.id, 200);
     const relId = trim(req.params.relId, 200);
+    const actorEmail = trim(req.get('x-admin-email') || '', 200).toLowerCase();
     // Pull the relationship_type_id before flipping inactive so we can
     // archive the tasks that the generator created for it.
     const { data: relRow } = await supabase.from('tax_customer_relationships')
@@ -6727,17 +7018,30 @@ module.exports = function createTaxRouter(deps) {
     if (error) return sendSupabaseError(res, error);
 
     // Archive any open scheduled tasks tied to this relationship. Completed
-    // tasks are preserved so the work-done history survives.
+    // tasks are preserved so the work-done history survives. skipAudit
+    // so the endpoint writes one richer audit row below instead of the
+    // generic tasks_deleted from the helper.
     let tasksDeleted = 0;
     if (relRow?.relationship_type_id) {
       try {
         const r = await removeTasksForRelationship({
           customerId, relationshipTypeId: relRow.relationship_type_id,
-          actorEmail: trim(req.get('x-admin-email') || '', 200).toLowerCase(),
+          actorEmail, skipAudit: true,
         });
         tasksDeleted = r.deleted || 0;
       } catch (e) { warn('[tax-rel-del] task delete failed', e?.message || e); }
     }
+    try {
+      await auditLog({
+        entity: 'tax.customer', entityId: customerId, action: 'relationship_remove',
+        actorEmail,
+        after: {
+          customerRelationshipId: relId,
+          relationshipTypeId: relRow?.relationship_type_id || null,
+          tasksDeleted,
+        },
+      });
+    } catch (_e) {}
     res.json({ ok: true, tasksDeleted });
   });
 
