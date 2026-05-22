@@ -1283,7 +1283,7 @@ module.exports = function createTaxRouter(deps) {
   // belonging to the removed relationship goes, because keeping
   // mid-flight work pinned to a relationship that no longer exists just
   // leaves orphans on the board.
-  async function removeTasksForRelationship({ customerId, relationshipTypeId, actorEmail = '' }) {
+  async function removeTasksForRelationship({ customerId, relationshipTypeId, actorEmail = '', skipAudit = false }) {
     if (!customerId || !relationshipTypeId) return { deleted: 0 };
     const { data: cur } = await supabase.from('tax_tasks')
       .select('id')
@@ -1300,13 +1300,19 @@ module.exports = function createTaxRouter(deps) {
       warn('[tax-task-gen] delete failed', error.message);
       return { deleted: 0, error: error.message };
     }
-    try {
-      await auditLog({
-        entity: 'tax.customer', entityId: customerId, action: 'tasks_deleted',
-        actorEmail: actorEmail || '',
-        after: { relationshipTypeId, deleted: dropIds.length },
-      });
-    } catch (_e) {}
+    // Audit suppression is used by callers that write a richer
+    // higher-level audit (e.g., DELETE /admin/customers/:id/relationships/:relId
+    // writes a single `relationship_remove` row instead of the generic
+    // `tasks_deleted` so the activity timeline shows one undoable event).
+    if (!skipAudit) {
+      try {
+        await auditLog({
+          entity: 'tax.customer', entityId: customerId, action: 'tasks_deleted',
+          actorEmail: actorEmail || '',
+          after: { relationshipTypeId, deleted: dropIds.length },
+        });
+      } catch (_e) {}
+    }
     return { deleted: dropIds.length };
   }
 
@@ -5582,10 +5588,27 @@ module.exports = function createTaxRouter(deps) {
         });
         continue;
       }
-      // Relationship removal: tasks_deleted audit fires from
-      // removeTasksForRelationship. Friendly label only — no undo for
-      // now, since the relationship row itself was soft-deleted by a
-      // separate path and tracking both ends is messy.
+      // Relationship removal: new `relationship_remove` audit (carries
+      // both the customer-relationship row id and the relationship-type
+      // id) is undoable. Legacy `tasks_deleted` audits — pre-dating the
+      // endpoint-level audit — still get the friendly label but no
+      // button, since the soft-deleted relationship row's id wasn't
+      // recorded with them.
+      if (a.action === 'relationship_remove' && after.relationshipTypeId) {
+        const rname = relTypeNameById.get(String(after.relationshipTypeId)) || String(after.relationshipTypeId);
+        push(a.created_at, {
+          kind: 'relationship_removed', tone: 'danger',
+          title: `Relationship removed: ${rname}`,
+          detail: after.tasksDeleted
+            ? `${after.tasksDeleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+          undoable: inUndoWindow,
+          undoAction: 'relationship_restore',
+        });
+        continue;
+      }
       if (a.action === 'tasks_deleted' && after.relationshipTypeId) {
         const rname = relTypeNameById.get(String(after.relationshipTypeId)) || String(after.relationshipTypeId);
         push(a.created_at, {
@@ -6888,6 +6911,43 @@ module.exports = function createTaxRouter(deps) {
       return res.json({ ok: true, action: 'service_restore', tasksCreated });
     }
 
+    if (audit.action === 'relationship_remove' && after.customerRelationshipId) {
+      const relId = String(after.customerRelationshipId);
+      const { data: rel } = await supabase.from('tax_customer_relationships')
+        .select('id, customer_id, relationship_type_id, active').eq('id', relId).maybeSingle();
+      if (!rel || rel.customer_id !== customerId) {
+        return res.status(404).json({ error: 'Relationship row not found for this customer.' });
+      }
+      if (!rel.active) {
+        const { error } = await supabase.from('tax_customer_relationships')
+          .update({ active: true, updated_at: new Date().toISOString() })
+          .eq('id', relId);
+        if (error) return sendSupabaseError(res, error);
+      }
+      let tasksCreated = 0;
+      if (rel.relationship_type_id) {
+        try {
+          const r = await generateTasksForRelationship({
+            customerId, relationshipTypeId: rel.relationship_type_id,
+            actorEmail: actor.email || '',
+          });
+          tasksCreated = r.created || 0;
+        } catch (e) { warn('[tax-rel-undo] task gen failed', e?.message || e); }
+      }
+      try {
+        await auditLog({
+          entity: 'tax.customer', entityId: customerId, action: 'relationship_restore',
+          actorEmail: actor.email || '',
+          after: {
+            customerRelationshipId: relId,
+            relationshipTypeId: rel.relationship_type_id,
+            tasksCreated, undoOfAuditId: auditId,
+          },
+        });
+      } catch (_e) {}
+      return res.json({ ok: true, action: 'relationship_restore', tasksCreated });
+    }
+
     return res.status(400).json({ error: 'not_undoable',
       message: 'This activity is not undoable.' });
   });
@@ -6944,6 +7004,7 @@ module.exports = function createTaxRouter(deps) {
     if (!(await requireOwnerAdmin(req, res))) return;
     const customerId = trim(req.params.id, 200);
     const relId = trim(req.params.relId, 200);
+    const actorEmail = trim(req.get('x-admin-email') || '', 200).toLowerCase();
     // Pull the relationship_type_id before flipping inactive so we can
     // archive the tasks that the generator created for it.
     const { data: relRow } = await supabase.from('tax_customer_relationships')
@@ -6957,17 +7018,30 @@ module.exports = function createTaxRouter(deps) {
     if (error) return sendSupabaseError(res, error);
 
     // Archive any open scheduled tasks tied to this relationship. Completed
-    // tasks are preserved so the work-done history survives.
+    // tasks are preserved so the work-done history survives. skipAudit
+    // so the endpoint writes one richer audit row below instead of the
+    // generic tasks_deleted from the helper.
     let tasksDeleted = 0;
     if (relRow?.relationship_type_id) {
       try {
         const r = await removeTasksForRelationship({
           customerId, relationshipTypeId: relRow.relationship_type_id,
-          actorEmail: trim(req.get('x-admin-email') || '', 200).toLowerCase(),
+          actorEmail, skipAudit: true,
         });
         tasksDeleted = r.deleted || 0;
       } catch (e) { warn('[tax-rel-del] task delete failed', e?.message || e); }
     }
+    try {
+      await auditLog({
+        entity: 'tax.customer', entityId: customerId, action: 'relationship_remove',
+        actorEmail,
+        after: {
+          customerRelationshipId: relId,
+          relationshipTypeId: relRow?.relationship_type_id || null,
+          tasksDeleted,
+        },
+      });
+    } catch (_e) {}
     res.json({ ok: true, tasksDeleted });
   });
 
