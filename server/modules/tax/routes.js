@@ -3546,6 +3546,10 @@ module.exports = function createTaxRouter(deps) {
         requestedProductIds = (rt || []).map(r => r.product_id).filter(Boolean);
       }
     }
+    if (requestedProductIds.length === 0) {
+      return res.status(400).json({ error: 'service_required',
+        message: 'Pick at least one service so the customer\'s tasks can be generated.' });
+    }
     let servicesAdded = 0;
     let tasksCreated = 0;
     if (requestedProductIds.length) {

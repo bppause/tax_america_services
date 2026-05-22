@@ -410,8 +410,20 @@ export default function OwnerCustomers() {
               the bulleted service list in the welcome email body. */}
           {allTypes.length > 0 && (
             <div>
-              <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: 'block' }}>
-                {t('owner.customers.fieldRelationships')} *
+              <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span>{t('owner.customers.fieldRelationships')} *</span>
+                {/* Live counter — turns red when zero so the owner sees
+                    the requirement before hitting Save. */}
+                <span style={{
+                  padding: '1px 8px', borderRadius: 999,
+                  background: form.relationshipTypeIds.length === 0 ? '#fee2e2' : '#dcfce7',
+                  color: form.relationshipTypeIds.length === 0 ? '#991b1b' : '#166534',
+                  fontSize: 11, fontWeight: 700,
+                }}>
+                  {form.relationshipTypeIds.length === 0
+                    ? t('owner.customers.fieldRelationships.empty')
+                    : t('owner.customers.fieldRelationships.count', { n: form.relationshipTypeIds.length })}
+                </span>
               </label>
               <p style={{ fontSize: 12, color: 'var(--tax-muted)', margin: '0 0 8px' }}>
                 {t('owner.customers.fieldRelationshipsHint')}

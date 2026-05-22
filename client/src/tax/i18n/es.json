@@ -827,6 +827,8 @@
   "owner.customers.fieldLocale": "Idioma de comunicación",
   "owner.customers.createBtn": "Crear cliente",
   "owner.customers.fieldRelationships": "Servicios que usa este cliente",
+  "owner.customers.fieldRelationships.empty": "Selecciona al menos uno",
+  "owner.customers.fieldRelationships.count": "{n} seleccionado(s)",
   "owner.customers.fieldRelationshipsHint": "Active los servicios que brinda a este cliente. El correo de bienvenida (si está activado abajo) resumirá los servicios seleccionados en el idioma del cliente.",
   "owner.customers.sendWelcome": "Enviar correo de bienvenida al cliente",
   "owner.customers.sendWelcomeHint": "Le invita a iniciar sesión en su portal por primera vez. Se envía en el idioma elegido arriba. Puede reenviarlo después desde la página de detalle del cliente.",
