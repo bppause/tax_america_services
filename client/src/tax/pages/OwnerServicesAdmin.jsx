@@ -45,7 +45,10 @@ export default function OwnerServicesAdmin() {
 
   return (
     <EmployeeShell community={community} active="service-catalog">
-      <h2 style={{ margin: 0 }}>{t('owner.services.title')}</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0 }}>{t('owner.services.title')}</h2>
+        <AddServiceLauncher community={community} auth={auth} onAdded={load} t={t} />
+      </div>
       <p className="tax-section__lede">{t('owner.services.subtitleUnified')}</p>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
@@ -62,6 +65,149 @@ export default function OwnerServicesAdmin() {
               ))}
             </div>}
     </EmployeeShell>
+  );
+}
+
+// Inline "Add service" form, shown when the owner clicks the header
+// button. Keeps the create flow small: just the slug, both names, both
+// short descriptions, and the category. Long copy + required documents
+// + auto-tasks are authored after creation via the standard edit panel.
+function AddServiceLauncher({ community, auth, onAdded, t }) {
+  const [open, setOpen] = useState(false);
+  const [slug, setSlug] = useState('');
+  const [nameEn, setNameEn] = useState('');
+  const [nameEs, setNameEs] = useState('');
+  const [descEn, setDescEn] = useState('');
+  const [descEs, setDescEs] = useState('');
+  const [category, setCategory] = useState('one_off');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const reset = () => {
+    setSlug(''); setNameEn(''); setNameEs('');
+    setDescEn(''); setDescEs(''); setCategory('one_off');
+    setErr('');
+  };
+
+  const onCreate = async (e) => {
+    e?.preventDefault?.();
+    if (!nameEn.trim() && !nameEs.trim()) {
+      setErr(t('owner.services.add.errName'));
+      return;
+    }
+    setBusy(true); setErr('');
+    try {
+      // Derive the slug from the EN name when the owner hasn't typed
+      // one explicitly. Server normalizes either way, but pre-filling
+      // saves a step.
+      const finalSlug = (slug.trim() || nameEn.trim() || nameEs.trim())
+        .toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+      await taxApi.adminCreateProduct(auth, {
+        communitySlug: community.id,
+        slug: finalSlug,
+        category,
+        nameI18n: { en: nameEn.trim(), es: nameEs.trim() },
+        descriptionI18n: { en: descEn.trim(), es: descEs.trim() },
+      });
+      setOpen(false); reset();
+      onAdded();
+    } catch (e) {
+      setErr(e?.body?.message || e?.message || '');
+    } finally { setBusy(false); }
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+              onClick={() => setOpen(true)}>
+        + {t('owner.services.add.button')}
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={onCreate}
+          style={{ width: '100%', marginTop: 8, padding: 14, borderRadius: 8,
+                   background: 'var(--tax-bg-alt)', display: 'grid', gap: 10 }}>
+      <div style={{ fontWeight: 700, fontSize: 14 }}>{t('owner.services.add.heading')}</div>
+      <div className="tax-form__row2">
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.services.nameEn')} *
+          </label>
+          <input type="text" value={nameEn} maxLength={200}
+                 onChange={e => setNameEn(e.target.value)}
+                 placeholder="e.g. Property Tax"
+                 style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.services.nameEs')} *
+          </label>
+          <input type="text" value={nameEs} maxLength={200}
+                 onChange={e => setNameEs(e.target.value)}
+                 placeholder="p. ej. Impuesto Predial"
+                 style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+        </div>
+      </div>
+      <div className="tax-form__row2">
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.services.descEn')}
+          </label>
+          <textarea rows={2} value={descEn} maxLength={400}
+                    onChange={e => setDescEn(e.target.value)}
+                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.services.descEs')}
+          </label>
+          <textarea rows={2} value={descEs} maxLength={400}
+                    onChange={e => setDescEs(e.target.value)}
+                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+        </div>
+      </div>
+      <div className="tax-form__row2">
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.services.add.slug')}
+          </label>
+          <input type="text" value={slug} maxLength={80}
+                 onChange={e => setSlug(e.target.value)}
+                 placeholder={nameEn ? nameEn.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') : 'annual-report'}
+                 style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+            {t('owner.services.add.slugHint')}
+          </p>
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.services.add.category')}
+          </label>
+          <select value={category} onChange={e => setCategory(e.target.value)}
+                  style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }}>
+            <option value="tax_prep">{t('owner.services.category.tax_prep')}</option>
+            <option value="recurring">{t('owner.services.category.recurring')}</option>
+            <option value="one_off">{t('owner.services.category.one_off')}</option>
+          </select>
+        </div>
+      </div>
+
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm"
+                disabled={busy}>
+          {busy ? t('lead.submitting') : t('owner.services.add.create')}
+        </button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                onClick={() => { setOpen(false); reset(); }}
+                style={{ color: 'var(--tax-text)' }}>
+          {t('owner.services.cancel')}
+        </button>
+      </div>
+    </form>
   );
 }
 

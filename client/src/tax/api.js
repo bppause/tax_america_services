@@ -264,6 +264,7 @@ export const taxApi = {
   adminSetPortalEnabled(auth, payload)           { return request('PUT',  '/admin/community-settings/portal-enabled', payload, auth, { admin: true }); },
 
   adminListProducts(auth, communitySlug)         { return request('GET',  `/admin/products?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminCreateProduct(auth, payload)              { return request('POST', '/admin/products', payload, auth, { admin: true }); },
   adminUpdateProduct(auth, productId, payload)   { return request('PUT',  `/admin/products/${encodeURIComponent(productId)}`, payload, auth, { admin: true }); },
   adminDeleteProduct(auth, productId, opts = {}) {
     const qs = opts.force ? '?force=1' : '';

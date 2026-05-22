@@ -2903,6 +2903,90 @@ module.exports = function createTaxRouter(deps) {
   //   • enabled               toggle the card on/off without deleting
   // Other fields (slug, category, workflow, sla_hours, pricing) stay
   // owner-edit-via-SQL for now.
+  // POST /admin/products — owner-created service.
+  // Body: { communitySlug, slug, category?, nameI18n, descriptionI18n?,
+  //         longDescriptionI18n?, requiredDocuments?, displayOrder?,
+  //         videoUrl?, icon? }
+  // Slug is the per-community unique handle (lowercased, dash-separated).
+  // The composite primary key is `${communitySlug}:${slug}` to match the
+  // pattern the seed inserts use, so the public landing page picks the
+  // service up without a separate routing layer.
+  router.post('/admin/products', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const rawSlug = trim(body.slug, 80).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!communitySlug || !rawSlug) {
+      return res.status(400).json({ error: 'communitySlug and slug required.' });
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(rawSlug)) {
+      return res.status(400).json({ error: 'invalid_slug',
+        message: 'Slug must be lowercase letters, digits, and dashes (e.g., "annual-report").' });
+    }
+    const nameEn = String(body.nameI18n?.en || '').slice(0, MAX_NAME_LEN).trim();
+    const nameEs = String(body.nameI18n?.es || '').slice(0, MAX_NAME_LEN).trim();
+    if (!nameEn && !nameEs) {
+      return res.status(400).json({ error: 'name_required',
+        message: 'Provide the service name in English or Spanish.' });
+    }
+    // Reject collisions explicitly so the owner gets a clean message
+    // instead of a Postgres unique-violation echo.
+    const id = `${communitySlug}:${rawSlug}`;
+    const { data: existing } = await supabase.from('tax_products')
+      .select('id').eq('id', id).maybeSingle();
+    if (existing) {
+      return res.status(409).json({ error: 'slug_in_use',
+        message: 'A service with that slug already exists in this community.' });
+    }
+
+    const allowedCategories = ['tax_prep','recurring','one_off'];
+    const category = allowedCategories.includes(String(body.category || ''))
+      ? body.category : 'one_off';
+
+    const row = {
+      id, community_id: communitySlug, slug: rawSlug, category,
+      enabled: true,
+      display_order: Math.max(0, Math.min(10000, Number(body.displayOrder) || 0)),
+      icon: String(body.icon || '').slice(0, 40),
+      name_i18n: {
+        en: nameEn || nameEs,
+        es: nameEs || nameEn,
+      },
+      description_i18n: (body.descriptionI18n && typeof body.descriptionI18n === 'object') ? {
+        en: String(body.descriptionI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.descriptionI18n.es || '').slice(0, MAX_TEXT_LEN),
+      } : {},
+      long_description_i18n: (body.longDescriptionI18n && typeof body.longDescriptionI18n === 'object') ? {
+        en: String(body.longDescriptionI18n.en || '').slice(0, MAX_TEXT_LEN),
+        es: String(body.longDescriptionI18n.es || '').slice(0, MAX_TEXT_LEN),
+      } : {},
+      required_documents: Array.isArray(body.requiredDocuments)
+        ? body.requiredDocuments.slice(0, 30).map(d => {
+            if (typeof d === 'string') return String(d).slice(0, MAX_NAME_LEN);
+            if (d && typeof d === 'object') return {
+              en: String(d.en || '').slice(0, MAX_NAME_LEN),
+              es: String(d.es || '').slice(0, MAX_NAME_LEN),
+            };
+            return '';
+          }).filter(d => (typeof d === 'string' ? d : (d.en || d.es)))
+        : [],
+      video_url: String(body.videoUrl || '').trim().slice(0, 500),
+    };
+
+    const { error } = await supabase.from('tax_products').insert(row);
+    if (error) return sendSupabaseError(res, error);
+
+    try {
+      await auditLog({
+        entity: 'tax.product', entityId: id, action: 'create',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { slug: rawSlug, category },
+      });
+    } catch (_e) {}
+
+    res.json({ ok: true, id, slug: rawSlug });
+  });
+
   router.put('/admin/products/:id', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
     const productId = trim(req.params.id, 200);
