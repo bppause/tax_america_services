@@ -64,8 +64,14 @@ export default function OwnerSettings() {
   const onSaveLookahead = async (months) => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
-      await taxApi.adminSetTaskLookahead(auth, { communitySlug: community.id, months });
-      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      const r = await taxApi.adminSetTaskLookahead(auth, { communitySlug: community.id, months });
+      // Surface the impact on the board — added/removed counts reflect
+      // the prune + refresh the server runs to keep the board consistent
+      // with the new horizon.
+      const parts = [t('owner.settings.saved')];
+      if (r?.tasksCreated)  parts.push(t('owner.settings.lookahead.created', { n: r.tasksCreated }));
+      if (r?.tasksDeleted)  parts.push(t('owner.settings.lookahead.deleted', { n: r.tasksDeleted }));
+      setMsg({ kind: 'success', text: parts.join(' · ') });
       load();
     } catch (e) {
       setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });

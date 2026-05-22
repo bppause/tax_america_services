@@ -456,6 +456,8 @@
   "owner.settings.lookahead.refreshNow": "Actualizar tareas ahora",
   "owner.settings.lookahead.refreshHint": "Re-ejecuta el generador de tareas para cada relación activa de inmediato. Útil tras cambiar la cadencia de un servicio o ampliar la ventana.",
   "owner.settings.lookahead.refreshed": "Se revisaron {{scanned}} relaciones y se crearon {{created}} tareas nuevas.",
+  "owner.settings.lookahead.created": "{n} tarea(s) agregada(s)",
+  "owner.settings.lookahead.deleted": "{n} tarea(s) más allá del nuevo horizonte eliminada(s)",
   "owner.settings.portal.title": "Portal del cliente",
   "owner.settings.portal.subtitle": "Controla si los clientes pueden iniciar sesión en un portal en /tax/{slug}/portal. Desactivado por defecto — mantiene la relación con el cliente centrada en recordatorios por correo. Los correos salientes apuntan a tu página pública en lugar del portal mientras está desactivado.",
   "owner.settings.portal.off": "Desactivado — portal cerrado",

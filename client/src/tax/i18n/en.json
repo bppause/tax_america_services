@@ -456,6 +456,8 @@
   "owner.settings.lookahead.refreshNow": "Refresh tasks now",
   "owner.settings.lookahead.refreshHint": "Manually re-runs the task generator for every active relationship right now. Useful after changing a service's cadence or extending the look-ahead.",
   "owner.settings.lookahead.refreshed": "Scanned {{scanned}} relationships, created {{created}} new tasks.",
+  "owner.settings.lookahead.created": "{n} task(s) added",
+  "owner.settings.lookahead.deleted": "{n} task(s) past the new horizon removed",
   "owner.settings.portal.title": "Customer portal",
   "owner.settings.portal.subtitle": "Controls whether customers can sign in to a portal at /tax/{slug}/portal. Off by default — keeps the customer relationship focused on email reminders. Outgoing emails (reminders, welcome, signature) link to your public landing page instead of the portal while it's disabled.",
   "owner.settings.portal.off": "Off — portal closed",

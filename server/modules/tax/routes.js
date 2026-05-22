@@ -1261,6 +1261,61 @@ module.exports = function createTaxRouter(deps) {
     return { scanned, created };
   }
 
+  // Per-community variant of refreshAllRelationshipTasks. Walks just
+  // the customers in `communityId` and regenerates recurring tasks via
+  // the same idempotent path. Used by the lookahead-change handler so
+  // an admin's setting change reflects on the board within one request
+  // instead of waiting for the next refresh cron.
+  async function refreshRecurringTasksForCommunity(communityId) {
+    if (!isSupabaseConfigured || !communityId) return { scanned: 0, created: 0 };
+    const { data: custs } = await supabase.from('tax_customers')
+      .select('id').eq('community_id', communityId);
+    const custIds = (custs || []).map(c => c.id);
+    if (!custIds.length) return { scanned: 0, created: 0 };
+    const { data: svcRows } = await supabase.from('tax_customer_services')
+      .select('customer_id, product_id')
+      .eq('active', true).in('customer_id', custIds).limit(20000);
+    let scanned = 0, created = 0;
+    for (const r of (svcRows || [])) {
+      scanned++;
+      try {
+        const out = await generateTasksForService({
+          customerId: r.customer_id, productId: r.product_id,
+          actorEmail: 'lookahead-update',
+        });
+        created += out.created || 0;
+      } catch (e) { warn('[tax-task-prune] gen failed', e?.message || e); }
+    }
+    return { scanned, created };
+  }
+
+  // Trim auto-generated recurring tasks whose due_date now falls
+  // outside the lookahead window. Only touches open
+  // (source='relationship_schedule', not completed, not archived)
+  // rows — completed history and manual one-offs are always preserved.
+  async function pruneTasksBeyondLookahead({ communityId, lookaheadMonths }) {
+    if (!isSupabaseConfigured || !communityId) return { deleted: 0 };
+    const cutoff = new Date();
+    cutoff.setUTCMonth(cutoff.getUTCMonth() + Math.max(1, lookaheadMonths));
+    const cutoffIso = cutoff.toISOString().slice(0, 10);
+    const { data: rows } = await supabase.from('tax_tasks')
+      .select('id')
+      .eq('community_id', communityId)
+      .eq('source', 'relationship_schedule')
+      .is('archived_at', null)
+      .is('completed_at', null)
+      .gt('due_date', cutoffIso)
+      .limit(20000);
+    const dropIds = (rows || []).map(t => t.id);
+    if (!dropIds.length) return { deleted: 0 };
+    const { error } = await supabase.from('tax_tasks').delete().in('id', dropIds);
+    if (error) {
+      warn('[tax-task-prune] delete failed', error.message);
+      return { deleted: 0, error: error.message };
+    }
+    return { deleted: dropIds.length };
+  }
+
   // Manual trigger — useful for development + as a one-off
   // "extend my window now" button. Gated on the same permission as
   // any other reminder-style operation.
@@ -2373,15 +2428,36 @@ module.exports = function createTaxRouter(deps) {
       .update({ tax_task_lookahead_months: months, updated_at: new Date().toISOString() })
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
     if (error) return sendSupabaseError(res, error);
+
+    // Keep recurring tasks consistent with the new horizon. Both helpers
+    // are idempotent and only touch source='relationship_schedule' rows
+    // that are still open — completed history and manual one-offs are
+    // preserved regardless of direction.
+    //   • Prune: drops auto-generated tasks whose due_date now falls
+    //     past the new cutoff (no-op when the value increased).
+    //   • Refresh: regenerates the missing future tasks across all
+    //     active customer-services in this community (no-op when the
+    //     value decreased, since the existing rows already cover the
+    //     shorter horizon).
+    let tasksDeleted = 0, tasksCreated = 0;
+    try {
+      const r = await pruneTasksBeyondLookahead({ communityId: communitySlug, lookaheadMonths: months });
+      tasksDeleted = r.deleted || 0;
+    } catch (e) { warn('[tax-lookahead] prune failed', e?.message || e); }
+    try {
+      const r = await refreshRecurringTasksForCommunity(communitySlug);
+      tasksCreated = r.created || 0;
+    } catch (e) { warn('[tax-lookahead] refresh failed', e?.message || e); }
+
     try {
       await auditLog({
         entity: 'tax.community.settings', entityId: communitySlug,
         action: 'task_lookahead_set',
         actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
-        after: { months },
+        after: { months, tasksDeleted, tasksCreated },
       });
     } catch (_e) {}
-    res.json({ ok: true, months });
+    res.json({ ok: true, months, tasksDeleted, tasksCreated });
   });
 
   router.put('/admin/community-settings/reminders-enabled', async (req, res) => {
