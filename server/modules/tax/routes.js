@@ -2972,7 +2972,26 @@ module.exports = function createTaxRouter(deps) {
       .eq('community_id', communitySlug)
       .order('display_order', { ascending: true });
     if (error) return sendSupabaseError(res, error);
-    res.json({ products: data || [] });
+    // Enrich each product with its auto-task count so the catalog page
+    // can show a "N recurring task(s)" badge at-a-glance without the
+    // owner having to expand the editor to find out.
+    const products = data || [];
+    if (products.length) {
+      const { data: counts } = await supabase.from('tax_service_auto_tasks')
+        .select('product_id, active')
+        .in('product_id', products.map(p => p.id));
+      const totals = new Map();
+      const actives = new Map();
+      for (const r of (counts || [])) {
+        totals.set(r.product_id, (totals.get(r.product_id) || 0) + 1);
+        if (r.active !== false) actives.set(r.product_id, (actives.get(r.product_id) || 0) + 1);
+      }
+      for (const p of products) {
+        p.auto_tasks_total  = totals.get(p.id)  || 0;
+        p.auto_tasks_active = actives.get(p.id) || 0;
+      }
+    }
+    res.json({ products });
   });
 
   // ── PUT /admin/products/:id ─────────────────────────────────────────────
