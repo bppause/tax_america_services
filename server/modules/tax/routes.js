@@ -5440,8 +5440,82 @@ module.exports = function createTaxRouter(deps) {
       });
     }
 
+    // Look up product + relationship names referenced by audit rows so
+    // the timeline can render friendly labels ("Service removed:
+    // Bookkeeping") instead of opaque action strings. Cheap because the
+    // audit set is already capped at 50 rows.
+    const auditProductIds = new Set();
+    const auditRelTypeIds = new Set();
+    for (const a of (auditQ.data || [])) {
+      const after = (a.after_data && typeof a.after_data === 'object') ? a.after_data : {};
+      if (after.productId) auditProductIds.add(String(after.productId));
+      if (after.relationshipTypeId) auditRelTypeIds.add(String(after.relationshipTypeId));
+    }
+    const productNameById = new Map();
+    if (auditProductIds.size) {
+      const { data } = await supabase.from('tax_products')
+        .select('id, slug, name_i18n').in('id', Array.from(auditProductIds));
+      for (const p of (data || [])) {
+        productNameById.set(p.id, p.name_i18n?.es || p.name_i18n?.en || p.slug || p.id);
+      }
+    }
+    const relTypeNameById = new Map();
+    if (auditRelTypeIds.size) {
+      const { data } = await supabase.from('tax_relationship_types')
+        .select('id, slug, name_i18n').in('id', Array.from(auditRelTypeIds));
+      for (const r of (data || [])) {
+        relTypeNameById.set(r.id, r.name_i18n?.es || r.name_i18n?.en || r.slug || r.id);
+      }
+    }
+    // Undo is offered only for recent removals — a week is long enough
+    // for a typical "oops, didn't mean to do that" loop but short enough
+    // that the team's intervening work doesn't get clobbered by a stale
+    // restore. The button hides itself once the window closes.
+    const UNDO_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+    const nowMs = Date.now();
+
     for (const a of (auditQ.data || [])) {
       if (a.entity !== 'tax.customer' && a.entity !== 'tax.customer.contact') continue;
+      const after = (a.after_data && typeof a.after_data === 'object') ? a.after_data : {};
+      const ageMs = nowMs - new Date(a.created_at).getTime();
+      const inUndoWindow = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= UNDO_WINDOW_MS;
+
+      // Service removal: friendly title + undo button. The audit row
+      // carries the productId in after_data, so the undo endpoint can
+      // re-activate the service link and regenerate tasks.
+      if (a.action === 'service_remove' && after.productId) {
+        const pname = productNameById.get(String(after.productId)) || String(after.productId);
+        push(a.created_at, {
+          kind: 'service_removed', tone: 'danger',
+          title: `Service removed: ${pname}`,
+          detail: after.tasksDeleted
+            ? `${after.tasksDeleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+          undoable: inUndoWindow,
+          undoAction: 'service_restore',
+        });
+        continue;
+      }
+      // Relationship removal: tasks_deleted audit fires from
+      // removeTasksForRelationship. Friendly label only — no undo for
+      // now, since the relationship row itself was soft-deleted by a
+      // separate path and tracking both ends is messy.
+      if (a.action === 'tasks_deleted' && after.relationshipTypeId) {
+        const rname = relTypeNameById.get(String(after.relationshipTypeId)) || String(after.relationshipTypeId);
+        push(a.created_at, {
+          kind: 'relationship_removed', tone: 'warn',
+          title: `Relationship removed: ${rname}`,
+          detail: after.deleted
+            ? `${after.deleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+        });
+        continue;
+      }
+
       push(a.created_at, {
         kind: 'audit', tone: 'muted',
         title: `${a.entity}.${a.action}`,
@@ -6664,6 +6738,74 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
     res.json({ ok: true, tasksDeleted });
+  });
+
+  // POST /admin/customers/:id/activity/undo
+  // Body { auditId }. Reverses an undoable action recorded in the
+  // activity timeline. Only `service_remove` is currently undoable;
+  // older or non-matching audits return 400 so the owner gets a clear
+  // "can't undo this" instead of a silent no-op. Re-uses the
+  // generate-tasks helper so the restore lands exactly where the
+  // original add would have.
+  router.post('/admin/customers/:id/activity/undo', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.id, 200);
+    const auditId = trim(req.body?.auditId, 200);
+    if (!customerId || !auditId) return res.status(400).json({ error: 'customerId and auditId required.' });
+
+    const { data: audit } = await supabase.from('audit_logs')
+      .select('id, entity, entity_id, action, before_data, after_data, created_at')
+      .eq('id', auditId).maybeSingle();
+    if (!audit) return res.status(404).json({ error: 'Audit row not found.' });
+    if (audit.entity !== 'tax.customer' || String(audit.entity_id) !== String(customerId)) {
+      return res.status(403).json({ error: 'Audit row does not belong to this customer.' });
+    }
+    const ageMs = Date.now() - new Date(audit.created_at).getTime();
+    if (!(ageMs >= 0 && ageMs <= 7 * 24 * 60 * 60 * 1000)) {
+      return res.status(400).json({ error: 'undo_window_expired',
+        message: 'This action is older than the undo window (7 days).' });
+    }
+
+    const after = (audit.after_data && typeof audit.after_data === 'object') ? audit.after_data : {};
+    if (audit.action === 'service_remove' && after.productId) {
+      const productId = String(after.productId);
+      // Re-activate the existing link (or upsert a fresh one). Either
+      // way the row ends up active=true and task generation runs.
+      const { data: link } = await supabase.from('tax_customer_services')
+        .select('id, active').eq('customer_id', customerId).eq('product_id', productId).maybeSingle();
+      if (link) {
+        const { error } = await supabase.from('tax_customer_services')
+          .update({ active: true, updated_at: new Date().toISOString() })
+          .eq('id', link.id);
+        if (error) return sendSupabaseError(res, error);
+      } else {
+        const { error } = await supabase.from('tax_customer_services').insert({
+          id: 'csvc_' + uuidv4().slice(0, 12),
+          customer_id: customerId, product_id: productId,
+          active: true,
+        });
+        if (error) return sendSupabaseError(res, error);
+      }
+      let tasksCreated = 0;
+      try {
+        const r = await generateTasksForService({
+          customerId, productId, actorEmail: actor.email || '',
+        });
+        tasksCreated = r.created || 0;
+      } catch (e) { warn('[tax-cust-svc-undo] task gen failed', e?.message || e); }
+      try {
+        await auditLog({
+          entity: 'tax.customer', entityId: customerId, action: 'service_restore',
+          actorEmail: actor.email || '',
+          after: { productId, tasksCreated, undoOfAuditId: auditId },
+        });
+      } catch (_e) {}
+      return res.json({ ok: true, action: 'service_restore', tasksCreated });
+    }
+
+    return res.status(400).json({ error: 'not_undoable',
+      message: 'This activity is not undoable.' });
   });
 
   router.post('/admin/customers/:id/relationships', async (req, res) => {

@@ -232,6 +232,7 @@ export const taxApi = {
   adminListCustomerNotes(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/notes`, undefined, auth, { admin: true }); },
   adminCreateCustomerNote(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/notes`, payload, auth, { admin: true }); },
   adminGetCustomerActivity(auth, customerId, limit = 100) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/activity?limit=${limit}`, undefined, auth, { admin: true }); },
+  adminUndoCustomerActivity(auth, customerId, auditId) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/activity/undo`, { auditId }, auth, { admin: true }); },
   getEmployeeTriage(auth, windowDays = 7) { return request('GET', `/employee/triage?windowDays=${windowDays}`, undefined, auth); },
 
   // Phase 4n.24: signature requests
