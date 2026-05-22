@@ -148,6 +148,16 @@ module.exports = function createConfigHelpers(supabase, { EMAIL_FROM }) {
           if (community.background_url) cfg.complex_bg = community.background_url;
           if (community.city && community.country) cfg.complex_location = `${community.city} · ${community.country}`;
           if (community.tower) cfg.community_tower = community.tower;
+          // Owner-set From-name / From-address overrides. The shared
+          // app_config table (Layer 1) carries Airbnb-era strings like
+          // "Morros KAI Community" — wipe those before applying the
+          // community-table value so an unset owner override doesn't
+          // accidentally inherit them. email.js falls back to the
+          // community name + EMAIL_FROM env when these are empty.
+          cfg.email_from_name        = community.tax_email_from_name       || '';
+          cfg.email_from_name_en     = community.tax_email_from_name_en    || '';
+          cfg.email_from_address     = community.tax_email_from_address    || '';
+          cfg.email_from_address_en  = community.tax_email_from_address_en || '';
         }
       } catch(e) { warn('Community branding override failed: ' + (e?.message || e)); }
     }
