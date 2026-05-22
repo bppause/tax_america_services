@@ -16,6 +16,7 @@ export default function OwnerSettings() {
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
   const [settings, setSettings] = useState(null);
+  const [platformDefaults, setPlatformDefaults] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
@@ -23,7 +24,7 @@ export default function OwnerSettings() {
   const load = () => {
     if (!employee || !community) return;
     taxApi.adminGetCommunitySettings(auth, community.id)
-      .then(d => setSettings(d.settings))
+      .then(d => { setSettings(d.settings); setPlatformDefaults(d.platform_defaults || null); })
       .catch(e => setErr(e?.message || t('error.loadFailed')));
   };
   useEffect(load, [fbUser, community]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -328,7 +329,8 @@ export default function OwnerSettings() {
         label={t('owner.settings.group.emails.label')}
         hint={t('owner.settings.group.emails.hint')} />
 
-      <EmailFromSection settings={settings} auth={auth} community={community}
+      <EmailFromSection settings={settings} platformDefaults={platformDefaults}
+                        auth={auth} community={community}
                         t={t} onSaved={load} />
 
       <CustomerEmailsSection settings={settings} busy={busy} t={t}
@@ -1308,7 +1310,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
 // stay Spanish on es emails and use the English variant on en emails.
 // Empty values mean "use the default" — the community name + the
 // platform's EMAIL_FROM env address.
-function EmailFromSection({ settings, auth, community, t, onSaved }) {
+function EmailFromSection({ settings, platformDefaults, auth, community, t, onSaved }) {
   const [form, setForm] = useState({
     email_from_name: '', email_from_name_en: '',
     email_from_address: '', email_from_address_en: '',
@@ -1348,15 +1350,20 @@ function EmailFromSection({ settings, auth, community, t, onSaved }) {
   };
 
   // Effective preview: what the customer/employee actually sees as the
-  // sender today, given the current saved overrides + the community
-  // name fallback. Address fallback is platform-managed (EMAIL_FROM env),
-  // so we just show "(platform default)" when the owner hasn't set one.
+  // sender today, given the current saved overrides + platform fallbacks.
+  // Name falls back to the community name; address falls back to the
+  // platform's EMAIL_FROM env value (surfaced via platform_defaults).
   const fallbackNameEs  = settings?.name || '';
   const fallbackNameEn  = settings?.name_en || settings?.name || '';
+  const fallbackAddr    = platformDefaults?.email_from_address || '';
   const previewNameEs   = (settings?.tax_email_from_name        || fallbackNameEs).trim();
   const previewNameEn   = (settings?.tax_email_from_name_en     || fallbackNameEn).trim();
-  const previewAddrEs   = (settings?.tax_email_from_address     || '').trim();
-  const previewAddrEn   = (settings?.tax_email_from_address_en  || '').trim();
+  const previewAddrEs   = (settings?.tax_email_from_address     || fallbackAddr).trim();
+  const previewAddrEn   = (settings?.tax_email_from_address_en  || fallbackAddr).trim();
+  const usingDefaultAddrEs = !settings?.tax_email_from_address;
+  const usingDefaultAddrEn = !settings?.tax_email_from_address_en;
+  const usingDefaultNameEs = !settings?.tax_email_from_name;
+  const usingDefaultNameEn = !settings?.tax_email_from_name_en;
 
   return (
     <CollapsibleSection
@@ -1380,14 +1387,22 @@ function EmailFromSection({ settings, auth, community, t, onSaved }) {
 
       {!editing ? (
         <div className="tax-contact-grid">
-          <ReadRow label={t('owner.settings.emailFrom.nameEs')}
-                   value={previewNameEs} />
-          <ReadRow label={t('owner.settings.emailFrom.addressEs')}
-                   value={previewAddrEs || t('owner.settings.emailFrom.platformDefault')} />
-          <ReadRow label={t('owner.settings.emailFrom.nameEn')}
-                   value={previewNameEn} />
-          <ReadRow label={t('owner.settings.emailFrom.addressEn')}
-                   value={previewAddrEn || t('owner.settings.emailFrom.platformDefault')} />
+          <ReadRowWithDefault label={t('owner.settings.emailFrom.nameEs')}
+                              value={previewNameEs}
+                              isDefault={usingDefaultNameEs}
+                              defaultTag={t('owner.settings.emailFrom.platformDefault')} />
+          <ReadRowWithDefault label={t('owner.settings.emailFrom.addressEs')}
+                              value={previewAddrEs}
+                              isDefault={usingDefaultAddrEs}
+                              defaultTag={t('owner.settings.emailFrom.platformDefault')} />
+          <ReadRowWithDefault label={t('owner.settings.emailFrom.nameEn')}
+                              value={previewNameEn}
+                              isDefault={usingDefaultNameEn}
+                              defaultTag={t('owner.settings.emailFrom.platformDefault')} />
+          <ReadRowWithDefault label={t('owner.settings.emailFrom.addressEn')}
+                              value={previewAddrEn}
+                              isDefault={usingDefaultAddrEn}
+                              defaultTag={t('owner.settings.emailFrom.platformDefault')} />
         </div>
       ) : (
         <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
@@ -1403,7 +1418,7 @@ function EmailFromSection({ settings, auth, community, t, onSaved }) {
                    onChange={v => onField('email_from_name', v)} />
             <Field id="ef-addr-es" type="email"
                    label={t('owner.settings.emailFrom.addressEs')}
-                   placeholder="notifications@yourpractice.com"
+                   placeholder={fallbackAddr || 'notifications@yourpractice.com'}
                    hint={t('owner.settings.emailFrom.addressHint')}
                    value={form.email_from_address}
                    onChange={v => onField('email_from_address', v)} />
@@ -1416,7 +1431,7 @@ function EmailFromSection({ settings, auth, community, t, onSaved }) {
                    onChange={v => onField('email_from_name_en', v)} />
             <Field id="ef-addr-en" type="email"
                    label={t('owner.settings.emailFrom.addressEn')}
-                   placeholder="notifications@yourpractice.com"
+                   placeholder={fallbackAddr || 'notifications@yourpractice.com'}
                    value={form.email_from_address_en}
                    onChange={v => onField('email_from_address_en', v)} />
           </div>
@@ -1433,6 +1448,28 @@ function EmailFromSection({ settings, auth, community, t, onSaved }) {
         </div>
       )}
     </CollapsibleSection>
+  );
+}
+
+// Read-row variant that marks values inherited from the platform default
+// with a small tag, so the owner can tell at a glance whether the field
+// is their own override or the platform's fallback.
+function ReadRowWithDefault({ label, value, isDefault, defaultTag }) {
+  return (
+    <div className="tax-contact-item">
+      <div className="tax-contact-item__label">{label}</div>
+      <div className="tax-contact-item__value" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span>{value || '—'}</span>
+        {isDefault && value && (
+          <span style={{
+            padding: '1px 8px', borderRadius: 999,
+            background: '#e0e7ff', color: '#3730a3',
+            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+            letterSpacing: '.04em',
+          }}>{defaultTag}</span>
+        )}
+      </div>
+    </div>
   );
 }
 

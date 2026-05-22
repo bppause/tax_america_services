@@ -62,6 +62,7 @@ module.exports = function createTaxRouter(deps) {
     previewTaxEmail,
     getTemplateDefaults,
     publicAppUrl,
+    emailFrom: PLATFORM_EMAIL_FROM,
     isGlobalAdmin,
     isEnvGlobalAdminEmail,
     runReminderCron,
@@ -2680,7 +2681,20 @@ module.exports = function createTaxRouter(deps) {
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle();
     if (error) return sendSupabaseError(res, error);
     if (!data) return res.status(404).json({ error: 'Community not found.' });
-    res.json({ settings: data });
+    // Surface the platform's outbound-email defaults so the From-name /
+    // From-address editor can show owners exactly what they're inheriting
+    // when their override fields are blank. The address half comes from
+    // the EMAIL_FROM env (parsed out of "Name <addr>" if wrapped); the
+    // display-name half is just the community's own name.
+    const fromRaw = String(PLATFORM_EMAIL_FROM || '');
+    const fromAddrMatch = fromRaw.match(/<([^>]+)>/);
+    const platform_email_from_address = (fromAddrMatch ? fromAddrMatch[1] : fromRaw).trim();
+    res.json({
+      settings: data,
+      platform_defaults: {
+        email_from_address: platform_email_from_address,
+      },
+    });
   });
 
   // Phase 4n.14: contact-info editor for the public landing page. Admin-only;
