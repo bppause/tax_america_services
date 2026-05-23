@@ -265,6 +265,7 @@ export const taxApi = {
   adminCreateTestimonial(auth, payload)              { return request('POST',   '/admin/testimonials', payload, auth, { admin: true }); },
   adminUpdateTestimonial(auth, id, payload)          { return request('PUT',    `/admin/testimonials/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
   adminDeleteTestimonial(auth, id)                   { return request('DELETE', `/admin/testimonials/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminSetTestimonialsDisplayLimit(auth, payload)    { return request('PUT',    '/admin/community-settings/testimonials-display-limit', payload, auth, { admin: true }); },
 
   // Phase 4n.63: Google Places reviews sync.
   adminGetGoogleReviewsState(auth, communitySlug)    { return request('GET',  `/admin/testimonials/google?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },

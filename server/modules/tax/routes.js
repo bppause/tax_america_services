@@ -431,24 +431,31 @@ module.exports = function createTaxRouter(deps) {
   });
 
   // GET /community/:slug/testimonials — public reviews for the
-  // landing-page section. Returns the active set ordered by display_order
-  // so the owner can stack their best ones up top.
+  // landing-page section. Returns the active set ordered by
+  // display_order asc then created_at desc, so an owner who pins
+  // specific reviews keeps that curation but the default (everything
+  // at display_order=0) falls through to most-recent-first. The
+  // configured displayLimit ships alongside so the client knows how
+  // many cards to render.
   router.get('/community/:slug/testimonials', async (req, res) => {
     if (!requireSupabaseEnv(res)) return;
     const slug = trim(req.params.slug, 200);
     if (!slug) return res.status(400).json({ error: 'Community slug required.' });
     const { data: community } = await supabase.from('communities')
-      .select('id, business_type').eq('id', slug).maybeSingle();
+      .select('id, business_type, tax_testimonials_display_limit').eq('id', slug).maybeSingle();
     if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
       return res.status(404).json({ error: 'Tax community not found.' });
     }
+    const displayLimit = Math.max(1, Math.min(30,
+      Number(community.tax_testimonials_display_limit) || 9));
     const { data, error } = await supabase.from('tax_testimonials')
-      .select('id, source, author_name, author_role, rating, body, locale, display_order')
+      .select('id, source, author_name, author_role, rating, body, locale, display_order, created_at')
       .eq('community_id', slug).eq('active', true)
       .order('display_order', { ascending: true })
+      .order('created_at', { ascending: false })
       .limit(60);
     if (error) return sendSupabaseError(res, error);
-    res.json({ testimonials: data || [] });
+    res.json({ testimonials: data || [], displayLimit });
   });
 
   // GET /community/:slug/deadlines — public list of tax deadlines for
@@ -2534,6 +2541,30 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, months });
   });
 
+  // How many reviews the public TestimonialsSection shows. Range 1–30,
+  // default 9 enforced in schema. Owners tune from the Testimonials
+  // admin card.
+  router.put('/admin/community-settings/testimonials-display-limit', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.limit);
+    const limit = Math.max(1, Math.min(30, Math.round(Number.isFinite(raw) ? raw : 9)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_testimonials_display_limit: limit, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'testimonials_display_limit_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { limit },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, limit });
+  });
+
   router.put('/admin/community-settings/reminders-enabled', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
     const communitySlug = trim(req.body?.communitySlug, 200);
@@ -2828,7 +2859,7 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
-        tax_calendar_horizon_months,
+        tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,

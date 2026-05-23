@@ -440,7 +440,8 @@ export default function OwnerSettings() {
       <CalendarHorizonSection settings={settings} auth={auth} community={community}
                               t={t} onSaved={load} />
 
-      <TestimonialsSectionAdmin auth={auth} community={community} t={t} />
+      <TestimonialsSectionAdmin settings={settings} auth={auth} community={community}
+                                t={t} onSaved={load} />
     </EmployeeShell>
   );
 }
@@ -1582,11 +1583,33 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
 // Owner-facing testimonials CRUD. Each row is one quote shown in the
 // public TestimonialsSection. Defaults to an inline list with quick
 // edit/delete; "+ Add testimonial" expands an editor for a fresh row.
-function TestimonialsSectionAdmin({ auth, community, t }) {
+function TestimonialsSectionAdmin({ settings, auth, community, t, onSaved }) {
   const [rows, setRows] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState('');
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  // Display-count editor. Owner-tunable, default 9 (3x3 grid). The
+  // sort that drives "which 9" is display_order asc, created_at desc
+  // (most recent first when nothing is pinned) — defined on the
+  // server in GET /community/:slug/testimonials.
+  const initialLimit = Number(settings?.tax_testimonials_display_limit) || 9;
+  const [limit, setLimit] = useState(String(initialLimit));
+  const [limitBusy, setLimitBusy] = useState(false);
+  useEffect(() => { setLimit(String(initialLimit)); }, [initialLimit]);
+  const limitDirty = String(initialLimit) !== String(limit);
+  const onSaveLimit = async () => {
+    setLimitBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const n = Math.max(1, Math.min(30, Math.round(Number(limit) || 9)));
+      await taxApi.adminSetTestimonialsDisplayLimit(auth, {
+        communitySlug: community.id, limit: n,
+      });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      onSaved?.();
+    } catch (e) { setMsg({ kind: 'error', text: e?.message || '' }); }
+    finally { setLimitBusy(false); }
+  };
 
   const load = () => {
     if (!community?.id) return;
@@ -1631,6 +1654,31 @@ function TestimonialsSectionAdmin({ auth, community, t }) {
           <GoogleReviewsPanel auth={auth} community={community} onSynced={load} t={t} />
         </div>
       </details>
+
+      <div style={{
+        marginBottom: 12, padding: 10, borderRadius: 8,
+        background: 'color-mix(in srgb, #16a34a 6%, #fff)',
+        border: '1px solid color-mix(in srgb, #16a34a 18%, #fff)',
+        display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+      }}>
+        <label style={{ fontSize: 13, fontWeight: 600, color: 'var(--tax-text)' }}>
+          {t('owner.settings.testimonials.displayLimit.label')}
+        </label>
+        <input type="number" min="1" max="30" value={limit}
+               onChange={e => setLimit(e.target.value)}
+               disabled={limitBusy}
+               style={{ width: 80 }} />
+        <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.displayLimit.unit')}
+        </span>
+        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                onClick={onSaveLimit} disabled={limitBusy || !limitDirty}>
+          {limitBusy ? t('lead.submitting') : t('owner.settings.testimonials.displayLimit.save')}
+        </button>
+        <p style={{ width: '100%', margin: '4px 0 0', fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.displayLimit.hint')}
+        </p>
+      </div>
 
       {rows === null
         ? <p>{t('loading')}</p>

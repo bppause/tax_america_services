@@ -3119,3 +3119,15 @@ exception when duplicate_object then null; end $$;
 -- this is false, the place_id is unset, or the env key is missing.
 alter table public.communities
   add column if not exists tax_google_reviews_auto_sync boolean not null default true;
+
+-- How many reviews the public landing TestimonialsSection shows.
+-- Owner-tunable from the Testimonials admin card. Default 9 (3x3 grid).
+-- Ordering is display_order asc, created_at desc — so a manually
+-- pinned order still wins, but the default (all rows at display_order=0)
+-- falls through to most-recent-first.
+alter table public.communities
+  add column if not exists tax_testimonials_display_limit smallint not null default 9;
+do $$ begin
+  alter table public.communities add constraint tax_testimonials_display_limit_chk
+    check (tax_testimonials_display_limit between 1 and 30);
+exception when duplicate_object then null; end $$;
