@@ -42,3 +42,13 @@ class RootErrorBoundary extends React.Component {
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode><RootErrorBoundary><TaxApp /></RootErrorBoundary></React.StrictMode>
 )
+
+// PWA — register the service worker after first paint so we don't
+// compete with the initial bundle parse. Production-only: keeps the
+// vite dev server's hot-reload happy. Errors are silenced; the app
+// degrades to a normal browser experience without the SW.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  })
+}
