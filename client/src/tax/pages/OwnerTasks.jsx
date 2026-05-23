@@ -8,6 +8,16 @@ import { displayPersonName } from '../lib/personName';
 import { urgencyOf, effectiveUrgency, colorOf, priorityColorOf, resolveThresholds, URGENCY_LABEL_KEY } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
 import TaskHover from '../components/TaskHover';
+import SavedSearchesMenu from '../components/SavedSearchesMenu';
+
+// Single source of truth for an empty filter set. Used by Clear-all,
+// by the saved-search apply path, and by the built-in starter views
+// so each built-in only needs to override the dimensions it cares
+// about (e.g. due='overdue') without clobbering the others.
+const EMPTY_FILTERS = {
+  status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '',
+  customerType: 'all', q: '',
+};
 
 // Owner / staff task tracker. Replaces the spreadsheet workflow:
 // columns from the source CSV map onto this UI as
@@ -227,7 +237,7 @@ export default function OwnerTasks() {
     }
   }, [tasks]);
 
-  const onClearFilters = () => setFilters({ status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '', customerType: 'all', q: '' });
+  const onClearFilters = () => setFilters({ ...EMPTY_FILTERS });
   // customerType always carries a string ('all' / 'individual' /
   // 'business') so we only count it as "active" when it differs from
   // the default. Other scalar filters fall back to truthy because
@@ -251,10 +261,31 @@ export default function OwnerTasks() {
             {t('owner.tasks.subtitle')}
           </p>
         </div>
-        <button type="button" className="tax-btn tax-btn--primary"
-                onClick={() => setShowAdd(true)}>
-          + {t('owner.tasks.add')}
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <SavedSearchesMenu
+            auth={auth} scope="tasks" t={t}
+            builtIns={[
+              { key: 'bi-mine-today',    name: t('owner.tasks.smart.mineToday'),    params: { mine: true, filters: { ...EMPTY_FILTERS, due: 'today' } } },
+              { key: 'bi-mine-overdue',  name: t('owner.tasks.smart.mineOverdue'),  params: { mine: true, filters: { ...EMPTY_FILTERS, due: 'overdue' } } },
+              { key: 'bi-overdue',       name: t('owner.tasks.smart.overdue'),      params: { mine: false, filters: { ...EMPTY_FILTERS, due: 'overdue' } } },
+              { key: 'bi-due-today',     name: t('owner.tasks.smart.dueToday'),     params: { mine: false, filters: { ...EMPTY_FILTERS, due: 'today' } } },
+              { key: 'bi-unassigned',    name: t('owner.tasks.smart.unassigned'),   params: { mine: false, filters: { ...EMPTY_FILTERS, assignedTo: ['unassigned'] } } },
+            ]}
+            getCurrentParams={() => ({ mine, filters, view, groupBy, sortKey, periodsGroup })}
+            applyParams={(p) => {
+              if (p.filters) setFilters({ ...EMPTY_FILTERS, ...p.filters });
+              if (typeof p.mine === 'boolean') setMine(p.mine);
+              if (p.view) setView(p.view);
+              if (p.groupBy) setGroupBy(p.groupBy);
+              if (p.sortKey) setSortKey(p.sortKey);
+              if (p.periodsGroup) setPeriodsGroup(p.periodsGroup);
+            }}
+          />
+          <button type="button" className="tax-btn tax-btn--primary"
+                  onClick={() => setShowAdd(true)}>
+            + {t('owner.tasks.add')}
+          </button>
+        </div>
       </div>
 
       {showAdd && (

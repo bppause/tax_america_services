@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import SavedSearchesMenu from '../components/SavedSearchesMenu';
 import { formatLastSignInCompact } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
 
@@ -295,22 +296,39 @@ export default function OwnerCustomers() {
     <EmployeeShell community={community} active="customers">
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12, flexWrap: 'wrap' }}>
         <h2 style={{ margin: 0 }}>{t('owner.customers.title')}</h2>
-        {/* Admin-only actions. Staff sees the list + search/filter but no
-            create or import controls — they manage relationships through
-            the customer detail page (admin-only) or via the inbox flow. */}
-        {isAdmin && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={() => { setImporting(im => !im); setAdding(false); }}
-                    style={{ color: 'var(--tax-text)' }}>
-              {importing ? t('owner.customers.cancelImport') : t('owner.customers.importBtn')}
-            </button>
-            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                    onClick={() => { setAdding(a => !a); setImporting(false); }}>
-              {adding ? t('owner.customers.cancelAdd') : t('owner.customers.addBtn')}
-            </button>
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <SavedSearchesMenu
+            auth={auth} scope="customers" t={t}
+            builtIns={[
+              { key: 'bi-individuals', name: t('owner.customers.smart.individuals'),
+                params: { customerTypeFilter: 'individual', search: '', includeArchived: false, relationshipFilter: [] } },
+              { key: 'bi-businesses',  name: t('owner.customers.smart.businesses'),
+                params: { customerTypeFilter: 'business',   search: '', includeArchived: false, relationshipFilter: [] } },
+              { key: 'bi-archived',    name: t('owner.customers.smart.archived'),
+                params: { customerTypeFilter: 'all',        search: '', includeArchived: true,  relationshipFilter: [] } },
+            ]}
+            getCurrentParams={() => ({ customerTypeFilter, search: searchInput, includeArchived, relationshipFilter })}
+            applyParams={(p) => {
+              if (p.customerTypeFilter) setCustomerTypeFilter(p.customerTypeFilter);
+              if (typeof p.includeArchived === 'boolean') setIncludeArchived(p.includeArchived);
+              if (Array.isArray(p.relationshipFilter)) setRelationshipFilter(p.relationshipFilter);
+              if (typeof p.search === 'string') setSearchInput(p.search);
+            }}
+          />
+          {isAdmin && (
+            <>
+              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                      onClick={() => { setImporting(im => !im); setAdding(false); }}
+                      style={{ color: 'var(--tax-text)' }}>
+                {importing ? t('owner.customers.cancelImport') : t('owner.customers.importBtn')}
+              </button>
+              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                      onClick={() => { setAdding(a => !a); setImporting(false); }}>
+                {adding ? t('owner.customers.cancelAdd') : t('owner.customers.addBtn')}
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <p className="tax-section__lede">
         {isAdmin ? t('owner.customers.subtitle') : t('owner.customers.subtitleStaff')}
