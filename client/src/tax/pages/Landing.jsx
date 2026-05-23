@@ -36,8 +36,11 @@ export default function Landing({ communitySlug }) {
   const [pendingService, setPendingService] = useState(null);
   // Testimonials lifted to Landing so the Reviews nav link can hide
   // itself when there are zero rows (instead of linking to a section
-  // that self-hides — a scroll-to-nothing surprise).
+  // that self-hides — a scroll-to-nothing surprise). Also captures
+  // the owner's configured display limit so the section knows how
+  // many cards to render without a second roundtrip.
   const [testimonials, setTestimonials] = useState(null);
+  const [testimonialsLimit, setTestimonialsLimit] = useState(null);
 
   const onRequestService = (slug) => {
     setPendingService(slug);
@@ -66,7 +69,11 @@ export default function Landing({ communitySlug }) {
   useEffect(() => {
     let cancelled = false;
     taxApi.getCommunityTestimonials(communitySlug)
-      .then(d => !cancelled && setTestimonials(d.testimonials || []))
+      .then(d => {
+        if (cancelled) return;
+        setTestimonials(d.testimonials || []);
+        setTestimonialsLimit(d.displayLimit || null);
+      })
       .catch(() => !cancelled && setTestimonials([]));
     return () => { cancelled = true; };
   }, [communitySlug]);
@@ -137,7 +144,9 @@ export default function Landing({ communitySlug }) {
         <Hero community={community} />
         <ServicesGrid products={products} onRequestService={onRequestService} />
         <TeamSection communitySlug={communitySlug} />
-        <TestimonialsSection communitySlug={communitySlug} rows={testimonials} />
+        <TestimonialsSection communitySlug={communitySlug}
+                             rows={testimonials}
+                             displayLimit={testimonialsLimit} />
         <ArticlesSection communitySlug={communitySlug} />
         <FaqsSection communitySlug={communitySlug} />
         <About />

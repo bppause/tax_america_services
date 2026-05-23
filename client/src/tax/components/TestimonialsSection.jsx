@@ -13,24 +13,33 @@ import { taxApi } from '../api';
 // `rows` can be passed in by the parent — Landing fetches once and
 // drives both this section and the Reviews nav link off the same data.
 // When omitted we fall back to self-fetching for backward compat.
-export default function TestimonialsSection({ communitySlug, rows: rowsProp }) {
+// `displayLimit` is the owner-configured cap (default 9, range 1–30);
+// when self-fetching we read it from the same API response.
+export default function TestimonialsSection({ communitySlug, rows: rowsProp, displayLimit: limitProp }) {
   const { locale, t } = useT();
   const [rowsState, setRowsState] = useState(null);
+  const [limitState, setLimitState] = useState(null);
   useEffect(() => {
     if (rowsProp !== undefined) return;
     let cancelled = false;
     taxApi.getCommunityTestimonials(communitySlug)
-      .then(d => !cancelled && setRowsState(d.testimonials || []))
+      .then(d => {
+        if (cancelled) return;
+        setRowsState(d.testimonials || []);
+        setLimitState(d.displayLimit || null);
+      })
       .catch(() => !cancelled && setRowsState([]));
     return () => { cancelled = true; };
   }, [communitySlug, rowsProp]);
   const rows = rowsProp !== undefined ? rowsProp : rowsState;
+  const limit = Math.max(1, Math.min(30,
+    Number(limitProp != null ? limitProp : limitState) || 9));
 
   if (!rows || rows.length === 0) return null;
 
   // Prefer locale-matched reviews; if zero match, fall through to any.
   const matched = rows.filter(r => r.locale === locale);
-  const display = (matched.length > 0 ? matched : rows).slice(0, 6);
+  const display = (matched.length > 0 ? matched : rows).slice(0, limit);
 
   return (
     <section className="tax-section" id="testimonials">
