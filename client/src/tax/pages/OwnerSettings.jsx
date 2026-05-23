@@ -1505,6 +1505,33 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
             {t('owner.settings.googleReviews.lastSync')}: {fmtLast(state.lastSyncAt)}
           </span>
         </div>
+        <label style={{
+          display: 'flex', alignItems: 'flex-start', gap: 8,
+          padding: '8px 10px', marginTop: 4, borderRadius: 6,
+          background: 'color-mix(in srgb, #16a34a 8%, #fff)',
+          fontSize: 13, cursor: busy ? 'wait' : 'pointer',
+        }}>
+          <input type="checkbox"
+                 checked={state.autoSyncEnabled !== false}
+                 disabled={busy || !state.hasApiKey || !state.placeId}
+                 onChange={async (e) => {
+                   try {
+                     await taxApi.adminSetGoogleAutoSync(auth, {
+                       communitySlug: community.id, enabled: e.target.checked,
+                     });
+                     load();
+                   } catch (err) {
+                     setMsg({ kind: 'error', text: err?.message || '' });
+                   }
+                 }}
+                 style={{ marginTop: 3 }} />
+          <span>
+            <strong>{t('owner.settings.googleReviews.autoSyncLabel')}</strong>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
+              {t('owner.settings.googleReviews.autoSyncHint')}
+            </span>
+          </span>
+        </label>
       </div>
     </div>
   );

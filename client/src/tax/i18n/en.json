@@ -155,6 +155,8 @@
   "owner.settings.googleReviews.apiKeyMissing": "API key missing",
   "owner.settings.googleReviews.pending": "Pending resolution",
   "owner.settings.googleReviews.pendingHint": "Saved as a Maps URL — Sync now will resolve it to a clean Place ID once the API key is configured.",
+  "owner.settings.googleReviews.autoSyncLabel": "Sync new reviews automatically",
+  "owner.settings.googleReviews.autoSyncHint": "Once a day the server pulls the latest reviews from Google and adds any new ones. Each row upserts in place — re-runs don't create duplicates. Manual Sync now still works any time you want a fresh pull.",
   "owner.settings.calendarHorizon.title": "Tax calendar horizon",
   "owner.settings.calendarHorizon.subtitle": "How far into the future the public /calendar page expands recurring deadlines. Default 18 months covers the full filing cycle so visitors landing in December still see January–April obligations.",
   "owner.settings.calendarHorizon.label": "Look ahead",

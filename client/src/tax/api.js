@@ -270,6 +270,7 @@ export const taxApi = {
   adminGetGoogleReviewsState(auth, communitySlug)    { return request('GET',  `/admin/testimonials/google?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
   adminSetGooglePlaceId(auth, payload)               { return request('PUT',  '/admin/community-settings/google-place-id', payload, auth, { admin: true }); },
   adminSyncGoogleReviews(auth, payload)              { return request('POST', '/admin/testimonials/sync-google', payload, auth, { admin: true }); },
+  adminSetGoogleAutoSync(auth, payload)              { return request('PUT',  '/admin/community-settings/google-reviews-auto-sync', payload, auth, { admin: true }); },
 
   // Phase 4n.58: workload heatmap.
   adminGetWorkload(auth, opts = {}) {
