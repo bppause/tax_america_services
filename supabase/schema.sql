@@ -2827,3 +2827,29 @@ alter table public.communities
   add column if not exists tax_email_from_name_en     text not null default '',
   add column if not exists tax_email_from_address     text not null default '',
   add column if not exists tax_email_from_address_en  text not null default '';
+
+-- Per-task time tracking (Phase 4n.55). Each row is one start/stop
+-- interval an employee logged against a task — running timers leave
+-- ended_at null, completed timers carry the elapsed seconds. The
+-- partial index on (employee_id) where ended_at is null lets the
+-- start endpoint look up "is this employee currently tracking time?"
+-- cheaply without a sequential scan, and enforces the
+-- one-running-timer-per-employee invariant at the app layer.
+create table if not exists public.tax_task_time_entries (
+  id               text primary key,
+  community_id     text not null references public.communities(id) on delete cascade,
+  task_id          text not null references public.tax_tasks(id)   on delete cascade,
+  employee_id      text not null references public.tax_employees(id) on delete restrict,
+  started_at       timestamptz not null,
+  ended_at         timestamptz,
+  duration_seconds int,
+  note             text not null default '',
+  billable         boolean not null default true,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+create index if not exists idx_tax_time_task     on public.tax_task_time_entries(task_id);
+create index if not exists idx_tax_time_employee on public.tax_task_time_entries(employee_id, started_at desc);
+create unique index if not exists idx_tax_time_running_one_per_employee
+  on public.tax_task_time_entries(employee_id) where ended_at is null;
+alter table public.tax_task_time_entries disable row level security;

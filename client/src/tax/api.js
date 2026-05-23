@@ -235,6 +235,17 @@ export const taxApi = {
   adminUndoCustomerActivity(auth, customerId, auditId) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/activity/undo`, { auditId }, auth, { admin: true }); },
   getEmployeeTriage(auth, windowDays = 7) { return request('GET', `/employee/triage?windowDays=${windowDays}`, undefined, auth); },
 
+  // Phase 4n.55: time tracking on tasks. The list/start/stop/add/edit/delete
+  // endpoints below all sit under the standard employee-auth surface so the
+  // header timer pill and the task-editor section can share one wrapper.
+  adminListTaskTimeEntries(auth, taskId)             { return request('GET',    `/admin/tasks/${encodeURIComponent(taskId)}/time-entries`, undefined, auth); },
+  adminStartTaskTimer(auth, taskId, payload = {})    { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/time-entries/start`, payload, auth); },
+  adminStopTaskTimer(auth, taskId, payload = {})     { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/time-entries/stop`, payload, auth); },
+  adminAddTaskTimeEntry(auth, taskId, payload)       { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/time-entries`, payload, auth); },
+  adminUpdateTimeEntry(auth, entryId, payload)       { return request('PUT',    `/admin/time-entries/${encodeURIComponent(entryId)}`, payload, auth); },
+  adminDeleteTimeEntry(auth, entryId)                { return request('DELETE', `/admin/time-entries/${encodeURIComponent(entryId)}`, undefined, auth); },
+  getMyRunningTimer(auth)                            { return request('GET',    '/admin/employees/me/running-timer', undefined, auth); },
+
   // Phase 4n.24: signature requests
   adminListSignatureRequests(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, undefined, auth, { admin: true }); },
   adminCreateSignatureRequest(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, payload, auth, { admin: true }); },

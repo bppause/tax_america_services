@@ -1189,6 +1189,10 @@ function TaskFormModal({
             <textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} maxLength={4000} />
           </div>
 
+          {isEdit && task?.id && (
+            <TaskTimeTrackingSection auth={auth} taskId={task.id} isAdmin={isAdmin} locale={locale} t={t} />
+          )}
+
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
           <div style={{ display: 'flex', gap: 8 }}>
@@ -1458,6 +1462,340 @@ function InlineCustomerCreateModal({ auth, community, relationshipTypes, locale,
       </div>
     </div>
   );
+}
+
+// Time tracking on a task — shown inside the edit modal. Loads the
+// full entry list on mount, surfaces Start/Stop for the caller, shows
+// a running ticker for any in-flight entry, and lets the caller add a
+// manual back-fill entry. Each entry is editable inline (by its
+// author or admin); deletion is the same. Total at the top includes
+// the live portion of any running timer so the number moves while a
+// timer is on.
+function TaskTimeTrackingSection({ auth, taskId, isAdmin, locale, t }) {
+  const [entries, setEntries] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [now, setNow] = useState(Date.now());
+
+  const load = () => {
+    taxApi.adminListTaskTimeEntries(auth, taskId)
+      .then(d => {
+        setEntries(d.entries || []);
+        setTotal(d.total_seconds || 0);
+      })
+      .catch(e => setErr(e?.message || ''));
+  };
+  useEffect(load, [taskId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Tick once per second so the running-timer ticker + the total
+  // updates without polling the server. The interval is paused when
+  // no timer is running so we don't waste cycles.
+  const running = (entries || []).find(e => !e.ended_at);
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onStart = async () => {
+    setBusy(true); setErr('');
+    try { await taxApi.adminStartTaskTimer(auth, taskId); load(); }
+    catch (e) { setErr(e?.message || ''); }
+    finally { setBusy(false); }
+  };
+  const onStop = async () => {
+    setBusy(true); setErr('');
+    try { await taxApi.adminStopTaskTimer(auth, taskId); load(); }
+    catch (e) { setErr(e?.message || ''); }
+    finally { setBusy(false); }
+  };
+  const onDelete = async (entryId) => {
+    if (!window.confirm(t('owner.tasks.time.deleteConfirm'))) return;
+    setBusy(true); setErr('');
+    try { await taxApi.adminDeleteTimeEntry(auth, entryId); load(); }
+    catch (e) { setErr(e?.message || ''); }
+    finally { setBusy(false); }
+  };
+
+  // Total = closed seconds + running seconds (computed live)
+  const liveTotal = total + (running
+    ? Math.max(0, Math.round((now - new Date(running.started_at).getTime()) / 1000))
+    : 0);
+
+  return (
+    <div style={{
+      marginTop: 4, padding: 12, borderRadius: 8,
+      background: 'var(--tax-bg-alt)', display: 'grid', gap: 10,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>
+            ⏱ {t('owner.tasks.time.heading')}
+            <span style={{
+              marginLeft: 8, padding: '1px 8px', borderRadius: 999,
+              background: '#fff', color: 'var(--tax-text)',
+              fontSize: 12, fontWeight: 700,
+            }}>{formatHm(liveTotal, t)}</span>
+          </div>
+          {running && (
+            <div style={{ fontSize: 12, color: '#166534', marginTop: 4 }}>
+              ● {t('owner.tasks.time.runningSince', { since: formatHm(Math.max(0, Math.round((now - new Date(running.started_at).getTime()) / 1000)), t) })}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {!running && (
+            <button type="button" onClick={onStart} disabled={busy}
+                    className="tax-btn tax-btn--primary tax-btn--sm">
+              ▶ {t('owner.tasks.time.start')}
+            </button>
+          )}
+          {running && (
+            <button type="button" onClick={onStop} disabled={busy}
+                    className="tax-btn tax-btn--sm"
+                    style={{ background: '#991b1b', color: '#fff', border: '1px solid #991b1b' }}>
+              ◼ {t('owner.tasks.time.stop')}
+            </button>
+          )}
+          <button type="button" onClick={() => setShowAdd(s => !s)}
+                  className="tax-btn tax-btn--ghost tax-btn--sm"
+                  style={{ color: 'var(--tax-text)' }}>
+            + {t('owner.tasks.time.addManual')}
+          </button>
+        </div>
+      </div>
+
+      {showAdd && (
+        <ManualTimeEntryForm auth={auth} taskId={taskId} t={t}
+                             onClose={() => setShowAdd(false)}
+                             onSaved={() => { setShowAdd(false); load(); }} />
+      )}
+
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+
+      {entries === null ? <p style={{ color: 'var(--tax-muted)', fontSize: 13, margin: 0 }}>{t('loading')}</p>
+        : entries.length === 0 ? <p style={{ color: 'var(--tax-muted)', fontSize: 13, margin: 0 }}>{t('owner.tasks.time.empty')}</p>
+        : (
+          <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 }}>
+            {entries.map(e => (
+              <TimeEntryRow key={e.id} entry={e} isAdmin={isAdmin}
+                            now={now} locale={locale} t={t}
+                            onDelete={() => onDelete(e.id)} onChanged={load} auth={auth} />
+            ))}
+          </ul>
+        )}
+    </div>
+  );
+}
+
+function ManualTimeEntryForm({ auth, taskId, t, onClose, onSaved }) {
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [startTime, setStartTime] = useState('09:00');
+  const [endTime, setEndTime] = useState('10:00');
+  const [note, setNote] = useState('');
+  const [billable, setBillable] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onSubmit = async (e) => {
+    e?.preventDefault?.();
+    setBusy(true); setErr('');
+    try {
+      const startedAt = new Date(`${date}T${startTime}`).toISOString();
+      const endedAt   = new Date(`${date}T${endTime}`).toISOString();
+      await taxApi.adminAddTaskTimeEntry(auth, taskId, { startedAt, endedAt, note: note.trim(), billable });
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || '');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={onSubmit} style={{ display: 'grid', gap: 8, padding: 10, background: '#fff', borderRadius: 6 }}>
+      <div className="tax-form__row2">
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.tasks.time.manual.date')}
+          </label>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)} required />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.tasks.time.manual.start')}
+            </label>
+            <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} required />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.tasks.time.manual.end')}
+            </label>
+            <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} required />
+          </div>
+        </div>
+      </div>
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {t('owner.tasks.time.manual.note')}
+        </label>
+        <input type="text" value={note} onChange={e => setNote(e.target.value)} maxLength={500}
+               placeholder={t('owner.tasks.time.manual.notePlaceholder')} />
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+        <input type="checkbox" checked={billable} onChange={e => setBillable(e.target.checked)} />
+        {t('owner.tasks.time.manual.billable')}
+      </label>
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm" disabled={busy}>
+          {busy ? t('lead.submitting') : t('owner.tasks.time.manual.save')}
+        </button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={onClose}>
+          {t('preview.close')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function TimeEntryRow({ entry, isAdmin, now, locale, t, onDelete, onChanged, auth }) {
+  const [editing, setEditing] = useState(false);
+  const closed = !!entry.ended_at;
+  const seconds = closed
+    ? (entry.duration_seconds || 0)
+    : Math.max(0, Math.round((now - new Date(entry.started_at).getTime()) / 1000));
+  const author = displayPersonName(entry.employee) || entry.employee?.email || '—';
+  const startedFmt = formatTs(entry.started_at, locale);
+  const endedFmt = closed ? formatTs(entry.ended_at, locale) : null;
+
+  if (editing) {
+    return (
+      <li style={{ background: '#fff', borderRadius: 6, padding: 8 }}>
+        <TimeEntryEditForm entry={entry} auth={auth} t={t}
+                           onClose={() => setEditing(false)}
+                           onSaved={() => { setEditing(false); onChanged(); }} />
+      </li>
+    );
+  }
+
+  return (
+    <li style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 8, padding: '8px 10px', background: '#fff', borderRadius: 6,
+      borderLeft: closed ? '3px solid #16a34a' : '3px solid #f59e0b',
+    }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>
+          {formatHm(seconds, t)}
+          <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 400, color: 'var(--tax-muted)' }}>
+            {author}
+          </span>
+          {!entry.billable && (
+            <span style={{
+              marginLeft: 6, padding: '0 6px', borderRadius: 999,
+              background: 'var(--tax-bg-alt)', color: 'var(--tax-muted)',
+              fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+            }}>{t('owner.tasks.time.nonBillable')}</span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 1 }}>
+          {startedFmt}{endedFmt ? ` → ${endedFmt}` : ` · ${t('owner.tasks.time.runningNow')}`}
+          {entry.note && <> · {entry.note}</>}
+        </div>
+      </div>
+      {(isAdmin || /* author can edit own */ true) && closed && (
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button type="button" onClick={() => setEditing(true)}
+                  className="tax-btn tax-btn--ghost tax-btn--sm"
+                  style={{ color: 'var(--tax-muted)' }}>
+            {t('owner.tasks.time.edit')}
+          </button>
+          <button type="button" onClick={onDelete}
+                  className="tax-btn tax-btn--ghost tax-btn--sm"
+                  style={{ color: 'var(--tax-error)' }}>
+            {t('owner.services.delete')}
+          </button>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function TimeEntryEditForm({ entry, auth, t, onClose, onSaved }) {
+  const startD = new Date(entry.started_at);
+  const endD   = new Date(entry.ended_at);
+  const fmtDate = (d) => d.toISOString().slice(0, 10);
+  const fmtTime = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const [date, setDate] = useState(fmtDate(startD));
+  const [startTime, setStartTime] = useState(fmtTime(startD));
+  const [endTime, setEndTime] = useState(fmtTime(endD));
+  const [note, setNote] = useState(entry.note || '');
+  const [billable, setBillable] = useState(entry.billable !== false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onSubmit = async (e) => {
+    e?.preventDefault?.();
+    setBusy(true); setErr('');
+    try {
+      const startedAt = new Date(`${date}T${startTime}`).toISOString();
+      const endedAt   = new Date(`${date}T${endTime}`).toISOString();
+      await taxApi.adminUpdateTimeEntry(auth, entry.id, {
+        startedAt, endedAt, note: note.trim(), billable,
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || '');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={onSubmit} style={{ display: 'grid', gap: 6 }}>
+      <div className="tax-form__row2">
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} required />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} required />
+          <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} required />
+        </div>
+      </div>
+      <input type="text" value={note} onChange={e => setNote(e.target.value)} maxLength={500}
+             placeholder={t('owner.tasks.time.manual.notePlaceholder')} />
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+        <input type="checkbox" checked={billable} onChange={e => setBillable(e.target.checked)} />
+        {t('owner.tasks.time.manual.billable')}
+      </label>
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm" disabled={busy}>
+          {busy ? t('lead.submitting') : t('owner.tasks.time.manual.save')}
+        </button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={onClose}>
+          {t('preview.close')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function formatHm(totalSeconds, t) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h === 0 && m === 0) return `0${t('owner.tasks.time.unit.min')}`;
+  if (h === 0) return `${m}${t('owner.tasks.time.unit.min')}`;
+  if (m === 0) return `${h}${t('owner.tasks.time.unit.hr')}`;
+  return `${h}${t('owner.tasks.time.unit.hr')} ${m}${t('owner.tasks.time.unit.min')}`;
+}
+
+function formatTs(iso, locale) {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'es-ES',
+      { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      .format(new Date(iso));
+  } catch (_e) { return iso; }
 }
 
 // ─── Toolbar: My-tasks toggle + due chips + view-mode + group-by ─────────
