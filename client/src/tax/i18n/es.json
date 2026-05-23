@@ -1851,7 +1851,7 @@
   "impersonation.confirm.customer": "¿Iniciar una sesión de suplantación como {name}? Un banner rojo marcará cada página y cada acción que realice se registrará en auditoría con su identidad y la suya. Las sesiones expiran en una hora.",
   "impersonation.confirm.employee": "¿Iniciar una sesión de suplantación como {name}? Un banner rojo marcará cada página y cada acción que realice se registrará en auditoría con su identidad y la suya. Las sesiones expiran en una hora.",
 
-  "employee.nav.articles": "Artículos",
+  "employee.nav.articles": "Artículos de ayuda",
   "employee.nav.news": "Noticias",
   "landing.news.heading": "Últimas noticias",
   "landing.news.subheading": "Actualizaciones del IRS, novedades federales de impuestos y noticias de Connecticut que afectan a contribuyentes y pequeños negocios.",
@@ -1904,6 +1904,8 @@
 
   "owner.help.title": "Artículos de ayuda",
   "owner.help.subtitle": "Reemplace los artículos predeterminados con su propia redacción, oculte los que no apliquen a su oficina, o escriba nuevos desde cero. Los cambios solo afectan a esta oficina.",
+  "owner.help.whereShown.title": "¿Dónde aparecen?",
+  "owner.help.whereShown.body": "Los artículos para clientes aparecen en la página de Ayuda del portal del cliente (/portal/help). Los artículos para personal aparecen en la página de Ayuda del portal de empleados. NO aparecen en la sección pública de Noticias — para tarjetas en el sitio público, use Propietario → Noticias.",
   "owner.help.audience.customer": "Para clientes",
   "owner.help.audience.employee": "Para el personal",
   "owner.help.empty": "No hay artículos en esta vista.",

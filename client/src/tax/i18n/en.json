@@ -1852,7 +1852,7 @@
   "impersonation.confirm.customer": "Start an impersonation session as {name}? A red banner will mark every page and every action you take will be audit-logged with both your identity and theirs. Sessions expire after one hour.",
   "impersonation.confirm.employee": "Start an impersonation session as {name}? A red banner will mark every page and every action you take will be audit-logged with both your identity and theirs. Sessions expire after one hour.",
 
-  "employee.nav.articles": "Articles",
+  "employee.nav.articles": "Help articles",
   "employee.nav.news": "News",
   "landing.news.heading": "Latest news",
   "landing.news.subheading": "Updates from the IRS, federal tax developments, and Connecticut news that affect filers and small businesses.",
@@ -1905,6 +1905,8 @@
 
   "owner.help.title": "Help articles",
   "owner.help.subtitle": "Override platform default articles with your own wording, hide articles that don't apply to your practice, or write new ones from scratch. Changes only affect this community.",
+  "owner.help.whereShown.title": "Where do these appear?",
+  "owner.help.whereShown.body": "Customer-facing articles show on the customer portal Help page (/portal/help). Staff-facing articles show on the employee portal Help page. They do NOT appear in the public landing News section — for news cards on the public site, use Owner → News instead.",
   "owner.help.audience.customer": "Customer-facing",
   "owner.help.audience.employee": "Staff-facing",
   "owner.help.empty": "No articles in this view.",

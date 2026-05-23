@@ -76,6 +76,16 @@ export default function OwnerHelpAdmin() {
       </div>
       <p className="tax-section__lede">{t('owner.help.subtitle')}</p>
 
+      <div style={{
+        marginBottom: 14, padding: '10px 12px', borderRadius: 8,
+        background: 'color-mix(in srgb, #2563eb 6%, #fff)',
+        border: '1px solid color-mix(in srgb, #2563eb 22%, #fff)',
+        fontSize: 13, lineHeight: 1.45,
+      }}>
+        <strong>{t('owner.help.whereShown.title')}</strong>{' '}
+        {t('owner.help.whereShown.body')}
+      </div>
+
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
         {['customer', 'employee'].map(aud => (
           <button key={aud} type="button"
