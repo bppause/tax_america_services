@@ -81,6 +81,7 @@ export const taxApi = {
   getCommunity(slug)              { return request('GET',  `/community/${encodeURIComponent(slug)}`); },
   getCommunityFaqs(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/faqs`); },
   getCommunityArticles(slug)      { return request('GET',  `/community/${encodeURIComponent(slug)}/articles`); },
+  getCommunityNews(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/news`); },
   getCommunityDeadlines(slug)     { return request('GET',  `/community/${encodeURIComponent(slug)}/deadlines`); },
   getCommunityTestimonials(slug)  { return request('GET',  `/community/${encodeURIComponent(slug)}/testimonials`); },
   getCommunityTeam(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/team`); },
@@ -266,6 +267,17 @@ export const taxApi = {
   adminUpdateTestimonial(auth, id, payload)          { return request('PUT',    `/admin/testimonials/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
   adminDeleteTestimonial(auth, id)                   { return request('DELETE', `/admin/testimonials/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
   adminSetTestimonialsDisplayLimit(auth, payload)    { return request('PUT',    '/admin/community-settings/testimonials-display-limit', payload, auth, { admin: true }); },
+
+  // Phase 4n.66: news articles
+  adminListNews(auth, communitySlug)                 { return request('GET',    `/admin/news?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminCreateNews(auth, payload)                     { return request('POST',   '/admin/news', payload, auth, { admin: true }); },
+  adminUpdateNews(auth, id, payload)                 { return request('PUT',    `/admin/news/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
+  adminDeleteNews(auth, id)                          { return request('DELETE', `/admin/news/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminRefreshNews(auth, payload)                    { return request('POST',   '/admin/news/refresh', payload, auth, { admin: true }); },
+  adminSetNewsTopics(auth, payload)                  { return request('PUT',    '/admin/community-settings/news-topics', payload, auth, { admin: true }); },
+  adminSetNewsDisplayLimit(auth, payload)            { return request('PUT',    '/admin/community-settings/news-display-limit', payload, auth, { admin: true }); },
+  adminSetNewsAutoRefresh(auth, payload)             { return request('PUT',    '/admin/community-settings/news-auto-refresh', payload, auth, { admin: true }); },
+  adminGetNewsVideoUploadUrl(auth, payload)          { return request('POST',   '/admin/news/video-upload-url', payload, auth, { admin: true }); },
 
   // Phase 4n.63: Google Places reviews sync.
   adminGetGoogleReviewsState(auth, communitySlug)    { return request('GET',  `/admin/testimonials/google?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },

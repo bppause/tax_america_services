@@ -7,7 +7,7 @@ import ServicesGrid from '../components/ServicesGrid';
 import TeamSection from '../components/TeamSection';
 import TestimonialsSection from '../components/TestimonialsSection';
 import FaqsSection from '../components/FaqsSection';
-import ArticlesSection from '../components/ArticlesSection';
+import NewsSection from '../components/NewsSection';
 import About from '../components/About';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
@@ -41,6 +41,10 @@ export default function Landing({ communitySlug }) {
   // many cards to render without a second roundtrip.
   const [testimonials, setTestimonials] = useState(null);
   const [testimonialsLimit, setTestimonialsLimit] = useState(null);
+  // News articles: same lift-up pattern so the News nav link can hide
+  // itself when the feed is empty.
+  const [news, setNews] = useState(null);
+  const [newsLimit, setNewsLimit] = useState(null);
 
   const onRequestService = (slug) => {
     setPendingService(slug);
@@ -75,6 +79,18 @@ export default function Landing({ communitySlug }) {
         setTestimonialsLimit(d.displayLimit || null);
       })
       .catch(() => !cancelled && setTestimonials([]));
+    return () => { cancelled = true; };
+  }, [communitySlug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    taxApi.getCommunityNews(communitySlug)
+      .then(d => {
+        if (cancelled) return;
+        setNews(d.articles || []);
+        setNewsLimit(d.displayLimit || null);
+      })
+      .catch(() => !cancelled && setNews([]));
     return () => { cancelled = true; };
   }, [communitySlug]);
 
@@ -132,6 +148,7 @@ export default function Landing({ communitySlug }) {
     services: (products || []).length > 0,
     team: true,
     reviews: Array.isArray(testimonials) && testimonials.length > 0,
+    news: Array.isArray(news) && news.length > 0,
     faqs: true,
     about: true,
     contact: true,
@@ -147,7 +164,8 @@ export default function Landing({ communitySlug }) {
         <TestimonialsSection communitySlug={communitySlug}
                              rows={testimonials}
                              displayLimit={testimonialsLimit} />
-        <ArticlesSection communitySlug={communitySlug} />
+        <NewsSection communitySlug={communitySlug}
+                     articles={news} displayLimit={newsLimit} />
         <FaqsSection communitySlug={communitySlug} />
         <About />
         <Contact community={community} products={products}

@@ -102,6 +102,7 @@ export default function EmployeeShell({ community, active, children }) {
               <div className="tax-shell__group">
                 <div className="tax-shell__group-label">{t('employee.nav.groupPublicHomepage')}</div>
                 {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
+                {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
                 {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                 {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
               </div>

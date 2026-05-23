@@ -33,6 +33,7 @@ import OwnerStaffDetail from './pages/OwnerStaffDetail';
 import OwnerLeads from './pages/OwnerLeads';
 import OwnerSettings from './pages/OwnerSettings';
 import OwnerHelpAdmin from './pages/OwnerHelpAdmin';
+import OwnerNews from './pages/OwnerNews';
 import OwnerAudit from './pages/OwnerAudit';
 import OwnerFaqAdmin from './pages/OwnerFaqAdmin';
 import OwnerServicesAdmin from './pages/OwnerServicesAdmin';
@@ -101,6 +102,7 @@ function parseTaxPath() {
     if (parts[3] === 'services') return { route: 'owner-services', slug };
     if (parts[3] === 'setup') return { route: 'owner-setup', slug };
     if (parts[3] === 'articles') return { route: 'owner-articles', slug };
+    if (parts[3] === 'news')     return { route: 'owner-news', slug };
     if (parts[3] === 'faqs')     return { route: 'owner-faqs', slug };
     if (parts[3] === 'service-catalog') return { route: 'owner-service-catalog', slug };
     if (parts[3] === 'audit')    return { route: 'owner-audit', slug };
@@ -253,6 +255,7 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-leads') return <OwnerLeads />;
   if (parsed.route === 'owner-settings') return <OwnerSettings />;
   if (parsed.route === 'owner-articles') return <OwnerHelpAdmin />;
+  if (parsed.route === 'owner-news') return <OwnerNews />;
   if (parsed.route === 'owner-faqs') return <OwnerFaqAdmin />;
   if (parsed.route === 'owner-service-catalog') return <OwnerServicesAdmin />;
   if (parsed.route === 'owner-tasks') return <OwnerTasks />;

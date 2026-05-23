@@ -34,6 +34,7 @@ const {
   sanitizePermissions,
 } = require('./permissions');
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
+const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
 
 const TAX_BUSINESS_TYPE = 'tax';
 const MAX_TEXT_LEN = 4000;
@@ -65,6 +66,7 @@ module.exports = function createTaxRouter(deps) {
     publicAppUrl,
     emailFrom: PLATFORM_EMAIL_FROM,
     googlePlacesApiKey: GOOGLE_PLACES_API_KEY,
+    anthropicApiKey: ANTHROPIC_API_KEY,
     isGlobalAdmin,
     isEnvGlobalAdminEmail,
     runReminderCron,
@@ -2860,6 +2862,7 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
         tax_calendar_horizon_months, tax_testimonials_display_limit,
+        tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
@@ -7602,6 +7605,295 @@ module.exports = function createTaxRouter(deps) {
     if (error) return sendSupabaseError(res, error);
     res.json({ ok: true, enabled });
   });
+
+  // ── Phase 4n.66: news articles ─────────────────────────────────────────
+  //
+  // Public landing-page News section. Replaces the legacy help-articles
+  // surfacing with a dedicated table (`tax_news_articles`) that holds
+  // both manual entries and AI-refreshed items (source='ai').
+  //
+  // Owners configure topics + display limit in Owner Settings → News, and
+  // can fire a manual refresh that calls Claude (web_search grounded).
+  // Daily cron is wired in server/index.js when ANTHROPIC_API_KEY is set.
+  const NEWS_VIDEOS_BUCKET = 'tax-videos';
+
+  // GET /community/:slug/news — public list. Returns active rows newest
+  // first, capped at the owner's display limit. Public, no auth.
+  router.get('/community/:slug/news', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, business_type, tax_news_topics, tax_news_display_limit')
+      .eq('id', slug).maybeSingle();
+    if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
+      return res.status(404).json({ error: 'Tax community not found.' });
+    }
+    const displayLimit = Math.max(1, Math.min(20,
+      Number(community.tax_news_display_limit) || 5));
+    const { data, error } = await supabase.from('tax_news_articles')
+      .select('id, source, topic, topics, title_i18n, summary_i18n, body_i18n, source_url, source_name, published_at, video_url, video_storage_path, display_order, created_at')
+      .eq('community_id', slug).eq('active', true)
+      .order('display_order', { ascending: true })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(displayLimit);
+    if (error) return sendSupabaseError(res, error);
+    res.json({
+      articles: data || [],
+      displayLimit,
+      topics: Array.isArray(community.tax_news_topics) ? community.tax_news_topics : [],
+    });
+  });
+
+  // GET /admin/news — owner-facing list. Returns the full set so the
+  // admin UI can show active + inactive rows for moderation.
+  router.get('/admin/news', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('tax_news_articles')
+      .select('*').eq('community_id', communitySlug)
+      .order('display_order', { ascending: true })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ articles: data || [] });
+  });
+
+  router.post('/admin/news', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const titleEn   = trim(req.body?.titleEn || req.body?.title_en, 200);
+    const titleEs   = trim(req.body?.titleEs || req.body?.title_es, 200);
+    const summaryEn = trim(req.body?.summaryEn || req.body?.summary_en, 1000);
+    const summaryEs = trim(req.body?.summaryEs || req.body?.summary_es, 1000);
+    if (!titleEn && !titleEs) {
+      return res.status(400).json({ error: 'Title (EN or ES) required.' });
+    }
+    const row = {
+      id: 'tn_' + uuidv4().slice(0, 12),
+      community_id: communitySlug,
+      source: 'manual',
+      topic: trim(req.body?.topic, 200),
+      topics: Array.isArray(req.body?.topics) ? req.body.topics.slice(0, 10).map(s => String(s).slice(0, 200)) : [],
+      title_i18n:   { en: titleEn,   es: titleEs   || titleEn   },
+      summary_i18n: { en: summaryEn, es: summaryEs || summaryEn },
+      body_i18n: {
+        en: trim(req.body?.bodyEn || req.body?.body_en, 4000),
+        es: trim(req.body?.bodyEs || req.body?.body_es, 4000),
+      },
+      source_url: trim(req.body?.sourceUrl || req.body?.source_url, 500),
+      source_name: trim(req.body?.sourceName || req.body?.source_name, 200),
+      published_at: req.body?.publishedAt || new Date().toISOString(),
+      video_url: trim(req.body?.videoUrl || req.body?.video_url, 500),
+      video_storage_path: trim(req.body?.videoStoragePath || req.body?.video_storage_path, 500),
+      active: req.body?.active !== false,
+      display_order: Number.isFinite(Number(req.body?.displayOrder))
+        ? Math.round(Number(req.body?.displayOrder)) : 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('tax_news_articles').insert(row);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, article: row });
+  });
+
+  router.put('/admin/news/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    if (!id) return res.status(400).json({ error: 'id required.' });
+    const update = { updated_at: new Date().toISOString() };
+    const body = req.body || {};
+    if (typeof body.titleEn === 'string' || typeof body.titleEs === 'string') {
+      update.title_i18n = {
+        en: trim(body.titleEn, 200),
+        es: trim(body.titleEs, 200) || trim(body.titleEn, 200),
+      };
+    }
+    if (typeof body.summaryEn === 'string' || typeof body.summaryEs === 'string') {
+      update.summary_i18n = {
+        en: trim(body.summaryEn, 1000),
+        es: trim(body.summaryEs, 1000) || trim(body.summaryEn, 1000),
+      };
+    }
+    if (typeof body.bodyEn === 'string' || typeof body.bodyEs === 'string') {
+      update.body_i18n = { en: trim(body.bodyEn, 4000), es: trim(body.bodyEs, 4000) };
+    }
+    if (typeof body.topic       === 'string') update.topic       = trim(body.topic, 200);
+    if (Array.isArray(body.topics))           update.topics      = body.topics.slice(0, 10).map(s => String(s).slice(0, 200));
+    if (typeof body.sourceUrl   === 'string') update.source_url  = trim(body.sourceUrl, 500);
+    if (typeof body.sourceName  === 'string') update.source_name = trim(body.sourceName, 200);
+    if (typeof body.publishedAt === 'string') update.published_at = body.publishedAt;
+    if (typeof body.videoUrl    === 'string') update.video_url   = trim(body.videoUrl, 500);
+    if (typeof body.videoStoragePath === 'string') update.video_storage_path = trim(body.videoStoragePath, 500);
+    if (typeof body.active      === 'boolean') update.active      = body.active;
+    if (Number.isFinite(Number(body.displayOrder))) update.display_order = Math.round(Number(body.displayOrder));
+    const { error } = await supabase.from('tax_news_articles').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/news/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    if (!id) return res.status(400).json({ error: 'id required.' });
+    // If the article had an uploaded video, drop the storage object so we
+    // don't accumulate orphans. Failure is non-fatal.
+    const { data: existing } = await supabase.from('tax_news_articles')
+      .select('video_storage_path').eq('id', id).maybeSingle();
+    if (existing?.video_storage_path) {
+      try { await supabase.storage.from(NEWS_VIDEOS_BUCKET).remove([existing.video_storage_path]); }
+      catch (_e) {}
+    }
+    const { error } = await supabase.from('tax_news_articles').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // POST /admin/news/refresh — triggers the LLM grounded refresh. AI-source
+  // rows are wiped first so the table mirrors "today's news"; manual rows
+  // are preserved.
+  router.post('/admin/news/refresh', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const result = await refreshNewsForCommunity(communitySlug);
+    if (result.error) {
+      const status = result.error.startsWith('no_api_key') ? 400 : 502;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Shared by manual button and (in PR B) the daily cron.
+  async function refreshNewsForCommunity(communitySlug) {
+    if (!ANTHROPIC_API_KEY) {
+      return { error: 'no_api_key', message: 'ANTHROPIC_API_KEY is not configured on the server.' };
+    }
+    const { data: community } = await supabase.from('communities')
+      .select('id, tax_news_topics, tax_news_display_limit')
+      .eq('id', communitySlug).maybeSingle();
+    if (!community) return { error: 'community_missing', message: 'Community not found.' };
+    const topics = Array.isArray(community.tax_news_topics) ? community.tax_news_topics : [];
+    const desired = Math.max(1, Math.min(20, Number(community.tax_news_display_limit) || 5));
+    const result = await fetchAiNews({
+      topics, desiredCount: desired, apiKey: ANTHROPIC_API_KEY,
+    });
+    if (result.error) return result;
+    // Wipe previous AI items so the table reflects fresh news. Manual
+    // entries are preserved.
+    await supabase.from('tax_news_articles')
+      .delete().eq('community_id', communitySlug).eq('source', 'ai');
+    const rows = result.items.map(item => newsRowFromItem({ communityId: communitySlug, item }));
+    if (rows.length) {
+      const { error } = await supabase.from('tax_news_articles').insert(rows);
+      if (error) return { error: 'insert_failed', message: error.message };
+    }
+    await supabase.from('communities')
+      .update({ tax_news_last_refreshed_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    try {
+      await auditLog({
+        entity: 'tax.community.news', entityId: communitySlug,
+        action: 'refresh_ai', actorEmail: 'manual',
+        after: { inserted: rows.length, topics },
+      });
+    } catch (_e) {}
+    return { ok: true, inserted: rows.length };
+  }
+
+  // Per-community settings PUTs.
+  router.put('/admin/community-settings/news-topics', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const topicsRaw = Array.isArray(req.body?.topics) ? req.body.topics : [];
+    const topics = topicsRaw.map(t => String(t || '').trim()).filter(Boolean).slice(0, 10);
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_topics: topics, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, topics });
+  });
+
+  router.put('/admin/community-settings/news-display-limit', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.limit);
+    const limit = Math.max(1, Math.min(20, Math.round(Number.isFinite(raw) ? raw : 5)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_display_limit: limit, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, limit });
+  });
+
+  router.put('/admin/community-settings/news-auto-refresh', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const enabled = req.body?.enabled !== false;
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_auto_refresh: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, enabled });
+  });
+
+  // Signed upload URL for a news-article video. Owner-only. Returns a
+  // path + signed URL the browser PUTs the file to directly. Caller
+  // stores the returned `path` in tax_news_articles.video_storage_path
+  // and reads the public URL via supabase.storage.from(...).getPublicUrl
+  // on the client. The bucket `tax-videos` must exist with public read.
+  router.post('/admin/news/video-upload-url', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const filename = trim(req.body?.filename || 'video.mp4', 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    // Sanitize filename to a safe slug; preserve extension.
+    const dot = filename.lastIndexOf('.');
+    const ext = dot >= 0 ? filename.slice(dot).toLowerCase().replace(/[^a-z0-9.]+/g, '') : '';
+    const safeExt = /^\.(mp4|mov|webm|m4v|ogv)$/.test(ext) ? ext : '.mp4';
+    const path = `${communitySlug}/${Date.now()}-${uuidv4().slice(0, 8)}${safeExt}`;
+    const { data: signed, error } = await supabase.storage
+      .from(NEWS_VIDEOS_BUCKET).createSignedUploadUrl(path);
+    if (error) {
+      warn('[tax-news] createSignedUploadUrl failed', error.message);
+      return res.status(500).json({ error: 'storage_failed', message: error.message });
+    }
+    // Public URL caller can stash on the article row for the public site.
+    const { data: pub } = supabase.storage.from(NEWS_VIDEOS_BUCKET).getPublicUrl(path);
+    res.json({
+      path,
+      signedUrl: signed.signedUrl,
+      token: signed.token,
+      publicUrl: pub?.publicUrl || '',
+      bucket: NEWS_VIDEOS_BUCKET,
+    });
+  });
+
+  // Expose the helper so the cron in server/index.js can call it.
+  router.refreshAllNews = async function refreshAllNews() {
+    if (!ANTHROPIC_API_KEY) return { skipped: 'no_api_key', refreshed: 0 };
+    const { data: rows } = await supabase.from('communities')
+      .select('id, tax_news_auto_refresh, tax_news_topics')
+      .eq('business_type', TAX_BUSINESS_TYPE);
+    let refreshed = 0;
+    for (const c of (rows || [])) {
+      if (c.tax_news_auto_refresh === false) continue;
+      if (!Array.isArray(c.tax_news_topics) || c.tax_news_topics.length === 0) continue;
+      try {
+        const r = await refreshNewsForCommunity(c.id);
+        if (r.ok) refreshed++;
+        else warn('[tax-news-cron]', c.id, r.error || r.message);
+      } catch (e) { warn('[tax-news-cron] threw', c.id, e?.message || e); }
+    }
+    return { ok: true, refreshed };
+  };
 
   // ── Phase 4n.24: e-signature requests ──────────────────────────────────
   //

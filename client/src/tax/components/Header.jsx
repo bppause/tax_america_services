@@ -133,6 +133,7 @@ function buildNavLinks(sections, t, overrides = {}) {
   ];
   if (has('team')) out.push({ href: '#team', label: t('nav.team') });
   if (has('reviews')) out.push({ href: '#testimonials', label: t('nav.reviews') });
+  if (has('news')) out.push({ href: '#news', label: t('nav.news') });
   if (has('faqs')) out.push({ href: '#faqs', label: t('nav.faqs') });
   if (overrides.calendarHref) out.push({ href: overrides.calendarHref, label: t('nav.calendar') });
   out.push({ href: '#about', label: t('nav.about') });
