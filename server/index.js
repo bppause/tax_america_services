@@ -39,6 +39,7 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const EMAIL_FROM = process.env.EMAIL_FROM || process.env.FROM_EMAIL || 'Tax America Services <onboarding@resend.dev>';
 const EMAIL_PROVIDER = (process.env.EMAIL_PROVIDER || 'resend').toLowerCase();
 const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || '';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
 const resend = (EMAIL_PROVIDER === 'resend' && RESEND_API_KEY) ? new Resend(RESEND_API_KEY) : null;
 const emailConfigured = Boolean(resend && EMAIL_FROM);
@@ -188,6 +189,7 @@ const taxRouter = taxModule.createRouter({
   publicAppUrl: () => publicAppUrl(),
   emailFrom: EMAIL_FROM,
   googlePlacesApiKey: GOOGLE_PLACES_API_KEY,
+  anthropicApiKey: ANTHROPIC_API_KEY,
   isGlobalAdmin,
   isEnvGlobalAdminEmail,
   runReminderCron: taxRemindersCron.run,
