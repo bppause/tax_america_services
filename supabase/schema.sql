@@ -2905,3 +2905,100 @@ create table if not exists public.tax_saved_searches (
 create index if not exists idx_tax_saved_searches_owner
   on public.tax_saved_searches(employee_id, scope, display_order);
 alter table public.tax_saved_searches disable row level security;
+
+-- Tax calendar deadlines (Phase 4n.59).
+--
+-- Powers the public /tax/<slug>/calendar page. Each row is one
+-- recurring or one-time deadline ('annual' with month+day, or
+-- 'one_time' with a fixed date). entity_types narrows the audience
+-- (individual / business / both), jurisdiction labels the source
+-- (federal / state name / custom). The owner can edit/extend the list
+-- per community; the seed below carries the common federal calendar
+-- so a fresh practice has something live from day one.
+create table if not exists public.tax_calendar_deadlines (
+  id            text primary key,
+  community_id  text not null references public.communities(id) on delete cascade,
+  slug          text not null,
+  title_i18n    jsonb not null default '{}'::jsonb,
+  description_i18n jsonb not null default '{}'::jsonb,
+  recurrence    text not null check (recurrence in ('annual','one_time')),
+  month         smallint,
+  day           smallint,
+  date          date,
+  entity_types  text[] not null default '{}',
+  jurisdiction  text not null default 'federal',
+  product_slug  text,
+  display_order int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  unique (community_id, slug)
+);
+create index if not exists idx_tax_deadlines_community
+  on public.tax_calendar_deadlines(community_id, active, display_order);
+alter table public.tax_calendar_deadlines disable row level security;
+
+insert into public.tax_calendar_deadlines
+  (id, community_id, slug, title_i18n, description_i18n, recurrence, month, day, entity_types, jurisdiction, product_slug, display_order)
+values
+  ('tax-america-services:q4-estimated-tax', 'tax-america-services', 'q4-estimated-tax',
+    '{"en":"Q4 estimated tax payment","es":"Pago de impuesto estimado del 4T"}'::jsonb,
+    '{"en":"Final quarterly estimated tax payment for the prior tax year.","es":"Pago final del impuesto estimado trimestral del año fiscal anterior."}'::jsonb,
+    'annual', 1, 15, '{"individual","business"}', 'federal', null, 10),
+  ('tax-america-services:w2-1099-recipient', 'tax-america-services', 'w2-1099-recipient',
+    '{"en":"W-2 and 1099-NEC to recipients","es":"W-2 y 1099-NEC a los destinatarios"}'::jsonb,
+    '{"en":"Employers and payers must furnish W-2s to employees and 1099-NECs to non-employee contractors.","es":"Los empleadores y pagadores deben entregar los W-2 a empleados y los 1099-NEC a contratistas."}'::jsonb,
+    'annual', 1, 31, '{"business"}', 'federal', 'payroll', 20),
+  ('tax-america-services:1099-irs-paper', 'tax-america-services', '1099-irs-paper',
+    '{"en":"Paper-filed 1099s to the IRS","es":"1099 en papel ante el IRS"}'::jsonb,
+    '{"en":"Information returns (1099-MISC, etc.) filed on paper.","es":"Declaraciones informativas (1099-MISC, etc.) presentadas en papel."}'::jsonb,
+    'annual', 2, 28, '{"business"}', 'federal', null, 30),
+  ('tax-america-services:s-corp-partnership', 'tax-america-services', 's-corp-partnership',
+    '{"en":"S-Corp (1120-S) and Partnership (1065) returns","es":"Declaraciones S-Corp (1120-S) y de Sociedades (1065)"}'::jsonb,
+    '{"en":"File the return or request a six-month extension on Form 7004.","es":"Presentar la declaración o solicitar una extensión de seis meses con el Formulario 7004."}'::jsonb,
+    'annual', 3, 15, '{"business"}', 'federal', 'business-tax', 40),
+  ('tax-america-services:1099-irs-efile', 'tax-america-services', '1099-irs-efile',
+    '{"en":"E-filed 1099s to the IRS","es":"1099 electrónicos ante el IRS"}'::jsonb,
+    '{"en":"Information returns (1099-MISC, etc.) filed electronically.","es":"Declaraciones informativas (1099-MISC, etc.) presentadas electrónicamente."}'::jsonb,
+    'annual', 3, 31, '{"business"}', 'federal', null, 50),
+  ('tax-america-services:individual-1040', 'tax-america-services', 'individual-1040',
+    '{"en":"Individual income tax (1040)","es":"Impuesto sobre la renta personal (1040)"}'::jsonb,
+    '{"en":"File the return or request a six-month extension on Form 4868.","es":"Presentar la declaración o solicitar una extensión de seis meses con el Formulario 4868."}'::jsonb,
+    'annual', 4, 15, '{"individual"}', 'federal', 'individual-tax', 60),
+  ('tax-america-services:c-corp-1120', 'tax-america-services', 'c-corp-1120',
+    '{"en":"C-Corp (1120) return","es":"Declaración C-Corp (1120)"}'::jsonb,
+    '{"en":"File the return or request a six-month extension on Form 7004.","es":"Presentar la declaración o solicitar una extensión de seis meses con el Formulario 7004."}'::jsonb,
+    'annual', 4, 15, '{"business"}', 'federal', 'business-tax', 70),
+  ('tax-america-services:q1-estimated-tax', 'tax-america-services', 'q1-estimated-tax',
+    '{"en":"Q1 estimated tax payment","es":"Pago de impuesto estimado del 1T"}'::jsonb,
+    '{"en":"First quarterly estimated tax payment for the current year.","es":"Primer pago trimestral de impuesto estimado del año en curso."}'::jsonb,
+    'annual', 4, 15, '{"individual","business"}', 'federal', null, 80),
+  ('tax-america-services:nonprofit-990', 'tax-america-services', 'nonprofit-990',
+    '{"en":"Nonprofit (990 series)","es":"Sin fines de lucro (serie 990)"}'::jsonb,
+    '{"en":"Annual information return for tax-exempt organizations.","es":"Declaración informativa anual para organizaciones exentas de impuestos."}'::jsonb,
+    'annual', 5, 15, '{"business"}', 'federal', null, 90),
+  ('tax-america-services:q2-estimated-tax', 'tax-america-services', 'q2-estimated-tax',
+    '{"en":"Q2 estimated tax payment","es":"Pago de impuesto estimado del 2T"}'::jsonb,
+    '{"en":"Second quarterly estimated tax payment.","es":"Segundo pago trimestral de impuesto estimado."}'::jsonb,
+    'annual', 6, 15, '{"individual","business"}', 'federal', null, 100),
+  ('tax-america-services:q3-estimated-tax', 'tax-america-services', 'q3-estimated-tax',
+    '{"en":"Q3 estimated tax payment","es":"Pago de impuesto estimado del 3T"}'::jsonb,
+    '{"en":"Third quarterly estimated tax payment.","es":"Tercer pago trimestral de impuesto estimado."}'::jsonb,
+    'annual', 9, 15, '{"individual","business"}', 'federal', null, 110),
+  ('tax-america-services:s-corp-partnership-extended', 'tax-america-services', 's-corp-partnership-extended',
+    '{"en":"Extended S-Corp and Partnership returns","es":"Declaraciones extendidas S-Corp y de Sociedades"}'::jsonb,
+    '{"en":"Final deadline for entities that filed Form 7004 in March.","es":"Plazo final para entidades que presentaron Formulario 7004 en marzo."}'::jsonb,
+    'annual', 9, 15, '{"business"}', 'federal', 'business-tax', 120),
+  ('tax-america-services:individual-1040-extended', 'tax-america-services', 'individual-1040-extended',
+    '{"en":"Extended individual return (1040)","es":"Declaración individual extendida (1040)"}'::jsonb,
+    '{"en":"Final deadline for individuals who filed Form 4868 in April.","es":"Plazo final para personas que presentaron Formulario 4868 en abril."}'::jsonb,
+    'annual', 10, 15, '{"individual"}', 'federal', 'individual-tax', 130),
+  ('tax-america-services:c-corp-1120-extended', 'tax-america-services', 'c-corp-1120-extended',
+    '{"en":"Extended C-Corp return (1120)","es":"Declaración C-Corp extendida (1120)"}'::jsonb,
+    '{"en":"Final deadline for C-Corps that filed Form 7004 in April.","es":"Plazo final para C-Corps que presentaron Formulario 7004 en abril."}'::jsonb,
+    'annual', 10, 15, '{"business"}', 'federal', 'business-tax', 140),
+  ('tax-america-services:fbar-fincen', 'tax-america-services', 'fbar-fincen',
+    '{"en":"FBAR / FinCEN 114","es":"FBAR / FinCEN 114"}'::jsonb,
+    '{"en":"Foreign Bank Account Report due (automatic extension to October 15).","es":"Reporte de cuentas bancarias en el extranjero (extensión automática al 15 de octubre)."}'::jsonb,
+    'annual', 4, 15, '{"individual","business"}', 'federal', null, 65)
+on conflict (id) do nothing;

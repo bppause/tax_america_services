@@ -81,6 +81,7 @@ export const taxApi = {
   getCommunity(slug)              { return request('GET',  `/community/${encodeURIComponent(slug)}`); },
   getCommunityFaqs(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/faqs`); },
   getCommunityArticles(slug)      { return request('GET',  `/community/${encodeURIComponent(slug)}/articles`); },
+  getCommunityDeadlines(slug)     { return request('GET',  `/community/${encodeURIComponent(slug)}/deadlines`); },
   getCommunityTeam(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/team`); },
   submitLead(payload)             { return request('POST', '/leads', payload); },
   getResponse(token)              { return request('GET',  `/respond/${encodeURIComponent(token)}`); },
