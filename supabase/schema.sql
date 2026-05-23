@@ -2853,3 +2853,30 @@ create index if not exists idx_tax_time_employee on public.tax_task_time_entries
 create unique index if not exists idx_tax_time_running_one_per_employee
   on public.tax_task_time_entries(employee_id) where ended_at is null;
 alter table public.tax_task_time_entries disable row level security;
+
+-- Task dependencies + review queue (Phase 4n.56).
+--
+-- blocked_by_task_id: when set, the PATCH endpoint refuses to flip
+-- this task into a terminal status until the blocker is completed.
+-- Self-FK with on-delete-set-null so deleting the blocker doesn't
+-- cascade-delete the dependent.
+--
+-- requires_review + reviewer_employee_id: when true, completing the
+-- task lands it in pending-review state instead of done. The
+-- designated reviewer (or any admin) calls POST /admin/tasks/:id/review
+-- with approve/reject to either complete the task or kick it back to
+-- the preparer with a note. Partial index makes the "what's waiting
+-- on my review" query cheap.
+alter table public.tax_tasks
+  add column if not exists blocked_by_task_id       text references public.tax_tasks(id)     on delete set null,
+  add column if not exists requires_review          boolean not null default false,
+  add column if not exists reviewer_employee_id     text references public.tax_employees(id) on delete set null,
+  add column if not exists pending_review_at        timestamptz,
+  add column if not exists reviewed_at              timestamptz,
+  add column if not exists reviewed_by_employee_id  text references public.tax_employees(id) on delete set null,
+  add column if not exists review_note              text not null default '';
+create index if not exists idx_tax_tasks_blocked_by
+  on public.tax_tasks(blocked_by_task_id);
+create index if not exists idx_tax_tasks_pending_review
+  on public.tax_tasks(community_id, reviewer_employee_id)
+  where pending_review_at is not null and reviewed_at is null;

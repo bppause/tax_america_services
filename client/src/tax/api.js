@@ -246,6 +246,10 @@ export const taxApi = {
   adminDeleteTimeEntry(auth, entryId)                { return request('DELETE', `/admin/time-entries/${encodeURIComponent(entryId)}`, undefined, auth); },
   getMyRunningTimer(auth)                            { return request('GET',    '/admin/employees/me/running-timer', undefined, auth); },
 
+  // Phase 4n.56: task review queue.
+  adminReviewTask(auth, taskId, payload)             { return request('POST', `/admin/tasks/${encodeURIComponent(taskId)}/review`, payload, auth); },
+  adminListAwaitingReview(auth)                      { return request('GET',  '/admin/tasks/awaiting-review', undefined, auth); },
+
   // Phase 4n.24: signature requests
   adminListSignatureRequests(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, undefined, auth, { admin: true }); },
   adminCreateSignatureRequest(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, payload, auth, { admin: true }); },

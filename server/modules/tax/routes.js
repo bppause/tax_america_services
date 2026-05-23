@@ -5902,11 +5902,14 @@ module.exports = function createTaxRouter(deps) {
         id, community_id, customer_id, product_id, title, status_key, priority,
         assigned_employee_id, created_by_employee_id, service_auto_task_id,
         due_date, notes, completed_at, created_at, updated_at,
+        blocked_by_task_id, requires_review, reviewer_employee_id,
+        pending_review_at, reviewed_at, reviewed_by_employee_id, review_note,
         customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, address ),
         product:tax_products ( id, slug, name_i18n, category ),
         auto_task:tax_service_auto_tasks ( id, title_i18n, cadence_kind, anchor_rule ),
         assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email ),
-        creator:tax_employees!tax_tasks_created_by_employee_id_fkey ( id, name, email )
+        creator:tax_employees!tax_tasks_created_by_employee_id_fkey ( id, name, email ),
+        reviewer:tax_employees!tax_tasks_reviewer_employee_id_fkey ( id, name, email )
       `)
       .eq('community_id', communitySlug)
       .is('archived_at', null);
@@ -6240,7 +6243,7 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes')
+      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -6265,12 +6268,25 @@ module.exports = function createTaxRouter(deps) {
     if (body.productId !== undefined)          update.product_id = trim(body.productId || '', 200) || null;
     if (body.dueDate !== undefined)            update.due_date = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     if (body.notes !== undefined)              update.notes = trim(body.notes || '', MAX_TEXT_LEN);
+    // Phase 4n.56: dependencies + review queue.
+    if (body.blockedByTaskId !== undefined) {
+      const v = trim(body.blockedByTaskId || '', 200);
+      if (v === taskId) return res.status(400).json({ error: 'A task cannot block itself.' });
+      update.blocked_by_task_id = v || null;
+    }
+    if (body.requiresReview !== undefined) update.requires_review = !!body.requiresReview;
+    if (body.reviewerEmployeeId !== undefined) {
+      update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
+    }
 
-    // Auto-stamp completed_at when moving into a terminal status. We
-    // also require non-empty notes on completion so the practice's
-    // history has a record of what was actually done — the row's
-    // existing notes count if the client didn't send new ones in the
-    // same patch.
+    // Auto-stamp completed_at when moving into a terminal status. Two
+    // gates run first:
+    //   1) Blocker must be completed — refusing the transition surfaces
+    //      a clear "Finish X before completing this" error.
+    //   2) When requires_review is on, hold the task in pending-review
+    //      state instead of completing. The status_key still moves
+    //      (so the board reflects the preparer's call), but completed_at
+    //      stays null until the reviewer approves via /admin/tasks/:id/review.
     if (update.status_key && update.status_key !== cur.status_key) {
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
@@ -6284,9 +6300,33 @@ module.exports = function createTaxRouter(deps) {
             message: 'Add a note describing what was done before completing this task.',
           });
         }
-        update.completed_at = new Date().toISOString();
+        if (cur.blocked_by_task_id) {
+          const { data: blocker } = await supabase.from('tax_tasks')
+            .select('id, title, completed_at').eq('id', cur.blocked_by_task_id).maybeSingle();
+          if (blocker && !blocker.completed_at) {
+            return res.status(400).json({
+              error: 'task_blocked',
+              message: `Complete "${blocker.title}" first — this task depends on it.`,
+              blockerId: blocker.id,
+            });
+          }
+        }
+        const stillRequiresReview = (update.requires_review !== undefined
+          ? update.requires_review : cur.requires_review)
+          && !cur.reviewed_at;
+        if (stillRequiresReview) {
+          update.pending_review_at = new Date().toISOString();
+          // completed_at stays null until the reviewer approves.
+        } else {
+          update.completed_at = new Date().toISOString();
+        }
       } else {
         update.completed_at = null;
+        // Re-opening a previously pending task clears the in-flight
+        // review state — reviewer has to re-approve once it's done again.
+        if (cur.pending_review_at && !cur.reviewed_at) {
+          update.pending_review_at = null;
+        }
       }
     }
 
@@ -6310,6 +6350,81 @@ module.exports = function createTaxRouter(deps) {
       });
     }
     res.json({ ok: true });
+  });
+
+  // POST /admin/tasks/:id/review
+  // Body: { decision: 'approve'|'reject', note?: string }
+  // The designated reviewer (or any admin) signs off on a task sitting
+  // in pending-review state. Approve completes the task; reject clears
+  // pending_review_at + stores the rejection note so the preparer can
+  // pick it back up.
+  router.post('/admin/tasks/:id/review', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const decision = trim(req.body?.decision, 40);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ error: 'decision must be approve or reject.' });
+    }
+    const { data: cur } = await supabase.from('tax_tasks')
+      .select('id, community_id, reviewer_employee_id, pending_review_at, reviewed_at, status_key, notes')
+      .eq('id', taskId).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Task not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    // Reviewer or admin can sign off. Staff who happen to be assigned
+    // to the task but aren't the designated reviewer can't approve
+    // their own work — separation of duties is the point of the queue.
+    const isReviewer = cur.reviewer_employee_id && cur.reviewer_employee_id === emp.id;
+    if (emp.role !== 'admin' && !isReviewer) {
+      return res.status(403).json({ error: 'Only the designated reviewer (or an admin) can review this task.' });
+    }
+    if (!cur.pending_review_at || cur.reviewed_at) {
+      return res.status(409).json({ error: 'This task is not awaiting review.' });
+    }
+    const nowIso = new Date().toISOString();
+    const update = { updated_at: nowIso, review_note: note };
+    if (decision === 'approve') {
+      update.reviewed_at = nowIso;
+      update.reviewed_by_employee_id = emp.id;
+      update.completed_at = nowIso;
+    } else {
+      update.pending_review_at = null; // back to in-flight; preparer fixes and re-completes
+    }
+    const { error } = await supabase.from('tax_tasks').update(update).eq('id', taskId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.task', entityId: taskId, action: `review_${decision}`,
+        actorEmail: emp.email || '', actorName: emp.name || '',
+        after: { note: note ? note.slice(0, 200) : '' },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, decision });
+  });
+
+  // GET /admin/tasks/awaiting-review
+  // Today-dashboard widget data: tasks where the caller is the
+  // reviewer and pending_review_at is set but reviewed_at isn't.
+  // Admins see every task awaiting review in their community.
+  router.get('/admin/tasks/awaiting-review', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    let q = supabase.from('tax_tasks')
+      .select(`
+        id, title, due_date, priority, status_key, customer_id, product_id, pending_review_at,
+        customer:tax_customers ( id, name, business_name, first_name, last_name, email ),
+        product:tax_products ( id, slug, name_i18n ),
+        assigned_employee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, first_name, last_name, email )
+      `)
+      .eq('community_id', emp.community_id)
+      .not('pending_review_at', 'is', null)
+      .is('reviewed_at', null)
+      .is('archived_at', null)
+      .order('pending_review_at', { ascending: true })
+      .limit(50);
+    if (emp.role !== 'admin') q = q.eq('reviewer_employee_id', emp.id);
+    const { data, error } = await q;
+    if (error) return sendSupabaseError(res, error);
+    res.json({ tasks: data || [] });
   });
 
   // PATCH /admin/tasks/bulk — apply the same patch to many tasks.
