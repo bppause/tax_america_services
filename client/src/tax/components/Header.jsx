@@ -116,21 +116,27 @@ export default function Header({ community, sections }) {
 }
 
 // Resolve the visible nav links. Always includes Services / About / Contact;
-// Team and FAQs surface only when the parent reports the matching section
-// is rendering. Schedule is special — it's a popup trigger (not an anchor)
-// supplied by the caller when Calendly is configured. Calendar is an
+// Team / Reviews / FAQs surface only when the parent reports the matching
+// section is rendering. Schedule is special — it's a popup trigger (not an
+// anchor) supplied by the caller when Calendly is configured. Calendar is an
 // absolute link to the standalone deadline page (not an in-page anchor)
 // and only renders when the caller knows the community slug.
+//
+// Order follows a typical landing-page flow: what we do → who we are →
+// social proof → answers → reference → background → CTAs. Reviews sits
+// after Team so visitors see "real people work here" → "real customers
+// vouch for them" before they hit FAQs.
 function buildNavLinks(sections, t, overrides = {}) {
   const has = (k) => !sections || sections[k] !== false;
   const out = [
     { href: '#services', label: t('nav.services') },
   ];
   if (has('team')) out.push({ href: '#team', label: t('nav.team') });
-  if (overrides.schedule) out.push(overrides.schedule);
+  if (has('reviews')) out.push({ href: '#testimonials', label: t('nav.reviews') });
   if (has('faqs')) out.push({ href: '#faqs', label: t('nav.faqs') });
   if (overrides.calendarHref) out.push({ href: overrides.calendarHref, label: t('nav.calendar') });
   out.push({ href: '#about', label: t('nav.about') });
+  if (overrides.schedule) out.push(overrides.schedule);
   out.push({ href: '#contact', label: t('nav.contact') });
   return out;
 }
