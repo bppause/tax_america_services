@@ -7230,19 +7230,24 @@ module.exports = function createTaxRouter(deps) {
     return /^[A-Za-z][A-Za-z0-9_-]{20,}$/.test(s) && !s.startsWith('http');
   }
 
+  // Resolve a free-text query (typically the establishment name from a
+  // /maps/place/<name>/ URL) into a place_id using Places API (New)
+  // Text Search. The legacy findplacefromtext endpoint is deprecated;
+  // new Google Cloud projects only have the v1 endpoint enabled.
   async function findPlaceByText(name) {
     if (!GOOGLE_PLACES_API_KEY) return null;
-    const url = new URL('https://maps.googleapis.com/maps/api/place/findplacefromtext/json');
-    url.searchParams.set('input', name);
-    url.searchParams.set('inputtype', 'textquery');
-    url.searchParams.set('fields', 'place_id,name');
-    url.searchParams.set('key', GOOGLE_PLACES_API_KEY);
     try {
-      const resp = await fetch(url.toString());
+      const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+          'X-Goog-FieldMask': 'places.id,places.displayName',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ textQuery: name, pageSize: 1 }),
+      });
       const data = await resp.json();
-      if (data.status === 'OK' && data.candidates && data.candidates[0]?.place_id) {
-        return data.candidates[0].place_id;
-      }
+      if (data.places && data.places[0]?.id) return data.places[0].id;
     } catch (_e) { /* fall through to null */ }
     return null;
   }
@@ -7398,39 +7403,50 @@ module.exports = function createTaxRouter(deps) {
         .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
     }
 
-    const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
-    url.searchParams.set('place_id', placeId);
-    url.searchParams.set('fields', 'reviews,rating,user_ratings_total,name');
-    url.searchParams.set('key', GOOGLE_PLACES_API_KEY);
-    url.searchParams.set('language', community.default_locale === 'en' ? 'en' : 'es');
-
+    // Places API (New). Different surface from the legacy
+    // `place/details/json` endpoint: place_id goes in the path,
+    // the API key is a header, fields are an X-Goog-FieldMask, and
+    // the response uses camelCase + nested text objects.
     let payload;
     try {
-      const resp = await fetch(url.toString());
+      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+        headers: {
+          'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+          'X-Goog-FieldMask': 'displayName,rating,userRatingCount,reviews',
+          'Accept-Language': community.default_locale === 'en' ? 'en' : 'es',
+        },
+      });
       payload = await resp.json();
+      // Non-2xx surfaces as { error: { code, message, status } }.
+      if (payload.error) {
+        return { error: 'google_api_status',
+          message: `Google Places API: ${payload.error.status || payload.error.code} — ${payload.error.message || ''}` };
+      }
     } catch (e) {
       return { error: 'google_fetch_failed',
         message: `Could not reach Google Places API: ${e?.message || e}` };
     }
-    if (payload.status !== 'OK') {
-      return { error: 'google_api_status',
-        message: `Google Places API returned status: ${payload.status}${payload.error_message ? ' — ' + payload.error_message : ''}` };
-    }
-    const reviews = Array.isArray(payload.result?.reviews) ? payload.result.reviews : [];
+    const reviews = Array.isArray(payload.reviews) ? payload.reviews : [];
     let upserted = 0;
     const locale = community.default_locale === 'en' ? 'en' : 'es';
     for (const r of reviews) {
-      const author = String(r.author_name || '').slice(0, 200) || 'Google user';
-      const time = String(r.time || Date.now()).slice(0, 32);
-      const sourceId = `${time}-${author.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}`;
+      const author = String(r.authorAttribution?.displayName || '').slice(0, 200) || 'Google user';
+      // The new API gives each review a stable resource name
+      // (places/<id>/reviews/<id>). Prefer that over our old
+      // synthetic time+author key — re-syncs upsert cleanly even
+      // when Google re-translates the body.
+      const sourceId = String(r.name || r.publishTime || Date.now())
+        .slice(0, 200)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-');
       const row = {
         community_id: communitySlug,
         source: 'google',
         source_id: sourceId,
         author_name: author,
-        author_role: r.relative_time_description ? String(r.relative_time_description).slice(0, 200) : '',
+        author_role: r.relativePublishTimeDescription ? String(r.relativePublishTimeDescription).slice(0, 200) : '',
         rating: Math.max(1, Math.min(5, Math.round(Number(r.rating) || 5))),
-        body: String(r.text || '').slice(0, 4000),
+        body: String(r.text?.text || r.originalText?.text || '').slice(0, 4000),
         locale,
         active: true,
         updated_at: new Date().toISOString(),
@@ -7450,15 +7466,16 @@ module.exports = function createTaxRouter(deps) {
       }
       upserted++;
     }
+    const placeName = payload.displayName?.text || null;
     try {
       await auditLog({
         entity: 'tax.community.testimonials', entityId: communitySlug,
         action: 'sync_google',
         actorEmail,
-        after: { upserted, totalRating: payload.result?.rating || null, totalCount: payload.result?.user_ratings_total || null },
+        after: { upserted, totalRating: payload.rating || null, totalCount: payload.userRatingCount || null },
       });
     } catch (_e) {}
-    return { ok: true, upserted, placeName: payload.result?.name || null };
+    return { ok: true, upserted, placeName };
   }
 
   // Daily auto-sync entrypoint — invoked by the cron in server/index.js.
