@@ -141,7 +141,9 @@ export default function TaxApp() {
                 ? <PublicFaqs communitySlug={parsed.slug} />
                 : parsed.route === 'public-articles'
                   ? <PublicArticles communitySlug={parsed.slug} />
-                  : <Landing communitySlug={parsed.slug} />}
+                  : parsed.route === 'public-calendar'
+                    ? <PublicCalendar communitySlug={parsed.slug} />
+                    : <Landing communitySlug={parsed.slug} />}
     </TaxLocaleProvider>
   );
 }
@@ -257,7 +259,6 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-reminders') return <OwnerReminders />;
   if (parsed.route === 'owner-progress')  return <OwnerProgress />;
   if (parsed.route === 'owner-workload')  return <OwnerWorkload />;
-  if (parsed.route === 'public-calendar') return <PublicCalendar communitySlug={parsed.slug} />;
   if (parsed.route === 'owner-audit') return <OwnerAudit />;
   if (parsed.route === 'owner-email-templates') return <OwnerEmailTemplates />;
   if (parsed.route === 'owner-workflows') return <OwnerRelationshipWorkflows />;
