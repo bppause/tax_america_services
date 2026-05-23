@@ -1,5 +1,5 @@
 import { useT } from '../i18n';
-import LeadForm from './LeadForm';
+import LeadWizard from './LeadWizard';
 import { useCalendlyPopup } from './CalendlySection';
 import { useLandingCopy } from '../lib/landingCopy';
 
@@ -76,16 +76,16 @@ export default function Contact({ community, products, initialProductSlug }) {
                 <div className="tax-twopath__icon" aria-hidden="true">✉️</div>
                 <h3 className="tax-twopath__title">{pick('getStarted.messageHeading')}</h3>
                 <p className="tax-twopath__body">{pick('getStarted.messageBody')}</p>
-                <LeadForm community={community} products={products}
-                          initialProductSlug={initialProductSlug} />
+                <LeadWizard community={community} products={products}
+                            initialProductSlug={initialProductSlug} />
               </article>
             </div>
             <div style={{ marginTop: 32 }}>{infoCard}</div>
           </>
         ) : (
           <div className="tax-contact-layout">
-            <LeadForm community={community} products={products}
-                      initialProductSlug={initialProductSlug} />
+            <LeadWizard community={community} products={products}
+                        initialProductSlug={initialProductSlug} />
             <div>{infoCard}</div>
           </div>
         )}
