@@ -35,6 +35,7 @@ const {
 } = require('./permissions');
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
 const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
+const { generateFaqsForService, inferRelationshipCategory } = require('./faq-autogen');
 
 const TAX_BUSINESS_TYPE = 'tax';
 const MAX_TEXT_LEN = 4000;
@@ -3194,6 +3195,15 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
 
+    // Fire-and-forget: ask Claude to draft a few FAQs for the new
+    // service and stash them under an auto-created community-scoped
+    // relationship type. The "Create service" UI doesn't block on this;
+    // the owner sees the FAQs appear within ~10s and can edit/delete
+    // any of them in the FAQ admin. Silently no-ops when the API key
+    // isn't configured.
+    autogenFaqsForService({ service: row, communitySlug }).catch(e =>
+      warn('[faq-autogen] background failure', id, e?.message || e));
+
     res.json({ ok: true, id, slug: rawSlug });
   });
 
@@ -3612,6 +3622,19 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
 
+    // Hide any community-scoped relationship type that was auto-linked
+    // to this product. Its FAQs vanish from the public FAQ section
+    // without a hard delete — if the owner recreates the service later
+    // they can flip active back on via the relationship-types admin.
+    // Manual relationship types (community_id IS NULL, the seeded ones)
+    // are never touched.
+    try {
+      await supabase.from('tax_relationship_types')
+        .update({ active: false })
+        .eq('product_id', productId)
+        .not('community_id', 'is', null);
+    } catch (e) { warn('[faq-autogen] deactivate types failed', productId, e?.message || e); }
+
     res.json({
       ok: true,
       cascaded: {
@@ -3620,6 +3643,115 @@ module.exports = function createTaxRouter(deps) {
       },
     });
   });
+
+  // Manual re-fire of the LLM FAQ generator for a single product.
+  // Useful when the auto-generated set on create wasn't great, or when
+  // the owner edits the service description and wants matching FAQs.
+  router.post('/admin/products/:id/regenerate-faqs', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    if (!productId) return res.status(400).json({ error: 'id required.' });
+    const { data: prod } = await supabase.from('tax_products')
+      .select('id, community_id, slug, category, name_i18n, description_i18n, long_description_i18n')
+      .eq('id', productId).maybeSingle();
+    if (!prod) return res.status(404).json({ error: 'Product not found.' });
+    const result = await autogenFaqsForService({
+      service: prod, communitySlug: prod.community_id, replaceExisting: true,
+    });
+    if (result.error) {
+      const status = result.error === 'no_api_key' ? 400 : 502;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Auto-FAQ helper. Called fire-and-forget from product create and
+  // synchronously from the manual regenerate endpoint.
+  //
+  // Flow:
+  //   1. Find or create a community-scoped tax_relationship_types row
+  //      linked to this product (so the public FAQ section can render
+  //      the FAQs grouped under the service's name).
+  //   2. Ask Claude for N bilingual FAQs based on the service's own
+  //      name + descriptions (no web_search — these are evergreen).
+  //   3. Insert as community-scoped custom FAQs against that type. When
+  //      replaceExisting=true (manual regenerate path), the old custom
+  //      FAQs for this type are wiped first; otherwise we append.
+  async function autogenFaqsForService({ service, communitySlug, replaceExisting = false } = {}) {
+    if (!ANTHROPIC_API_KEY) {
+      return { error: 'no_api_key', message: 'ANTHROPIC_API_KEY is not configured.' };
+    }
+    if (!service || !communitySlug) {
+      return { error: 'invalid_args', message: 'service + communitySlug required.' };
+    }
+    // 1. Find an existing community-scoped type linked to this product.
+    //    If none, create one. We reactivate inactive ones (covers the
+    //    "service deleted then recreated" path).
+    let relTypeId = null;
+    {
+      const { data: existing } = await supabase.from('tax_relationship_types')
+        .select('id').eq('product_id', service.id)
+        .eq('community_id', communitySlug).limit(1);
+      if (existing && existing[0]) {
+        relTypeId = existing[0].id;
+        await supabase.from('tax_relationship_types')
+          .update({ active: true }).eq('id', relTypeId);
+      }
+    }
+    if (!relTypeId) {
+      const slug = `auto-${String(service.slug || '').replace(/[^a-z0-9-]+/g, '-').slice(0, 60) || uuidv4().slice(0, 8)}`;
+      relTypeId = `${communitySlug}:${slug}`;
+      const { error: tErr } = await supabase.from('tax_relationship_types').insert({
+        id: relTypeId,
+        community_id: communitySlug,
+        category: inferRelationshipCategory(service),
+        slug,
+        name_i18n: service.name_i18n || {},
+        description_i18n: service.description_i18n || {},
+        display_order: 1000,
+        active: true,
+        product_id: service.id,
+      });
+      if (tErr) return { error: 'rel_type_insert_failed', message: tErr.message };
+    }
+
+    // 2. LLM.
+    const llm = await generateFaqsForService({ service, apiKey: ANTHROPIC_API_KEY });
+    if (llm.error) return llm;
+
+    // 3. Wipe + insert.
+    if (replaceExisting) {
+      // Only custom community FAQs for this type (default_faq_id IS NULL).
+      await supabase.from('tax_relationship_faqs')
+        .delete()
+        .eq('community_id', communitySlug)
+        .eq('relationship_type_id', relTypeId)
+        .is('default_faq_id', null);
+    }
+    const rows = llm.faqs.map((f, idx) => ({
+      id: 'tfaq_' + uuidv4().slice(0, 12),
+      community_id: communitySlug,
+      relationship_type_id: relTypeId,
+      default_faq_id: null,
+      display_order: (idx + 1) * 10,
+      question_i18n: { en: f.question_en, es: f.question_es || f.question_en },
+      answer_i18n: { en: f.answer_en, es: f.answer_es || f.answer_en },
+      visible: true,
+    }));
+    if (rows.length) {
+      const { error: iErr } = await supabase.from('tax_relationship_faqs').insert(rows);
+      if (iErr) return { error: 'faq_insert_failed', message: iErr.message };
+    }
+    try {
+      await auditLog({
+        entity: 'tax.product', entityId: service.id,
+        action: replaceExisting ? 'faqs_regenerate' : 'faqs_autogen',
+        actorEmail: 'system',
+        after: { inserted: rows.length, relationship_type_id: relTypeId, replaceExisting },
+      });
+    } catch (_e) {}
+    return { ok: true, inserted: rows.length, relationshipTypeId: relTypeId };
+  }
 
   // POST /admin/customers/:id/subscriptions — body { productId,
   // activeScheduleSlugs?, status?, startDate? }. Defaults: status='active',

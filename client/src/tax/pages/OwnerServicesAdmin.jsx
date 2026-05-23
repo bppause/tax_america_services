@@ -607,7 +607,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
                 onClick={onSave} disabled={busy}>
           {busy ? t('lead.submitting') : t('owner.services.save')}
@@ -616,8 +616,42 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
                 onClick={onCancel} style={{ color: 'var(--tax-text)' }}>
           {t('owner.services.cancel')}
         </button>
+        {p.id && <RegenerateFaqsButton productId={p.id} auth={auth} t={t} />}
       </div>
     </div>
+  );
+}
+
+// Owner-triggered "redo my FAQs" button. Hidden until the service is
+// saved (no id yet) so it can't fire on an unsaved draft. Surfaces
+// counts + errors inline so the owner doesn't have to flip tabs.
+function RegenerateFaqsButton({ productId, auth, t }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+  const onClick = async () => {
+    if (!window.confirm(t('owner.services.regenFaqs.confirm'))) return;
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const r = await taxApi.adminRegenerateProductFaqs(auth, productId);
+      setMsg({ kind: 'success',
+        text: t('owner.services.regenFaqs.done', { n: r.inserted || 0 }) });
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' });
+    }
+    finally { setBusy(false); }
+  };
+  return (
+    <>
+      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+              onClick={onClick} disabled={busy}
+              title={t('owner.services.regenFaqs.hint')}>
+        {busy ? t('owner.services.regenFaqs.busy') : `✨ ${t('owner.services.regenFaqs.button')}`}
+      </button>
+      {msg.text && (
+        <span className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+              style={{ padding: '4px 8px', fontSize: 12 }}>{msg.text}</span>
+      )}
+    </>
   );
 }
 
