@@ -153,6 +153,8 @@
   "owner.settings.googleReviews.saved": "Place ID guardado.",
   "owner.settings.googleReviews.synced": "Sincronizadas {n} reseña(s) de Google.",
   "owner.settings.googleReviews.apiKeyMissing": "Falta API key",
+  "owner.settings.googleReviews.pending": "Pendiente de resolver",
+  "owner.settings.googleReviews.pendingHint": "Guardado como URL de Maps — Sincronizar lo resolverá a un Place ID limpio cuando la API key esté configurada.",
   "owner.settings.testimonials.title": "Reseñas y testimonios",
   "owner.settings.testimonials.subtitle": "Citas de clientes mostradas en la página pública. Agrega entradas nuevas, edítalas o oculta una temporalmente desactivándola.",
   "owner.settings.testimonials.empty": "Aún no hay reseñas. Agrega una para que la sección aparezca en el sitio público.",
