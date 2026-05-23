@@ -38,6 +38,7 @@ export default function Header({ community, sections }) {
   }, [menuOpen]);
 
   const navLinks = buildNavLinks(sections, t, {
+    calendarHref: community?.id ? `/tax/${community.id}/calendar` : '',
     schedule: calendlyAvailable
       ? { label: t('nav.schedule'), onClick: openCalendly }
       : null,
@@ -117,7 +118,9 @@ export default function Header({ community, sections }) {
 // Resolve the visible nav links. Always includes Services / About / Contact;
 // Team and FAQs surface only when the parent reports the matching section
 // is rendering. Schedule is special — it's a popup trigger (not an anchor)
-// supplied by the caller when Calendly is configured.
+// supplied by the caller when Calendly is configured. Calendar is an
+// absolute link to the standalone deadline page (not an in-page anchor)
+// and only renders when the caller knows the community slug.
 function buildNavLinks(sections, t, overrides = {}) {
   const has = (k) => !sections || sections[k] !== false;
   const out = [
@@ -126,6 +129,7 @@ function buildNavLinks(sections, t, overrides = {}) {
   if (has('team')) out.push({ href: '#team', label: t('nav.team') });
   if (overrides.schedule) out.push(overrides.schedule);
   if (has('faqs')) out.push({ href: '#faqs', label: t('nav.faqs') });
+  if (overrides.calendarHref) out.push({ href: overrides.calendarHref, label: t('nav.calendar') });
   out.push({ href: '#about', label: t('nav.about') });
   out.push({ href: '#contact', label: t('nav.contact') });
   return out;
