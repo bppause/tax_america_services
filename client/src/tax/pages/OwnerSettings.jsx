@@ -1389,6 +1389,7 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
   const [placeId, setPlaceId] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+  const [debug, setDebug] = useState(null);
 
   const load = () => {
     if (!community?.id) return;
@@ -1404,6 +1405,7 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
       const r = await taxApi.adminSetGooglePlaceId(auth, {
         communitySlug: community.id, placeId: placeId.trim(),
       });
+      setDebug({ put: r, sentPlaceId: placeId.trim(), communitySlug: community.id });
       // The server returns a soft `message` when it saved the URL but
       // couldn't finish resolving (no API key yet). Surface it so the
       // owner knows the value is parked, not lost.
@@ -1412,7 +1414,10 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
         text: r?.message || t('owner.settings.googleReviews.saved'),
       });
       load();
-    } catch (e) { setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' }); }
+    } catch (e) {
+      setDebug({ putError: e?.body || e?.message || String(e), sentPlaceId: placeId.trim(), communitySlug: community.id });
+      setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' });
+    }
     finally { setBusy(false); }
   };
 
@@ -1474,6 +1479,17 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
       {msg.text && (
         <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
              style={{ marginBottom: 8 }}>{msg.text}</div>
+      )}
+
+      {(debug || state) && (
+        <pre style={{
+          marginBottom: 8, padding: 8, borderRadius: 6,
+          background: '#0f172a', color: '#e2e8f0',
+          fontSize: 11, lineHeight: 1.4, overflowX: 'auto',
+          maxHeight: 240,
+        }}>
+{JSON.stringify({ lastPut: debug, currentState: state }, null, 2)}
+        </pre>
       )}
 
       <div style={{ display: 'grid', gap: 8 }}>

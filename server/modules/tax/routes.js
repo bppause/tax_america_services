@@ -7199,11 +7199,12 @@ module.exports = function createTaxRouter(deps) {
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
-    const { data: community } = await supabase.from('communities')
-      .select('tax_google_place_id, tax_google_reviews_auto_sync').eq('id', communitySlug).maybeSingle();
+    const { data: community, error: commErr } = await supabase.from('communities')
+      .select('id, business_type, tax_google_place_id, tax_google_reviews_auto_sync').eq('id', communitySlug).maybeSingle();
     const { data: lastRow } = await supabase.from('tax_testimonials')
       .select('updated_at').eq('community_id', communitySlug).eq('source', 'google')
       .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    warn('[place-id] read', { slug: communitySlug, community, commErr: commErr?.message || null });
     const stored = community?.tax_google_place_id || '';
     res.json({
       placeId: stored,
@@ -7211,6 +7212,8 @@ module.exports = function createTaxRouter(deps) {
       hasApiKey: !!GOOGLE_PLACES_API_KEY,
       autoSyncEnabled: community?.tax_google_reviews_auto_sync !== false,
       pendingResolution: !!stored && !looksLikeRawPlaceId(stored),
+      row: community || null,
+      commErr: commErr?.message || null,
     });
   });
 
@@ -7318,14 +7321,17 @@ module.exports = function createTaxRouter(deps) {
     // Empty input clears the saved value so the owner can disconnect
     // the sync without deleting the row.
     if (!raw) {
-      const { error } = await supabase.from('communities')
+      const { data, error } = await supabase.from('communities')
         .update({ tax_google_place_id: '', updated_at: new Date().toISOString() })
-        .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+        .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE)
+        .select('id, business_type, tax_google_place_id');
       if (error) return sendSupabaseError(res, error);
-      return res.json({ ok: true, placeId: '' });
+      warn('[place-id] clear', { slug: communitySlug, rowsAffected: data?.length || 0, row: data?.[0] || null });
+      return res.json({ ok: true, placeId: '', rowsAffected: data?.length || 0, row: data?.[0] || null });
     }
 
     const resolved = await resolveGooglePlaceId(raw);
+    warn('[place-id] resolve', { slug: communitySlug, raw, resolved });
     // `needsApiKey` is the "URL is valid, we just can't finish
     // resolving without the Places API call" case. Save the raw URL
     // so the value isn't lost; the sync endpoint will re-resolve it
@@ -7346,14 +7352,18 @@ module.exports = function createTaxRouter(deps) {
     // Stored value is either the cleanly resolved ChIJ… ID or the raw
     // URL we'll resolve on the next sync.
     const valueToStore = resolved.placeId || raw.slice(0, 500);
-    const { error } = await supabase.from('communities')
+    const { data, error } = await supabase.from('communities')
       .update({ tax_google_place_id: valueToStore, updated_at: new Date().toISOString() })
-      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE)
+      .select('id, business_type, tax_google_place_id');
     if (error) return sendSupabaseError(res, error);
+    warn('[place-id] write', { slug: communitySlug, valueToStore, rowsAffected: data?.length || 0, row: data?.[0] || null });
     res.json({
       ok: true,
       placeId: valueToStore,
       resolved: !!resolved.placeId,
+      rowsAffected: data?.length || 0,
+      row: data?.[0] || null,
       message: resolved.placeId
         ? undefined
         : 'Saved. Add a Google Places API key and click Sync now — we\'ll resolve the link the first time it runs.',
