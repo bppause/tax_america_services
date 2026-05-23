@@ -3112,3 +3112,10 @@ do $$ begin
   alter table public.communities add constraint tax_calendar_horizon_months_chk
     check (tax_calendar_horizon_months between 1 and 36);
 exception when duplicate_object then null; end $$;
+
+-- Per-community auto-sync toggle for Google reviews (Phase 4n.65).
+-- ON by default once the platform key + community place_id are both
+-- configured. The daily cron silently no-ops on communities where
+-- this is false, the place_id is unset, or the env key is missing.
+alter table public.communities
+  add column if not exists tax_google_reviews_auto_sync boolean not null default true;

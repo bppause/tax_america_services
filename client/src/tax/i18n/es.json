@@ -155,6 +155,8 @@
   "owner.settings.googleReviews.apiKeyMissing": "Falta API key",
   "owner.settings.googleReviews.pending": "Pendiente de resolver",
   "owner.settings.googleReviews.pendingHint": "Guardado como URL de Maps — Sincronizar lo resolverá a un Place ID limpio cuando la API key esté configurada.",
+  "owner.settings.googleReviews.autoSyncLabel": "Sincronizar reseñas nuevas automáticamente",
+  "owner.settings.googleReviews.autoSyncHint": "Una vez al día el servidor descarga las últimas reseñas de Google y agrega las nuevas. Cada fila se actualiza en su lugar — las re-sincronizaciones no crean duplicados. El botón Sincronizar ahora sigue disponible para descargar al instante.",
   "owner.settings.calendarHorizon.title": "Horizonte del calendario fiscal",
   "owner.settings.calendarHorizon.subtitle": "Cuántos meses al futuro expande la página /calendar las fechas recurrentes. El predeterminado de 18 meses cubre el ciclo completo de presentación para que un visitante en diciembre vea las obligaciones de enero a abril.",
   "owner.settings.calendarHorizon.label": "Ver hasta",

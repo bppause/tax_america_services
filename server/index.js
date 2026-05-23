@@ -207,6 +207,21 @@ taxRemindersCron.start({ intervalMs: 12 * 60 * 60 * 1000, initialDelayMs: 60 * 1
 // crosses the threshold sends.
 taxDigestCron.start({ intervalMs: 5 * 60 * 1000, initialDelayMs: 90 * 1000 });
 
+// Google reviews auto-sync — once per 24h, walks every community
+// with auto-sync on + a saved place_id and refreshes their
+// testimonial rows from the Places API. Silently no-ops when
+// GOOGLE_PLACES_API_KEY isn't set (the owner can still configure
+// later and the next tick will start pulling). 10-min delay after
+// startup so we don't hammer Google during a deploy rollout.
+if (typeof taxRouter.autoSyncAllGoogleReviews === 'function') {
+  const runOnce = async () => {
+    try { await taxRouter.autoSyncAllGoogleReviews(); }
+    catch (e) { console.error('[google-reviews-cron] tick failed', e?.message || e); }
+  };
+  setTimeout(runOnce, 10 * 60 * 1000);
+  setInterval(runOnce, 24 * 60 * 60 * 1000);
+}
+
 // Public SEO endpoint — lists active tax community landings. Lives at root
 // (search-engine convention). robots.txt is static under client/public/.
 app.get('/sitemap.xml', async (req, res) => {

@@ -7200,9 +7200,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     const { data: community } = await supabase.from('communities')
-      .select('tax_google_place_id').eq('id', communitySlug).maybeSingle();
-    // Most-recent google-sourced row stands in for "last synced" — the
-    // upsert path bumps updated_at on every sync.
+      .select('tax_google_place_id, tax_google_reviews_auto_sync').eq('id', communitySlug).maybeSingle();
     const { data: lastRow } = await supabase.from('tax_testimonials')
       .select('updated_at').eq('community_id', communitySlug).eq('source', 'google')
       .order('updated_at', { ascending: false }).limit(1).maybeSingle();
@@ -7211,10 +7209,7 @@ module.exports = function createTaxRouter(deps) {
       placeId: stored,
       lastSyncAt: lastRow?.updated_at || null,
       hasApiKey: !!GOOGLE_PLACES_API_KEY,
-      // True when the saved value still looks like a URL we couldn't
-      // finish resolving. The UI surfaces a "will resolve on next
-      // sync" hint so the owner isn't confused by the URL sitting in
-      // the input.
+      autoSyncEnabled: community?.tax_google_reviews_auto_sync !== false,
       pendingResolution: !!stored && !looksLikeRawPlaceId(stored),
     });
   });
@@ -7371,34 +7366,31 @@ module.exports = function createTaxRouter(deps) {
   //   returns one translation per call and we don't currently double-
   //   fetch. The TestimonialsSection's locale fallback handles the
   //   visitor's actual language.
-  router.post('/admin/testimonials/sync-google', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
-    const communitySlug = trim(req.body?.communitySlug, 200);
-    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+  // Reusable sync core — used by the manual button and by the
+  // overnight cron. Returns { ok, upserted, placeName } on success or
+  // { error, message } on failure. Doesn't write HTTP responses — the
+  // caller decides what to do with the result.
+  async function syncGoogleReviewsForCommunity(communitySlug, { actorEmail = 'cron' } = {}) {
     if (!GOOGLE_PLACES_API_KEY) {
-      return res.status(400).json({ error: 'google_api_key_missing',
-        message: 'GOOGLE_PLACES_API_KEY is not configured on the server. Set it in the environment and redeploy.' });
+      return { error: 'google_api_key_missing',
+        message: 'GOOGLE_PLACES_API_KEY is not configured on the server.' };
     }
     const { data: community } = await supabase.from('communities')
       .select('id, tax_google_place_id, default_locale').eq('id', communitySlug).maybeSingle();
     if (!community || !community.tax_google_place_id) {
-      return res.status(400).json({ error: 'place_id_missing',
-        message: 'Save your Google Place ID before syncing.' });
+      return { error: 'place_id_missing', message: 'No Place ID saved for this community.' };
     }
 
-    // The stored value can be either a clean ChIJ… ID (preferred) or a
-    // share URL we couldn't fully resolve at save time. If it's a URL,
-    // resolve it now — Find Place from Text is reachable here because
-    // the API key just passed the gate above — and persist the clean
-    // ID so future syncs skip this hop.
+    // Stored value can be a clean ChIJ… ID or a share URL we couldn't
+    // fully resolve at save time. Re-resolve here (the API key passed
+    // the gate above, so Find Place is reachable) and persist the
+    // clean ID so future syncs skip the hop.
     let placeId = community.tax_google_place_id;
     if (!looksLikeRawPlaceId(placeId)) {
       const resolved = await resolveGooglePlaceId(placeId);
       if (resolved.error || !resolved.placeId) {
-        return res.status(400).json({
-          error: 'place_id_unresolved',
-          message: 'Saved value is a Google Maps URL we could not resolve to a Place ID. Re-paste the share link or find the Place ID directly at developers.google.com/maps/documentation/places/web-service/place-id.',
-        });
+        return { error: 'place_id_unresolved',
+          message: 'Saved value is a Google Maps URL we could not resolve to a Place ID.' };
       }
       placeId = resolved.placeId;
       await supabase.from('communities')
@@ -7417,12 +7409,12 @@ module.exports = function createTaxRouter(deps) {
       const resp = await fetch(url.toString());
       payload = await resp.json();
     } catch (e) {
-      return res.status(502).json({ error: 'google_fetch_failed',
-        message: `Could not reach Google Places API: ${e?.message || e}` });
+      return { error: 'google_fetch_failed',
+        message: `Could not reach Google Places API: ${e?.message || e}` };
     }
     if (payload.status !== 'OK') {
-      return res.status(502).json({ error: 'google_api_status',
-        message: `Google Places API returned status: ${payload.status}${payload.error_message ? ' — ' + payload.error_message : ''}` });
+      return { error: 'google_api_status',
+        message: `Google Places API returned status: ${payload.status}${payload.error_message ? ' — ' + payload.error_message : ''}` };
     }
     const reviews = Array.isArray(payload.result?.reviews) ? payload.result.reviews : [];
     let upserted = 0;
@@ -7430,8 +7422,6 @@ module.exports = function createTaxRouter(deps) {
     for (const r of reviews) {
       const author = String(r.author_name || '').slice(0, 200) || 'Google user';
       const time = String(r.time || Date.now()).slice(0, 32);
-      // Stable-enough synthetic ID: epoch + author. Don't include the
-      // text because Google sometimes re-translates between syncs.
       const sourceId = `${time}-${author.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}`;
       const row = {
         community_id: communitySlug,
@@ -7446,8 +7436,6 @@ module.exports = function createTaxRouter(deps) {
         updated_at: new Date().toISOString(),
       };
       if (!row.body) continue;
-      // Upsert by (community, source, source_id) — partial unique index
-      // in schema.sql makes ON CONFLICT viable.
       const { data: existing } = await supabase.from('tax_testimonials')
         .select('id').eq('community_id', communitySlug).eq('source', 'google').eq('source_id', sourceId).maybeSingle();
       if (existing) {
@@ -7466,11 +7454,66 @@ module.exports = function createTaxRouter(deps) {
       await auditLog({
         entity: 'tax.community.testimonials', entityId: communitySlug,
         action: 'sync_google',
-        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        actorEmail,
         after: { upserted, totalRating: payload.result?.rating || null, totalCount: payload.result?.user_ratings_total || null },
       });
     } catch (_e) {}
-    res.json({ ok: true, upserted, placeName: payload.result?.name || null });
+    return { ok: true, upserted, placeName: payload.result?.name || null };
+  }
+
+  // Daily auto-sync entrypoint — invoked by the cron in server/index.js.
+  // Walks every community with auto-sync enabled, a saved Place ID,
+  // and runs the same logic the manual button does. Swallows
+  // per-community errors so one broken row doesn't poison the rest.
+  async function autoSyncAllGoogleReviews() {
+    if (!isSupabaseConfigured || !GOOGLE_PLACES_API_KEY) {
+      return { skipped: 'config_missing', scanned: 0, synced: 0 };
+    }
+    const { data: rows } = await supabase.from('communities')
+      .select('id, tax_google_place_id, tax_google_reviews_auto_sync')
+      .eq('business_type', TAX_BUSINESS_TYPE)
+      .neq('tax_google_place_id', '');
+    let scanned = 0, synced = 0, errors = 0;
+    for (const c of (rows || [])) {
+      if (c.tax_google_reviews_auto_sync === false) continue;
+      scanned++;
+      try {
+        const r = await syncGoogleReviewsForCommunity(c.id, { actorEmail: 'google-reviews-cron' });
+        if (r.error) { errors++; warn('[google-reviews-cron]', c.id, r.error); }
+        else synced++;
+      } catch (e) {
+        errors++; warn('[google-reviews-cron] threw', c.id, e?.message || e);
+      }
+    }
+    return { scanned, synced, errors };
+  }
+
+  router.post('/admin/testimonials/sync-google', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const actorEmail = trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase();
+    const result = await syncGoogleReviewsForCommunity(communitySlug, { actorEmail });
+    if (result.error) {
+      const status = result.error.startsWith('google_') ? 502 : 400;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Per-community auto-sync toggle. ON by default once both the
+  // platform key and a place_id are saved; owners can flip it OFF
+  // when they want to curate manually.
+  router.put('/admin/community-settings/google-reviews-auto-sync', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const enabled = req.body?.enabled !== false;
+    const { error } = await supabase.from('communities')
+      .update({ tax_google_reviews_auto_sync: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, enabled });
   });
 
   // ── Phase 4n.24: e-signature requests ──────────────────────────────────
@@ -10784,5 +10827,11 @@ module.exports = function createTaxRouter(deps) {
     return out;
   }
 
+  // Expose the cron entrypoint alongside the router so server/index.js
+  // can schedule it without reimplementing the helper. router still
+  // works as a default export because the factory's caller can still
+  // ignore the extra prop (the existing `app.use('/api/m/tax', taxRouter)`
+  // line is now `app.use(..., taxRouter.router)`).
+  router.autoSyncAllGoogleReviews = autoSyncAllGoogleReviews;
   return router;
 };
