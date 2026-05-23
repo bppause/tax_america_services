@@ -1407,7 +1407,7 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
           </label>
           <input type="text" value={placeId}
                  onChange={e => setPlaceId(e.target.value)}
-                 placeholder="ChIJ…"
+                 placeholder="https://maps.app.goo.gl/… or ChIJ…"
                  disabled={busy}
                  style={{ width: '100%' }} />
           <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>

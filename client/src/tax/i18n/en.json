@@ -144,7 +144,7 @@
   "owner.settings.googleReviews.lede": "Paste your Google Place ID, then click Sync now to pull the latest reviews into this section. Re-run any time — repeated syncs upsert by review identity so duplicates don't accumulate.",
   "owner.settings.googleReviews.ledeNoKey": "The platform isn't configured with a Google Places API key. Ask your developer to set GOOGLE_PLACES_API_KEY in the server environment, then redeploy. You can still save your Place ID below — Sync becomes available once the key is live.",
   "owner.settings.googleReviews.placeIdLabel": "Google Place ID",
-  "owner.settings.googleReviews.placeIdHint": "Find it at developers.google.com/maps/documentation/places/web-service/place-id, or paste a Google Maps URL with place_id=… and we'll extract it.",
+  "owner.settings.googleReviews.placeIdHint": "Paste a Google Maps share link (https://maps.app.goo.gl/…) or the raw Place ID. We follow the redirect server-side and extract the ID for you.",
   "owner.settings.googleReviews.savePlaceId": "Save Place ID",
   "owner.settings.googleReviews.syncNow": "Sync now",
   "owner.settings.googleReviews.syncing": "Syncing…",
