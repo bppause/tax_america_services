@@ -1030,11 +1030,17 @@ function TaskFormModal({
   );
   const [dueDate, setDueDate] = useState(isEdit ? (task.due_date || '') : '');
   const [notes, setNotes] = useState(isEdit ? (task.notes || '') : '');
+  const [blockedBy, setBlockedBy] = useState(isEdit ? (task.blocked_by_task_id || '') : '');
+  const [requiresReview, setRequiresReview] = useState(isEdit ? !!task.requires_review : false);
+  const [reviewerId, setReviewerId] = useState(isEdit ? (task.reviewer_employee_id || '') : '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [defaultProductHint, setDefaultProductHint] = useState(null);
+  // Reviewer-side state for the in-review banner.
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewNote, setReviewNote] = useState('');
 
   useEffect(() => {
     const product = products.find(p => p.id === productId);
@@ -1089,6 +1095,9 @@ function TaskFormModal({
         assignedEmployeeId: assignedTo || null,
         dueDate: dueDate || null,
         notes: notes.trim(),
+        blockedByTaskId: blockedBy || null,
+        requiresReview,
+        reviewerEmployeeId: requiresReview ? (reviewerId || null) : null,
       };
       if (isEdit) {
         await taxApi.adminUpdateTask(auth, task.id, payload);
@@ -1108,6 +1117,15 @@ function TaskFormModal({
         <h3 className="tax-modal__title">
           {isEdit ? t('owner.tasks.editTitle') : t('owner.tasks.add')}
         </h3>
+        {isEdit && task?.pending_review_at && !task?.reviewed_at && (
+          <ReviewBanner task={task} auth={auth} isAdmin={isAdmin} t={t}
+                        busy={reviewBusy} setBusy={setReviewBusy}
+                        note={reviewNote} setNote={setReviewNote}
+                        onActioned={onSaved} />
+        )}
+        {isEdit && task?.blocked_by_task_id && (
+          <BlockerBanner task={task} customers={customers} t={t} />
+        )}
         <form onSubmit={onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
@@ -1183,6 +1201,55 @@ function TaskFormModal({
             <label>{t('owner.tasks.field.due')}</label>
             <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
           </div>
+
+          {/* Phase 4n.56 — workflow controls. Blocker keeps a sequential
+              chain enforceable (return prep blocked by docs received).
+              Requires-review routes the task into the review queue when
+              the preparer flips it to a terminal status. */}
+          <details style={{ background: 'var(--tax-bg-alt)', borderRadius: 8, padding: 10 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+              {t('owner.tasks.field.workflow')}
+            </summary>
+            <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.blockedBy')}
+                </label>
+                <BlockerPicker
+                  customers={customers} locale={locale} t={t}
+                  currentTaskId={isEdit ? task.id : ''}
+                  customerScopeId={customerId || (isEdit ? task.customer_id : '')}
+                  auth={auth} community={community}
+                  value={blockedBy} onChange={setBlockedBy} />
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.blockedByHint')}
+                </p>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                <input type="checkbox" checked={requiresReview}
+                       onChange={e => setRequiresReview(e.target.checked)} />
+                {t('owner.tasks.field.requiresReview')}
+              </label>
+              {requiresReview && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+                    {t('owner.tasks.field.reviewer')}
+                  </label>
+                  <select value={reviewerId} onChange={e => setReviewerId(e.target.value)}>
+                    <option value="">{t('owner.tasks.field.reviewerNone')}</option>
+                    {employees.filter(em => em.id !== assignedTo).map(em => (
+                      <option key={em.id} value={em.id}>
+                        {displayPersonName(em) || em.email}
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                    {t('owner.tasks.field.reviewerHint')}
+                  </p>
+                </div>
+              )}
+            </div>
+          </details>
 
           <div>
             <label>{t('owner.tasks.field.notes')}</label>
@@ -1461,6 +1528,134 @@ function InlineCustomerCreateModal({ auth, community, relationshipTypes, locale,
         </form>
       </div>
     </div>
+  );
+}
+
+// Top-of-modal banner shown when this task is sitting in the review
+// queue. Reviewer (or any admin) gets Approve / Reject buttons +
+// a note field; preparers see a passive "waiting for <reviewer>" line.
+function ReviewBanner({ task, auth, isAdmin, t, busy, setBusy, note, setNote, onActioned }) {
+  const reviewerName = displayPersonName(task.reviewer) || task.reviewer?.email || '';
+  // Approve/reject is restricted server-side too — surface the buttons
+  // only when the client can plausibly use them, but the server is the
+  // authority.
+  const canDecide = isAdmin || /* hint from server-emitted role */ false; // overridden below
+  const action = async (decision) => {
+    setBusy(true);
+    try {
+      await taxApi.adminReviewTask(auth, task.id, { decision, note: note.trim() });
+      onActioned();
+    } catch (e) {
+      alert(e?.message || '');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{
+      padding: 12, borderRadius: 8,
+      background: 'color-mix(in srgb, #d97706 14%, #fff)',
+      borderLeft: '4px solid #d97706',
+      marginBottom: 12, display: 'grid', gap: 8,
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 14 }}>
+        ⏳ {t('owner.tasks.review.pending')}
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--tax-text)' }}>
+        {reviewerName
+          ? t('owner.tasks.review.waitingOn', { name: reviewerName })
+          : t('owner.tasks.review.waitingAnyReviewer')}
+      </div>
+      <input type="text" value={note} onChange={e => setNote(e.target.value)}
+             placeholder={t('owner.tasks.review.notePlaceholder')} maxLength={500}
+             style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 }} />
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="button" disabled={busy} onClick={() => action('approve')}
+                className="tax-btn tax-btn--sm"
+                style={{ background: '#166534', color: '#fff', border: '1px solid #166534' }}>
+          ✓ {t('owner.tasks.review.approve')}
+        </button>
+        <button type="button" disabled={busy} onClick={() => action('reject')}
+                className="tax-btn tax-btn--ghost tax-btn--sm"
+                style={{ color: '#991b1b', borderColor: '#991b1b' }}>
+          ✕ {t('owner.tasks.review.reject')}
+        </button>
+        <span style={{ alignSelf: 'center', fontSize: 11, color: 'var(--tax-muted)' }}>
+          {t('owner.tasks.review.permissionHint')}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// Static "this task is blocked by …" header banner. Click-through
+// jumps to the blocker via ?edit=. The PATCH endpoint already
+// refuses terminal transitions while the blocker is open, so this
+// is just a visual hint.
+function BlockerBanner({ task, customers, t }) {
+  const [blocker, setBlocker] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    // Lazy lookup — pull the blocker title via the same /admin/tasks
+    // list cached on the parent. Customers prop already in scope; we
+    // could pass tasks list through but a single fetch is fine.
+    fetch(`/api/m/tax/admin/tasks/${encodeURIComponent(task.blocked_by_task_id)}`, {
+      headers: { 'x-firebase-uid': '', 'x-firebase-email': '' },
+    }).catch(() => {});
+    // The simpler path: render the id as a fallback if we don't have
+    // the title yet. Reading from /admin/tasks isn't a single-row
+    // endpoint, so we just show the truncated id and trust the
+    // server's 400 error to describe the blocker on completion.
+    if (!cancelled) setBlocker({ id: task.blocked_by_task_id });
+    return () => { cancelled = true; };
+  }, [task.blocked_by_task_id]);
+  if (!blocker) return null;
+  const editHref = `?edit=${encodeURIComponent(task.blocked_by_task_id)}`;
+  return (
+    <div style={{
+      padding: '10px 12px', borderRadius: 8,
+      background: 'color-mix(in srgb, #b91c1c 10%, #fff)',
+      borderLeft: '4px solid #b91c1c',
+      marginBottom: 12, fontSize: 13,
+    }}>
+      🔒 {t('owner.tasks.blockedBanner')}{' '}
+      <a href={editHref} style={{ color: '#b91c1c', fontWeight: 600 }}>
+        {t('owner.tasks.openBlocker')}
+      </a>
+    </div>
+  );
+}
+
+// Blocker picker — searches other open tasks for the same customer
+// (or community-wide when the task is practice-wide) and lets the
+// owner pick one. Keeps the dropdown small by limiting to 50 rows
+// scoped to the customer/community.
+function BlockerPicker({ value, onChange, currentTaskId, customerScopeId, auth, community, customers, locale, t }) {
+  const [tasks, setTasks] = useState([]);
+  useEffect(() => {
+    if (!community?.id) return;
+    taxApi.adminListTasks(auth, community.id)
+      .then(d => {
+        const rows = (d.tasks || [])
+          .filter(t1 => t1.id !== currentTaskId)
+          .filter(t1 => !t1.completed_at)
+          .filter(t1 => !customerScopeId || t1.customer_id === customerScopeId || !t1.customer_id)
+          .slice(0, 50);
+        setTasks(rows);
+      })
+      .catch(() => setTasks([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [community?.id, customerScopeId, currentTaskId]);
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)}
+            style={{ width: '100%' }}>
+      <option value="">{t('owner.tasks.field.blockedByNone')}</option>
+      {tasks.map(t1 => (
+        <option key={t1.id} value={t1.id}>
+          {t1.title} {t1.due_date ? `· ${t1.due_date}` : ''}
+        </option>
+      ))}
+    </select>
   );
 }
 

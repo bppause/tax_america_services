@@ -16,6 +16,7 @@ export default function OwnerDashboard() {
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
   const [data, setData] = useState(null);
+  const [review, setReview] = useState([]);
   const [err, setErr] = useState('');
 
   useEffect(() => {
@@ -25,6 +26,9 @@ export default function OwnerDashboard() {
     taxApi.adminDashboard(auth, community.id)
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
+    taxApi.adminListAwaitingReview(auth)
+      .then(d => setReview(d.tasks || []))
+      .catch(() => setReview([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee, community]);
 
@@ -81,6 +85,9 @@ export default function OwnerDashboard() {
           : 'minmax(0, 1fr)',
       }}>
         <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
+          {review.length > 0 && (
+            <AwaitingReview rows={review} base={base} t={t} />
+          )}
           <UrgentTasks tasks={data.urgentTasks || []}
                        base={base} community={community} locale={locale} t={t} />
           <NeedsAttention rows={data.needsAttention || []}
@@ -178,6 +185,48 @@ function UrgentTasks({ tasks, base, community, locale, t }) {
           })}
         </ul>
       )}
+    </section>
+  );
+}
+
+// Tasks the caller (or any admin) is the designated reviewer on,
+// sitting in pending-review state. Surfacing them on Today makes the
+// review queue the natural starting point for an admin's morning.
+function AwaitingReview({ rows, base, t }) {
+  return (
+    <section style={{ border: '1px solid #d97706', borderRadius: 10,
+                       background: '#fff', overflow: 'hidden' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '12px 14px', borderBottom: '1px solid var(--tax-border)',
+                        background: 'color-mix(in srgb, #d97706 12%, #fff)' }}>
+        <strong style={{ fontSize: 14 }}>⏳ {t('owner.dashboard.awaitingReview.heading')}</strong>
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#7c2d12' }}>{rows.length}</span>
+      </header>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {rows.map(t1 => {
+          const cust = t1.customer;
+          const custName = cust?.business_name
+            || displayPersonName(cust)
+            || cust?.email
+            || '';
+          const preparer = displayPersonName(t1.assigned_employee) || '';
+          return (
+            <li key={t1.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
+              <a href={`${base}/tasks?edit=${encodeURIComponent(t1.id)}`}
+                 style={{
+                   display: 'block', padding: '10px 14px',
+                   textDecoration: 'none', color: 'inherit',
+                 }}>
+                <div style={{ fontWeight: 600 }}>{t1.title}</div>
+                <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)' }}>
+                  {custName}
+                  {preparer && ` · ${t('owner.dashboard.awaitingReview.preparer', { name: preparer })}`}
+                </div>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
