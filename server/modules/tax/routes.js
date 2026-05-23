@@ -7171,71 +7171,108 @@ module.exports = function createTaxRouter(deps) {
     const { data: lastRow } = await supabase.from('tax_testimonials')
       .select('updated_at').eq('community_id', communitySlug).eq('source', 'google')
       .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    const stored = community?.tax_google_place_id || '';
     res.json({
-      placeId: community?.tax_google_place_id || '',
+      placeId: stored,
       lastSyncAt: lastRow?.updated_at || null,
       hasApiKey: !!GOOGLE_PLACES_API_KEY,
+      // True when the saved value still looks like a URL we couldn't
+      // finish resolving. The UI surfaces a "will resolve on next
+      // sync" hint so the owner isn't confused by the URL sitting in
+      // the input.
+      pendingResolution: !!stored && !looksLikeRawPlaceId(stored),
     });
   });
 
-  // Pull a Google place_id out of whatever the owner pasted. Three
-  // input shapes are accepted:
-  //   1. The raw ChIJ… identifier (passes through unchanged).
-  //   2. A long Google Maps URL that already carries `?place_id=` (or
-  //      `&place_id=`) — extract the param directly.
-  //   3. A short URL like https://maps.app.goo.gl/abc — server follows
-  //      the redirect and re-runs (1) and (2) against the final URL.
+  // Pull a Google place_id out of whatever the owner pasted. Inputs:
+  //   1. Raw ChIJ… identifier — passes through.
+  //   2. Long Maps URL with `?place_id=` — extract directly.
+  //   3. Short share URL (maps.app.goo.gl, goo.gl/maps) — server
+  //      follows redirects to the final /maps/place/<name>/ URL,
+  //      then either picks up place_id= from the chain or, when an
+  //      API key is configured, calls Find Place from Text on the
+  //      extracted establishment name.
   //
-  // Returns { placeId } on success or { error } on failure. The
-  // identifier "looks like" a place id when it starts with ChIJ / GhIJ
-  // and is mostly URL-safe characters; the regex below matches Google's
-  // current format which is base64url-encoded internally.
+  // Returns { placeId } on success or { error } on failure (with a
+  // machine-readable code so the caller can map it to a friendly
+  // message in either locale).
+  function looksLikeRawPlaceId(s) {
+    return /^[A-Za-z][A-Za-z0-9_-]{20,}$/.test(s) && !s.startsWith('http');
+  }
+
+  async function findPlaceByText(name) {
+    if (!GOOGLE_PLACES_API_KEY) return null;
+    const url = new URL('https://maps.googleapis.com/maps/api/place/findplacefromtext/json');
+    url.searchParams.set('input', name);
+    url.searchParams.set('inputtype', 'textquery');
+    url.searchParams.set('fields', 'place_id,name');
+    url.searchParams.set('key', GOOGLE_PLACES_API_KEY);
+    try {
+      const resp = await fetch(url.toString());
+      const data = await resp.json();
+      if (data.status === 'OK' && data.candidates && data.candidates[0]?.place_id) {
+        return data.candidates[0].place_id;
+      }
+    } catch (_e) { /* fall through to null */ }
+    return null;
+  }
+
   async function resolveGooglePlaceId(input) {
     const raw = String(input || '').trim();
     if (!raw) return { error: 'placeIdMissing' };
 
-    // Direct place_id pasted? Pass through if it matches the shape.
-    if (/^[A-Za-z][A-Za-z0-9_-]{20,}$/.test(raw) && !raw.startsWith('http')) {
-      return { placeId: raw.slice(0, 200) };
-    }
+    if (looksLikeRawPlaceId(raw)) return { placeId: raw.slice(0, 200) };
 
-    // Long URL with explicit place_id param.
     const direct = raw.match(/[?&]place_id=([A-Za-z0-9_-]+)/);
     if (direct) return { placeId: direct[1].slice(0, 200) };
 
-    // Short URL — follow redirects and re-scan the final URL. Capped at
-    // a few hops so a misbehaving target can't trap us in a loop.
-    if (/^https?:\/\//i.test(raw)) {
-      try {
-        let current = raw;
-        let hops = 0;
-        while (hops < 8) {
-          const resp = await fetch(current, { redirect: 'manual' });
-          const next = resp.headers.get('location');
-          if (!next) {
-            // No more redirects — scan the URL we landed on (current
-            // might still carry place_id, or the Location chain may
-            // have stopped one hop earlier when fetch followed it
-            // automatically before redirect:manual kicked in).
-            const m = (resp.url || current).match(/[?&]place_id=([A-Za-z0-9_-]+)/);
-            if (m) return { placeId: m[1].slice(0, 200) };
-            // Long-form Google Maps URLs that landed on the place page
-            // sometimes carry the ID as `!1s<chij_or_hex>!` deep in the
-            // data blob — try that as a last resort.
-            const blob = (resp.url || current).match(/!1s(ChIJ[A-Za-z0-9_-]+)/);
-            if (blob) return { placeId: blob[1].slice(0, 200) };
-            break;
-          }
-          current = new URL(next, current).toString();
-          hops++;
-        }
-        return { error: 'placeIdNotInUrl' };
-      } catch (e) {
-        return { error: 'fetchFailed', detail: e?.message || String(e) };
-      }
+    if (!/^https?:\/\//i.test(raw)) {
+      return { error: 'placeIdNotRecognized' };
     }
 
-    return { error: 'placeIdNotRecognized' };
+    // Follow up to 8 redirect hops. Some hops only carry place_id in
+    // the Location header itself; some carry it in the URL we landed
+    // on. We check both at every step.
+    let current = raw;
+    let lastUrl = raw;
+    try {
+      for (let hops = 0; hops < 8; hops++) {
+        const resp = await fetch(current, {
+          redirect: 'manual',
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TaxAmericaPlaceResolver/1.0)' },
+        });
+        lastUrl = resp.url || current;
+        const nextHeader = resp.headers.get('location');
+        const scanTargets = [lastUrl, nextHeader].filter(Boolean);
+        for (const t of scanTargets) {
+          const m = t.match(/[?&]place_id=([A-Za-z0-9_-]+)/);
+          if (m) return { placeId: m[1].slice(0, 200) };
+          const blob = t.match(/!1s(ChIJ[A-Za-z0-9_-]+)/);
+          if (blob) return { placeId: blob[1].slice(0, 200) };
+        }
+        if (!nextHeader) break;
+        current = new URL(nextHeader, current).toString();
+      }
+    } catch (e) {
+      return { error: 'fetchFailed', detail: e?.message || String(e) };
+    }
+
+    // Short URLs land on /maps/place/<name>/<coords>/data=… and bury
+    // the place identifier in the data blob (as an FID, not a
+    // place_id). Find Place from Text resolves the establishment name
+    // back to a clean place_id — but it costs an API call, so only
+    // try it when the key is configured.
+    const nameMatch = lastUrl.match(/\/maps\/place\/([^/]+)/);
+    if (nameMatch && GOOGLE_PLACES_API_KEY) {
+      const decoded = decodeURIComponent(nameMatch[1]).replace(/\+/g, ' ');
+      const resolved = await findPlaceByText(decoded);
+      if (resolved) return { placeId: resolved };
+    }
+
+    return {
+      error: nameMatch && !GOOGLE_PLACES_API_KEY ? 'needsApiKey' : 'placeIdNotInUrl',
+      resolvedUrl: lastUrl,
+    };
   }
 
   router.put('/admin/community-settings/google-place-id', async (req, res) => {
@@ -7254,7 +7291,11 @@ module.exports = function createTaxRouter(deps) {
     }
 
     const resolved = await resolveGooglePlaceId(raw);
-    if (resolved.error) {
+    // `needsApiKey` is the "URL is valid, we just can't finish
+    // resolving without the Places API call" case. Save the raw URL
+    // so the value isn't lost; the sync endpoint will re-resolve it
+    // once the key lands. Other errors are real input problems.
+    if (resolved.error && resolved.error !== 'needsApiKey') {
       const errMessages = {
         placeIdMissing:     'Paste a Google Place ID or a Google Maps URL.',
         placeIdNotInUrl:    'Could not find a place_id in that URL. Try clicking "Share" on Google Maps and using the link from there, or look up the Place ID directly at developers.google.com/maps/documentation/places/web-service/place-id.',
@@ -7267,11 +7308,21 @@ module.exports = function createTaxRouter(deps) {
       });
     }
 
+    // Stored value is either the cleanly resolved ChIJ… ID or the raw
+    // URL we'll resolve on the next sync.
+    const valueToStore = resolved.placeId || raw.slice(0, 500);
     const { error } = await supabase.from('communities')
-      .update({ tax_google_place_id: resolved.placeId, updated_at: new Date().toISOString() })
+      .update({ tax_google_place_id: valueToStore, updated_at: new Date().toISOString() })
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
     if (error) return sendSupabaseError(res, error);
-    res.json({ ok: true, placeId: resolved.placeId });
+    res.json({
+      ok: true,
+      placeId: valueToStore,
+      resolved: !!resolved.placeId,
+      message: resolved.placeId
+        ? undefined
+        : 'Saved. Add a Google Places API key and click Sync now — we\'ll resolve the link the first time it runs.',
+    });
   });
 
   // POST /admin/testimonials/sync-google
@@ -7300,8 +7351,28 @@ module.exports = function createTaxRouter(deps) {
         message: 'Save your Google Place ID before syncing.' });
     }
 
+    // The stored value can be either a clean ChIJ… ID (preferred) or a
+    // share URL we couldn't fully resolve at save time. If it's a URL,
+    // resolve it now — Find Place from Text is reachable here because
+    // the API key just passed the gate above — and persist the clean
+    // ID so future syncs skip this hop.
+    let placeId = community.tax_google_place_id;
+    if (!looksLikeRawPlaceId(placeId)) {
+      const resolved = await resolveGooglePlaceId(placeId);
+      if (resolved.error || !resolved.placeId) {
+        return res.status(400).json({
+          error: 'place_id_unresolved',
+          message: 'Saved value is a Google Maps URL we could not resolve to a Place ID. Re-paste the share link or find the Place ID directly at developers.google.com/maps/documentation/places/web-service/place-id.',
+        });
+      }
+      placeId = resolved.placeId;
+      await supabase.from('communities')
+        .update({ tax_google_place_id: placeId, updated_at: new Date().toISOString() })
+        .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    }
+
     const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
-    url.searchParams.set('place_id', community.tax_google_place_id);
+    url.searchParams.set('place_id', placeId);
     url.searchParams.set('fields', 'reviews,rating,user_ratings_total,name');
     url.searchParams.set('key', GOOGLE_PLACES_API_KEY);
     url.searchParams.set('language', community.default_locale === 'en' ? 'en' : 'es');

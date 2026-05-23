@@ -1341,10 +1341,16 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
   const onSave = async () => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
-      await taxApi.adminSetGooglePlaceId(auth, {
+      const r = await taxApi.adminSetGooglePlaceId(auth, {
         communitySlug: community.id, placeId: placeId.trim(),
       });
-      setMsg({ kind: 'success', text: t('owner.settings.googleReviews.saved') });
+      // The server returns a soft `message` when it saved the URL but
+      // couldn't finish resolving (no API key yet). Surface it so the
+      // owner knows the value is parked, not lost.
+      setMsg({
+        kind: 'success',
+        text: r?.message || t('owner.settings.googleReviews.saved'),
+      });
       load();
     } catch (e) { setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' }); }
     finally { setBusy(false); }
@@ -1385,6 +1391,16 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
             fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
           }}>
             {t('owner.settings.googleReviews.apiKeyMissing')}
+          </span>
+        )}
+        {state.pendingResolution && (
+          <span style={{
+            padding: '1px 8px', borderRadius: 999,
+            background: '#fef3c7', color: '#854d0e',
+            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+          }}
+                title={t('owner.settings.googleReviews.pendingHint')}>
+            {t('owner.settings.googleReviews.pending')}
           </span>
         )}
       </div>
