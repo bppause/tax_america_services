@@ -78,10 +78,11 @@ Return STRICTLY a JSON array of ${count} objects with this shape (no prose, no m
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 4000,
-        // 3 searches is enough for 5 items — each search returns several
-        // results the model can cite. More uses = more latency without
-        // proportional quality gain on this prompt.
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+        // 2 searches keep input-token usage well under the free-tier
+        // 30K/min cap (each search result counts as input on the next
+        // turn). Most items can be grounded from a single broad search
+        // per topic. Owners can re-run if they want different sources.
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2 }],
         messages: [{ role: 'user', content: prompt }],
       }),
       signal: controller.signal,
@@ -99,8 +100,18 @@ Return STRICTLY a JSON array of ${count} objects with this shape (no prose, no m
   try { payload = await resp.json(); }
   catch (e) { return { error: 'parse_failed', message: `Non-JSON response from Anthropic: ${e?.message}` }; }
   if (!resp.ok || payload.type === 'error') {
+    const kind = payload?.error?.type || '';
+    // Friendly framing for the two errors owners hit most often.
+    if (kind === 'rate_limit_error') {
+      return { error: 'rate_limited',
+        message: 'Anthropic rate limit reached. Wait ~1 minute and try Refresh again, or upgrade your tier at console.anthropic.com/settings/billing. Existing articles on the public site are unchanged.' };
+    }
+    if (kind === 'authentication_error' || kind === 'permission_error') {
+      return { error: 'auth_failed',
+        message: 'Anthropic rejected the API key (authentication_error). Check ANTHROPIC_API_KEY on Render and confirm the key is active in console.anthropic.com.' };
+    }
     return { error: 'api_error',
-      message: `Anthropic API: ${payload?.error?.type || resp.status} — ${payload?.error?.message || ''}` };
+      message: `Anthropic API: ${kind || resp.status} — ${payload?.error?.message || ''}` };
   }
   // Find the final text block (after any tool_use blocks).
   const textBlocks = Array.isArray(payload.content)

@@ -13,7 +13,10 @@
 // pulling random websites would dilute that. Pure LLM generation is
 // fast, cheap, and predictable here.
 
-const MODEL = 'claude-sonnet-4-6';
+// Haiku 4.5 — fast (a few seconds end-to-end) and well within the
+// free-tier rate limit per minute, which matters because the FAQ
+// generator can fire alongside the news refresh.
+const MODEL = 'claude-haiku-4-5-20251001';
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
 

@@ -7894,7 +7894,12 @@ module.exports = function createTaxRouter(deps) {
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     const result = await refreshNewsForCommunity(communitySlug);
     if (result.error) {
-      const status = result.error.startsWith('no_api_key') ? 400 : 502;
+      // 429 for rate limit (semantically correct + frontend can show
+      // a wait/retry affordance), 400 for config/auth issues (owner
+      // can act), 502 for upstream failures.
+      let status = 502;
+      if (result.error === 'rate_limited')                                 status = 429;
+      else if (['no_api_key', 'no_topics', 'auth_failed'].includes(result.error)) status = 400;
       return res.status(status).json(result);
     }
     res.json(result);
