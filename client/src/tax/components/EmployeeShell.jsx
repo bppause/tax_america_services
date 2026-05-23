@@ -88,6 +88,7 @@ export default function EmployeeShell({ community, active, children }) {
               <div className="tax-shell__group-label">{t('employee.nav.groupOperations')}</div>
               {employee && navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
               {employee && navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
+              {isAdmin && navLink('workload',   `${base}/workload`,  t('employee.nav.workload'))}
               {employee && navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
               {isAdmin && perm('manage_leads') &&
                 navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
