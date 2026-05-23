@@ -367,6 +367,9 @@ export const taxApi = {
   adminSetTaskLookahead(auth, payload) {
     return request('PUT', '/admin/community-settings/task-lookahead-months', payload, auth, { admin: true });
   },
+  adminSetCalendarHorizon(auth, payload) {
+    return request('PUT', '/admin/community-settings/calendar-horizon', payload, auth, { admin: true });
+  },
   adminSetTaskThresholds(auth, payload) {
     return request('PUT', '/admin/community-settings/task-thresholds', payload, auth, { admin: true });
   },
