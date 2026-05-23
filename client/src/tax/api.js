@@ -312,6 +312,16 @@ export const taxApi = {
   adminListAutoTasks(auth, productId) {
     return request('GET', `/admin/products/${encodeURIComponent(productId)}/auto-tasks`, undefined, auth, { admin: true });
   },
+  // Phase 4n.62: auto-task suggestion catalog.
+  adminListAutoTaskTemplates(auth, productId) {
+    return request('GET', `/admin/products/${encodeURIComponent(productId)}/auto-task-templates`, undefined, auth, { admin: true });
+  },
+  adminEnableAutoTaskTemplate(auth, productId, key) {
+    return request('POST', `/admin/products/${encodeURIComponent(productId)}/auto-task-templates/${encodeURIComponent(key)}/enable`, {}, auth, { admin: true });
+  },
+  adminDisableAutoTaskTemplate(auth, productId, key) {
+    return request('POST', `/admin/products/${encodeURIComponent(productId)}/auto-task-templates/${encodeURIComponent(key)}/disable`, {}, auth, { admin: true });
+  },
   adminReplaceAutoTasks(auth, productId, autoTasks) {
     return request('PUT', `/admin/products/${encodeURIComponent(productId)}/auto-tasks`, { autoTasks }, auth, { admin: true });
   },

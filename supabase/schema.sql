@@ -3040,3 +3040,16 @@ alter table public.tax_testimonials disable row level security;
 -- source_id). Empty = no sync configured.
 alter table public.communities
   add column if not exists tax_google_place_id text not null default '';
+
+-- Auto-task templates marker (Phase 4n.62).
+--
+-- template_key links a tax_service_auto_tasks row back to the
+-- hardcoded suggestion that spawned it. The owner can still edit
+-- any field freely after enabling — template_key is only used to
+-- mark the suggestion as "enabled" in the picker and to support
+-- one-click disable (server deletes rows by template_key, not by
+-- a fuzzy title match).
+alter table public.tax_service_auto_tasks
+  add column if not exists template_key text;
+create index if not exists idx_tax_service_auto_tasks_template
+  on public.tax_service_auto_tasks(product_id, template_key) where template_key is not null;

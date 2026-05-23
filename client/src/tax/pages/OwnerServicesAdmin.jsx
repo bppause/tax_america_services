@@ -568,6 +568,13 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
       <SectionHeader emoji="🛠" label={t('owner.services.section.internal')}
                      hint={t('owner.services.section.internalHint')} tone="internal" />
 
+      <SuggestedAutoTasks auth={auth} productId={p.id} locale={locale} t={t}
+                          onChanged={() => { /* refresh the auto-tasks list below */
+                            taxApi.adminListAutoTasks(auth, p.id)
+                              .then(d => setAutoTasks((d.autoTasks || []).map(at => normalizeAutoTaskForEdit(at))))
+                              .catch(() => {});
+                          }} />
+
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
           <div>
@@ -655,6 +662,140 @@ function SectionHeader({ emoji, label, hint, tone = 'homepage' }) {
 //
 // We show the next 6 dates derived from the current anchor_rule;
 // the actual generator's look-ahead is the community's
+
+// Suggested auto-task picker — pre-curated catalog keyed by the
+// product slug. Each card shows the template's title, cadence, and
+// priority with a toggle. Enabling copies the template into the
+// service's auto-tasks list (visible below in the manual editor and
+// freely editable from there). Disabling deletes the row by
+// template_key — destructive, so we confirm first when the owner
+// has likely customized the copy.
+function SuggestedAutoTasks({ auth, productId, locale, t, onChanged }) {
+  const [templates, setTemplates] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+
+  const load = () => {
+    taxApi.adminListAutoTaskTemplates(auth, productId)
+      .then(d => setTemplates(d.templates || []))
+      .catch(e => setErr(e?.message || ''));
+  };
+  useEffect(load, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = async (tpl) => {
+    setErr('');
+    if (tpl.enabled && !window.confirm(t('owner.services.suggested.disableConfirm', { name: tpl.title?.[locale] || tpl.title?.en || tpl.key }))) return;
+    setBusy(tpl.key);
+    try {
+      if (tpl.enabled) await taxApi.adminDisableAutoTaskTemplate(auth, productId, tpl.key);
+      else             await taxApi.adminEnableAutoTaskTemplate(auth, productId, tpl.key);
+      load();
+      if (typeof onChanged === 'function') onChanged();
+    } catch (e) {
+      setErr(e?.message || '');
+    } finally { setBusy(''); }
+  };
+
+  if (templates === null) {
+    return <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('loading')}</p>;
+  }
+  if (templates.length === 0) return null; // no curated suggestions for this slug — quiet
+
+  const enabledCount = templates.filter(t1 => t1.enabled).length;
+
+  return (
+    <div style={{
+      marginTop: 6, padding: 12,
+      background: 'color-mix(in srgb, #2563eb 6%, #fff)',
+      border: '1px solid color-mix(in srgb, #2563eb 24%, #fff)',
+      borderRadius: 8,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>
+            ✨ {t('owner.services.suggested.heading')}
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('owner.services.suggested.count', { enabled: enabledCount, total: templates.length })}
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
+            {t('owner.services.suggested.subheading')}
+          </div>
+        </div>
+      </div>
+      {err && <div className="tax-msg tax-msg--error" style={{ marginTop: 8 }}>{err}</div>}
+      <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
+        {templates.map(tpl => (
+          <SuggestedRow key={tpl.key} tpl={tpl}
+                        busy={busy === tpl.key}
+                        onToggle={() => toggle(tpl)}
+                        locale={locale} t={t} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SuggestedRow({ tpl, busy, onToggle, locale, t }) {
+  const name = tpl.title?.[locale] || tpl.title?.en || tpl.title?.es || tpl.key;
+  const desc = tpl.description?.[locale] || tpl.description?.en || tpl.description?.es || '';
+  const cadenceLabel = formatCadenceForSuggestion(tpl, t);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: 10, borderRadius: 6,
+      background: '#fff', border: '1px solid var(--tax-border)',
+      opacity: tpl.enabled ? 1 : 0.85,
+    }}>
+      <input type="checkbox" checked={tpl.enabled} disabled={busy}
+             onChange={onToggle}
+             style={{ marginTop: 3, width: 18, height: 18, cursor: busy ? 'wait' : 'pointer' }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{name}</span>
+          <span style={pillStyle()}>{cadenceLabel}</span>
+          {tpl.default_priority && tpl.default_priority !== 'normal' && (
+            <span style={pillStyle('#fef3c7', '#854d0e')}>
+              {t(`owner.tasks.priority.${tpl.default_priority}`)}
+            </span>
+          )}
+          {tpl.enabled && (
+            <span style={pillStyle('#dcfce7', '#166534')}>
+              {t('owner.services.suggested.enabledTag')}
+            </span>
+          )}
+        </div>
+        {desc && (
+          <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>
+            {desc}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function pillStyle(bg = 'var(--tax-bg-alt)', fg = 'var(--tax-muted)') {
+  return {
+    padding: '1px 8px', borderRadius: 999, background: bg, color: fg,
+    fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+  };
+}
+
+function formatCadenceForSuggestion(tpl, t) {
+  const a = tpl.anchor_rule || {};
+  if (tpl.cadence_kind === 'weekly') {
+    const WEEKDAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    return `${t('owner.services.cadence.weekly')} · ${WEEKDAYS[a.weekday || 1] || 'Mon'}`;
+  }
+  if (tpl.cadence_kind === 'monthly')   return `${t('owner.services.cadence.monthly')} · ${t('owner.services.cadence.dayLabel')} ${a.day || 15}`;
+  if (tpl.cadence_kind === 'quarterly') return `${t('owner.services.cadence.quarterly')} · ${t('owner.services.cadence.dayLabel')} ${a.day || 15}`;
+  if (tpl.cadence_kind === 'annual') {
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return `${t('owner.services.cadence.annual')} · ${MONTHS[(a.month || 1) - 1]} ${a.day || 15}`;
+  }
+  return tpl.cadence_kind || '';
+}
 
 // Map a server auto-task row to the editor's working shape (separate
 // fields for cadence inputs that conditional renders read from).
