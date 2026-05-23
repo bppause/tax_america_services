@@ -40,6 +40,7 @@ import OwnerTasks from './pages/OwnerTasks';
 import OwnerReminders from './pages/OwnerReminders';
 import OwnerProgress from './pages/OwnerProgress';
 import OwnerWorkload from './pages/OwnerWorkload';
+import PublicCalendar from './pages/PublicCalendar';
 import OwnerEmailTemplates from './pages/OwnerEmailTemplates';
 import OwnerRelationshipWorkflows from './pages/OwnerRelationshipWorkflows';
 import OwnerRelationshipTypes from './pages/OwnerRelationshipTypes';
@@ -73,9 +74,10 @@ function parseTaxPath() {
   }
   const slug = parts[1] || DEFAULT_COMMUNITY_SLUG;
   // Public sub-pages — accessible without auth. Sit alongside the
-  // landing page at /tax/:slug/{faqs,articles}.
+  // landing page at /tax/:slug/{faqs,articles,calendar}.
   if (parts[2] === 'faqs')     return { route: 'public-faqs', slug };
   if (parts[2] === 'articles') return { route: 'public-articles', slug };
+  if (parts[2] === 'calendar') return { route: 'public-calendar', slug };
   if (parts[2] === 'employee') {
     if (parts[3] === 'profile') return { route: 'employee-profile', slug };
     if (parts[3] === 'threads' && parts[4]) return { route: 'employee-thread', slug, threadId: decodeURIComponent(parts[4]) };
@@ -255,6 +257,7 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-reminders') return <OwnerReminders />;
   if (parsed.route === 'owner-progress')  return <OwnerProgress />;
   if (parsed.route === 'owner-workload')  return <OwnerWorkload />;
+  if (parsed.route === 'public-calendar') return <PublicCalendar communitySlug={parsed.slug} />;
   if (parsed.route === 'owner-audit') return <OwnerAudit />;
   if (parsed.route === 'owner-email-templates') return <OwnerEmailTemplates />;
   if (parsed.route === 'owner-workflows') return <OwnerRelationshipWorkflows />;

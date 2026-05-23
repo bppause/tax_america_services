@@ -428,6 +428,28 @@ module.exports = function createTaxRouter(deps) {
     } catch (e) { res.status(500).json({ error: e?.message || 'Failed to load articles.' }); }
   });
 
+  // GET /community/:slug/deadlines — public list of tax deadlines for
+  // the community. The page filters client-side by entity_type and
+  // jurisdiction; we return the full active set so a fresh page render
+  // doesn't have to wait on a roundtrip per filter chip.
+  router.get('/community/:slug/deadlines', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, business_type').eq('id', slug).maybeSingle();
+    if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
+      return res.status(404).json({ error: 'Tax community not found.' });
+    }
+    const { data, error } = await supabase.from('tax_calendar_deadlines')
+      .select('id, slug, title_i18n, description_i18n, recurrence, month, day, date, entity_types, jurisdiction, product_slug, display_order')
+      .eq('community_id', slug).eq('active', true)
+      .order('display_order', { ascending: true })
+      .limit(200);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ deadlines: data || [] });
+  });
+
   // ── POST /leads ─────────────────────────────────────────────────────────────
   router.post('/leads', async (req, res) => {
     if (!requireSupabaseEnv(res)) return;
