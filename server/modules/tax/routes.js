@@ -7585,9 +7585,14 @@ module.exports = function createTaxRouter(deps) {
     // `place/details/json` endpoint: place_id goes in the path,
     // the API key is a header, fields are an X-Goog-FieldMask, and
     // the response uses camelCase + nested text objects.
+    //
+    // reviewsSort=NEWEST is undocumented on the New API but the
+    // legacy endpoint accepted it and Google sometimes honors it
+    // silently. If they ignore it we still get the default 5
+    // most-relevant reviews — no worse than before.
     let payload;
     try {
-      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?reviewsSort=NEWEST`, {
         headers: {
           'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
           'X-Goog-FieldMask': 'displayName,rating,userRatingCount,reviews',
@@ -7605,7 +7610,16 @@ module.exports = function createTaxRouter(deps) {
         message: `Could not reach Google Places API: ${e?.message || e}` };
     }
     const reviewsFieldPresent = Array.isArray(payload.reviews);
-    const reviews = reviewsFieldPresent ? payload.reviews : [];
+    // Sort returned reviews newest-first by publishTime regardless of
+    // how Google ordered them — defensive in case reviewsSort is
+    // ignored by the New API, and harmless when it isn't.
+    const reviews = reviewsFieldPresent
+      ? [...payload.reviews].sort((a, b) => {
+          const ta = Date.parse(a?.publishTime || '') || 0;
+          const tb = Date.parse(b?.publishTime || '') || 0;
+          return tb - ta;
+        })
+      : [];
     let upserted = 0;
     let skippedEmpty = 0;
     const locale = community.default_locale === 'en' ? 'en' : 'es';
