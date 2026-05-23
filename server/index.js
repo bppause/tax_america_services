@@ -224,6 +224,20 @@ if (typeof taxRouter.autoSyncAllGoogleReviews === 'function') {
   setInterval(runOnce, 24 * 60 * 60 * 1000);
 }
 
+// AI news refresh — once per 24h, asks Claude (web_search grounded) for
+// fresh items per community's configured topics and replaces the
+// source='ai' rows. Silently no-ops when ANTHROPIC_API_KEY isn't set,
+// the community has tax_news_auto_refresh=false, or has no topics.
+// 15-min startup delay to avoid piling onto a fresh deploy.
+if (typeof taxRouter.refreshAllNews === 'function') {
+  const runOnce = async () => {
+    try { await taxRouter.refreshAllNews(); }
+    catch (e) { console.error('[tax-news-cron] tick failed', e?.message || e); }
+  };
+  setTimeout(runOnce, 15 * 60 * 1000);
+  setInterval(runOnce, 24 * 60 * 60 * 1000);
+}
+
 // Public SEO endpoint — lists active tax community landings. Lives at root
 // (search-engine convention). robots.txt is static under client/public/.
 app.get('/sitemap.xml', async (req, res) => {
