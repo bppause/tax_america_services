@@ -378,6 +378,7 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], onC
 }
 
 function ProductEditor({ product: p, auth, community, relTypes = [], employees = [], onDone, onCancel, t }) {
+  const { locale } = useT();
   const [nameEn, setNameEn] = useState(p.name_i18n?.en || '');
   const [nameEs, setNameEs] = useState(p.name_i18n?.es || '');
   const [descEn, setDescEn] = useState(p.description_i18n?.en || '');
