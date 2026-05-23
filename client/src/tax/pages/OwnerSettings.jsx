@@ -1544,7 +1544,24 @@ function TestimonialsSectionAdmin({ auth, community, t }) {
              style={{ marginBottom: 8 }}>{msg.text}</div>
       )}
 
-      <GoogleReviewsPanel auth={auth} community={community} onSynced={load} t={t} />
+      <p style={{ margin: '4px 0 12px', fontSize: 13, color: 'var(--tax-muted)' }}>
+        {t('owner.settings.testimonials.easyPath')}
+      </p>
+
+      {/* Google API sync is the power-user path. Collapsed by default
+          so the owner sees the "just copy/paste" workflow first. */}
+      <details style={{
+        marginBottom: 12, padding: 8, borderRadius: 8,
+        background: 'color-mix(in srgb, #2563eb 6%, #fff)',
+        border: '1px solid color-mix(in srgb, #2563eb 18%, #fff)',
+      }}>
+        <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+          ⚙️ {t('owner.settings.testimonials.advancedToggle')}
+        </summary>
+        <div style={{ marginTop: 8 }}>
+          <GoogleReviewsPanel auth={auth} community={community} onSynced={load} t={t} />
+        </div>
+      </details>
 
       {rows === null
         ? <p>{t('loading')}</p>
@@ -1626,6 +1643,7 @@ function TestimonialForm({ initial, auth, community, onClose, onSaved, t }) {
   const [body, setBody] = useState(initial?.body || '');
   const [rating, setRating] = useState(initial?.rating || 5);
   const [locale, setLocale] = useState(initial?.locale || 'en');
+  const [source, setSource] = useState(initial?.source || 'local');
   const [active, setActive] = useState(initial?.active !== false);
   const [order, setOrder] = useState(String(initial?.display_order || 0));
   const [busy, setBusy] = useState(false);
@@ -1644,7 +1662,7 @@ function TestimonialForm({ initial, auth, community, onClose, onSaved, t }) {
         authorName: authorName.trim(),
         authorRole: authorRole.trim(),
         body: body.trim(),
-        rating, locale, active,
+        rating, locale, source, active,
         displayOrder: Number(order) || 0,
       };
       if (isEdit) await taxApi.adminUpdateTestimonial(auth, initial.id, payload);
@@ -1689,6 +1707,13 @@ function TestimonialForm({ initial, auth, community, onClose, onSaved, t }) {
           <select value={locale} onChange={e => setLocale(e.target.value)}>
             <option value="en">English</option>
             <option value="es">Español</option>
+          </select>
+        </label>
+        <label style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.source')}:&nbsp;
+          <select value={source} onChange={e => setSource(e.target.value)}>
+            <option value="local">{t('owner.settings.testimonials.source.local')}</option>
+            <option value="google">{t('owner.settings.testimonials.source.google')}</option>
           </select>
         </label>
         <label style={{ fontSize: 12, color: 'var(--tax-muted)' }}>

@@ -7144,15 +7144,19 @@ module.exports = function createTaxRouter(deps) {
     }
     const rating = Math.max(1, Math.min(5, Math.round(Number(body.rating) || 5)));
     const locale = body.locale === 'es' ? 'es' : 'en';
+    // Manual entries can be flagged as Google reviews so the public
+    // section shows the Google badge — the owner takes responsibility
+    // for accuracy. Anything else falls back to 'local'.
+    const source = body.source === 'google' ? 'google' : 'local';
     const id = 'tt_' + uuidv4().slice(0, 12);
     const { data, error } = await supabase.from('tax_testimonials').insert({
-      id, community_id: communitySlug, source: 'local',
+      id, community_id: communitySlug, source,
       author_name: authorName,
       author_role: trim(body.authorRole, 200),
       rating, body: text, locale,
       display_order: Math.max(0, Math.round(Number(body.displayOrder) || 0)),
       active: true,
-    }).select('id, author_name, author_role, rating, body, locale, display_order, active')
+    }).select('id, source, author_name, author_role, rating, body, locale, display_order, active')
       .maybeSingle();
     if (error) return sendSupabaseError(res, error);
     res.json({ testimonial: data });
@@ -7168,6 +7172,7 @@ module.exports = function createTaxRouter(deps) {
     if (body.body       !== undefined) update.body        = trim(body.body, 4000);
     if (body.rating     !== undefined) update.rating      = Math.max(1, Math.min(5, Math.round(Number(body.rating) || 5)));
     if (body.locale     !== undefined) update.locale      = body.locale === 'es' ? 'es' : 'en';
+    if (body.source     !== undefined) update.source      = body.source === 'google' ? 'google' : 'local';
     if (body.active     !== undefined) update.active      = !!body.active;
     if (body.displayOrder !== undefined) update.display_order = Math.max(0, Math.round(Number(body.displayOrder) || 0));
     const { error } = await supabase.from('tax_testimonials').update(update).eq('id', id);
