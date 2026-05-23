@@ -3098,3 +3098,17 @@ values
     '{"en":"Second installment of Connecticut real and personal property tax (most municipalities — confirm with your local town tax collector).","es":"Segunda cuota del impuesto predial e impuesto sobre propiedad personal de Connecticut (la mayoría de los municipios — confirma con el cobrador local)."}'::jsonb,
     'annual', 1, 1, '{"business"}', 'Connecticut', 'property-tax', 260)
 on conflict (id) do nothing;
+
+-- Tax calendar lookahead horizon (Phase 4n.64).
+--
+-- Controls how far into the future the public /tax/<slug>/calendar
+-- page expands recurring deadlines. Owner-configurable from Owner
+-- Settings → Tax calendar. Default 18 months covers the full filing
+-- cycle (current year + the following one) so visitors landing in
+-- the December gap still see January, March, and April obligations.
+alter table public.communities
+  add column if not exists tax_calendar_horizon_months smallint not null default 18;
+do $$ begin
+  alter table public.communities add constraint tax_calendar_horizon_months_chk
+    check (tax_calendar_horizon_months between 1 and 36);
+exception when duplicate_object then null; end $$;

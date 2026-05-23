@@ -437,8 +437,68 @@ export default function OwnerSettings() {
       <LandingCopySection settings={settings} auth={auth} community={community}
                           t={t} onSaved={load} />
 
+      <CalendarHorizonSection settings={settings} auth={auth} community={community}
+                              t={t} onSaved={load} />
+
       <TestimonialsSectionAdmin auth={auth} community={community} t={t} />
     </EmployeeShell>
+  );
+}
+
+// Calendar horizon editor — controls how far the public
+// /tax/<slug>/calendar page expands recurring deadlines. The page
+// already computes occurrences client-side; this just persists the
+// owner's preferred window so refreshes use the same value.
+function CalendarHorizonSection({ settings, auth, community, t, onSaved }) {
+  const initial = Number(settings?.tax_calendar_horizon_months) || 18;
+  const [months, setMonths] = useState(String(initial));
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  useEffect(() => { setMonths(String(initial)); }, [initial]);
+
+  const dirty = String(initial) !== String(months);
+  const onSave = async () => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const n = Math.max(1, Math.min(36, Math.round(Number(months) || 18)));
+      await taxApi.adminSetCalendarHorizon(auth, { communitySlug: community.id, months: n });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      onSaved();
+    } catch (e) { setMsg({ kind: 'error', text: e?.message || '' }); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <CollapsibleSection
+      storageKey="calendarHorizon"
+      defaultOpen={false}
+      title={t('owner.settings.calendarHorizon.title')}
+      subtitle={t('owner.settings.calendarHorizon.subtitle')}>
+      {msg.text && (
+        <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginBottom: 8 }}>{msg.text}</div>
+      )}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label style={{ fontSize: 13, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.calendarHorizon.label')}
+        </label>
+        <input type="number" min="1" max="36" value={months}
+               onChange={e => setMonths(e.target.value)}
+               disabled={busy}
+               style={{ width: 80 }} />
+        <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.calendarHorizon.unit')}
+        </span>
+        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                onClick={onSave} disabled={busy || !dirty}>
+          {busy ? t('lead.submitting') : t('owner.settings.calendarHorizon.save')}
+        </button>
+      </div>
+      <p style={{ margin: '8px 0 0', fontSize: 12, color: 'var(--tax-muted)' }}>
+        {t('owner.settings.calendarHorizon.hint')}
+      </p>
+    </CollapsibleSection>
   );
 }
 

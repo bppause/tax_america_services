@@ -460,7 +460,7 @@ module.exports = function createTaxRouter(deps) {
     const slug = trim(req.params.slug, 200);
     if (!slug) return res.status(400).json({ error: 'Community slug required.' });
     const { data: community } = await supabase.from('communities')
-      .select('id, business_type').eq('id', slug).maybeSingle();
+      .select('id, business_type, tax_calendar_horizon_months').eq('id', slug).maybeSingle();
     if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
       return res.status(404).json({ error: 'Tax community not found.' });
     }
@@ -470,7 +470,12 @@ module.exports = function createTaxRouter(deps) {
       .order('display_order', { ascending: true })
       .limit(200);
     if (error) return sendSupabaseError(res, error);
-    res.json({ deadlines: data || [] });
+    // Horizon comes from the community row so the page can expand
+    // recurring deadlines across the whole owner-configured window
+    // (default 18 months — set per community in Owner Settings).
+    const horizonMonths = Math.max(1, Math.min(36,
+      Number(community.tax_calendar_horizon_months) || 18));
+    res.json({ deadlines: data || [], horizon_months: horizonMonths });
   });
 
   // ── POST /leads ─────────────────────────────────────────────────────────────
@@ -2505,6 +2510,30 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, months, tasksDeleted, tasksCreated });
   });
 
+  // Public tax-calendar horizon: how many months of recurring
+  // deadlines the /tax/<slug>/calendar page expands. Owner-tunable
+  // in Owner Settings. Range 1–36, default 18 enforced in schema.
+  router.put('/admin/community-settings/calendar-horizon', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.months);
+    const months = Math.max(1, Math.min(36, Math.round(Number.isFinite(raw) ? raw : 18)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_calendar_horizon_months: months, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'calendar_horizon_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { months },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, months });
+  });
+
   router.put('/admin/community-settings/reminders-enabled', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
     const communitySlug = trim(req.body?.communitySlug, 200);
@@ -2799,6 +2828,7 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
+        tax_calendar_horizon_months,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,

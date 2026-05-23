@@ -14,6 +14,7 @@ export default function PublicCalendar({ communitySlug }) {
   const { locale, t } = useT();
   const [community, setCommunity] = useState(null);
   const [deadlines, setDeadlines] = useState([]);
+  const [horizonMonths, setHorizonMonths] = useState(18);
   const [err, setErr] = useState('');
   const [entityFilter, setEntityFilter] = useState('all'); // 'all'|'individual'|'business'
   const [jurisdiction, setJurisdiction] = useState('all');
@@ -27,35 +28,50 @@ export default function PublicCalendar({ communitySlug }) {
       if (cancelled) return;
       setCommunity(c.community || null);
       setDeadlines(d.deadlines || []);
+      // Owner-configurable; defaults to 18 in the API contract so a
+      // missing column or upgrade race doesn't break the page.
+      if (Number.isFinite(d.horizon_months)) setHorizonMonths(d.horizon_months);
     }).catch(e => !cancelled && setErr(e?.message || ''));
     return () => { cancelled = true; };
   }, [communitySlug]);
 
-  // Compute "next occurrence" for each deadline. Annual: this year's
-  // (month, day) if still in the future, else next year. One-time:
-  // its date verbatim (skip if past).
   const today = useMemo(() => {
     const d = new Date();
     return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   }, []);
+
+  // Expand each deadline into every occurrence inside [today, cutoff].
+  // Annual rows can yield 1, 2, or 3 occurrences depending on horizon
+  // (e.g., a Jan 31 deadline with an 18-month window shows next Jan
+  // AND the Jan after that). One-time rows pass through if their
+  // single date is in window.
   const rows = useMemo(() => {
-    const computed = (deadlines || []).map(d => {
-      let next = null;
+    const horizon = Math.max(1, Math.min(36, horizonMonths || 18));
+    const cutoff = new Date(today);
+    cutoff.setUTCMonth(cutoff.getUTCMonth() + horizon);
+    const out = [];
+    for (const d of (deadlines || [])) {
       if (d.recurrence === 'annual' && d.month && d.day) {
-        const tryYear = (year) => new Date(Date.UTC(year, d.month - 1, d.day));
-        let cand = tryYear(today.getUTCFullYear());
-        if (cand < today) cand = tryYear(today.getUTCFullYear() + 1);
-        next = cand;
+        let year = today.getUTCFullYear();
+        // Walk forward up to four years; safety cap prevents an
+        // infinite loop on malformed data (month/day mismatch).
+        for (let i = 0; i < 4; i++) {
+          const cand = new Date(Date.UTC(year + i, d.month - 1, d.day));
+          if (cand >= today && cand <= cutoff) {
+            out.push({ ...d, _nextIso: cand.toISOString().slice(0, 10), _next: cand });
+          }
+          if (cand > cutoff) break;
+        }
       } else if (d.recurrence === 'one_time' && d.date) {
         const cand = new Date(`${d.date}T00:00:00Z`);
-        next = cand >= today ? cand : null;
+        if (cand >= today && cand <= cutoff) {
+          out.push({ ...d, _nextIso: cand.toISOString().slice(0, 10), _next: cand });
+        }
       }
-      return next ? { ...d, _nextIso: next.toISOString().slice(0, 10), _next: next } : null;
-    }).filter(Boolean);
-
-    computed.sort((a, b) => a._nextIso.localeCompare(b._nextIso));
-    return computed;
-  }, [deadlines, today]);
+    }
+    out.sort((a, b) => a._nextIso.localeCompare(b._nextIso));
+    return out;
+  }, [deadlines, today, horizonMonths]);
 
   // Distinct jurisdiction set in the data (always include 'federal'
   // so the chip exists even on a fresh community).
@@ -150,7 +166,7 @@ export default function PublicCalendar({ communitySlug }) {
                 }}>{g.label}</h3>
                 <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 8 }}>
                   {g.rows.map(r => (
-                    <DeadlineCard key={r.id} row={r} locale={locale} t={t}
+                    <DeadlineCard key={`${r.id}-${r._nextIso}`} row={r} locale={locale} t={t}
                                   communitySlug={communitySlug} />
                   ))}
                 </ul>
