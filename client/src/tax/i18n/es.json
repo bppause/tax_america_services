@@ -144,7 +144,7 @@
   "owner.settings.googleReviews.lede": "Pega tu Google Place ID y haz clic en Sincronizar ahora para traer las últimas reseñas a esta sección. Puedes volver a sincronizar cuando quieras — las re-sincronizaciones actualizan por identidad de reseña, sin duplicar.",
   "owner.settings.googleReviews.ledeNoKey": "La plataforma no tiene configurada una API key de Google Places. Pide a tu desarrollador que defina GOOGLE_PLACES_API_KEY en el entorno del servidor y redespliegue. Aun así puedes guardar tu Place ID — Sincronizar se habilitará cuando la key esté lista.",
   "owner.settings.googleReviews.placeIdLabel": "Google Place ID",
-  "owner.settings.googleReviews.placeIdHint": "Encuéntralo en developers.google.com/maps/documentation/places/web-service/place-id, o pega una URL de Google Maps con place_id=… y lo extraemos.",
+  "owner.settings.googleReviews.placeIdHint": "Pega un enlace de Google Maps (https://maps.app.goo.gl/…) o el Place ID directo. Seguimos la redirección en el servidor y extraemos el ID por ti.",
   "owner.settings.googleReviews.savePlaceId": "Guardar Place ID",
   "owner.settings.googleReviews.syncNow": "Sincronizar ahora",
   "owner.settings.googleReviews.syncing": "Sincronizando…",
