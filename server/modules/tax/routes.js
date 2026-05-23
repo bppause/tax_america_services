@@ -27,6 +27,7 @@ const {
   resolveNamePayload, firstNameOf, displayNameOf,
 } = require('./names');
 const { suggestionsForSlug } = require('./task-suggestions');
+const { TEMPLATES_BY_SLUG } = require('./auto-task-templates');
 const {
   PERMISSIONS: TAX_PERMISSIONS,
   hasEmployeePermission,
@@ -3217,6 +3218,90 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true });
   });
 
+  // ── Phase 4n.62: auto-task suggestion catalog ─────────────────────────
+  //
+  // GET /admin/products/:id/auto-task-templates
+  // Returns the curated catalog keyed by the product's slug, each
+  // annotated with `enabled: boolean` so the picker can render the
+  // current state. Disabled by default — nothing fires until the
+  // owner enables at least one.
+  router.get('/admin/products/:id/auto-task-templates', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    const { data: prod } = await supabase.from('tax_products')
+      .select('id, community_id, slug').eq('id', productId).maybeSingle();
+    if (!prod) return res.status(404).json({ error: 'Product not found.' });
+    const catalog = TEMPLATES_BY_SLUG[prod.slug] || [];
+    // Look up which template keys already have a row for this product.
+    const { data: enabledRows } = await supabase.from('tax_service_auto_tasks')
+      .select('id, template_key, active').eq('product_id', productId)
+      .not('template_key', 'is', null);
+    const enabledByKey = new Map();
+    for (const r of (enabledRows || [])) enabledByKey.set(r.template_key, r);
+    const templates = catalog.map(t => ({
+      ...t,
+      enabled: !!enabledByKey.get(t.key),
+      auto_task_id: enabledByKey.get(t.key)?.id || null,
+    }));
+    res.json({ templates });
+  });
+
+  // POST /admin/products/:id/auto-task-templates/:key/enable
+  // Copies the template into tax_service_auto_tasks and flags the row
+  // with template_key for later disable matching. No-op when already
+  // enabled (returns the existing row).
+  router.post('/admin/products/:id/auto-task-templates/:key/enable', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    const tplKey = trim(req.params.key, 120);
+    const { data: prod } = await supabase.from('tax_products')
+      .select('id, community_id, slug').eq('id', productId).maybeSingle();
+    if (!prod) return res.status(404).json({ error: 'Product not found.' });
+    const catalog = TEMPLATES_BY_SLUG[prod.slug] || [];
+    const tpl = catalog.find(t => t.key === tplKey);
+    if (!tpl) return res.status(404).json({ error: 'Template not found for this service.' });
+
+    const { data: existing } = await supabase.from('tax_service_auto_tasks')
+      .select('id').eq('product_id', productId).eq('template_key', tplKey).maybeSingle();
+    if (existing) return res.json({ ok: true, id: existing.id, alreadyEnabled: true });
+
+    // Append after the current max display_order so the suggestion lands
+    // at the bottom of the existing list rather than jumping to position 1.
+    const { data: maxRow } = await supabase.from('tax_service_auto_tasks')
+      .select('display_order').eq('product_id', productId)
+      .order('display_order', { ascending: false }).limit(1).maybeSingle();
+    const nextOrder = ((maxRow?.display_order || 0) + 10);
+
+    const id = 'sat_' + uuidv4().slice(0, 12);
+    const { error } = await supabase.from('tax_service_auto_tasks').insert({
+      id, product_id: productId,
+      template_key: tplKey,
+      title_i18n: tpl.title || {},
+      description_i18n: tpl.description || {},
+      cadence_kind: tpl.cadence_kind || 'monthly',
+      anchor_rule: tpl.anchor_rule || {},
+      default_priority: tpl.default_priority || 'normal',
+      display_order: nextOrder,
+      active: true,
+    });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, id });
+  });
+
+  // POST /admin/products/:id/auto-task-templates/:key/disable
+  // Deletes the matching row. If the owner edited the row freely
+  // after enabling, those changes are lost — surface that in the UI
+  // confirmation message.
+  router.post('/admin/products/:id/auto-task-templates/:key/disable', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    const tplKey = trim(req.params.key, 120);
+    const { error } = await supabase.from('tax_service_auto_tasks')
+      .delete().eq('product_id', productId).eq('template_key', tplKey);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
   // ── GET /admin/products/:id/auto-tasks ──────────────────────────────────
   // List the recurring auto-tasks owned by a service. One service can
   // have many — a Bookkeeping engagement might have a monthly
@@ -3288,8 +3373,12 @@ module.exports = function createTaxRouter(deps) {
     const valid = sanitized.filter(r => r.title_i18n.en || r.title_i18n.es);
 
     const { data: existing } = await supabase.from('tax_service_auto_tasks')
-      .select('id').eq('product_id', productId);
+      .select('id, template_key').eq('product_id', productId);
     const existingIds = new Set((existing || []).map(r => r.id));
+    // Preserve template_key across an editor save — the client doesn't
+    // round-trip it, but it shouldn't get nulled out just because the
+    // owner saved an unrelated change.
+    const templateKeyById = new Map((existing || []).map(r => [r.id, r.template_key]));
     const keepIds = new Set();
     const inserts = [];
     const updates = [];
@@ -3297,7 +3386,11 @@ module.exports = function createTaxRouter(deps) {
       const { idIfExisting, ...rest } = row;
       if (idIfExisting && existingIds.has(idIfExisting)) {
         keepIds.add(idIfExisting);
-        updates.push({ id: idIfExisting, ...rest, updated_at: new Date().toISOString() });
+        updates.push({
+          id: idIfExisting, ...rest,
+          template_key: templateKeyById.get(idIfExisting) || null,
+          updated_at: new Date().toISOString(),
+        });
       } else {
         inserts.push({
           id: 'sat_' + uuidv4().slice(0, 16),
