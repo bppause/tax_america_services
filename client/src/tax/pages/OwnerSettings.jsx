@@ -1312,6 +1312,128 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
   );
 }
 
+// Inline Google Reviews panel — sits at the top of the Reviews &
+// testimonials section. Two purposes:
+//   1. Capture the community's Google Place ID (paste-friendly: we
+//      also accept full Google Maps URLs and pull the place_id out).
+//   2. Trigger a manual sync that hits Google Places Details and
+//      upserts the latest reviews into tax_testimonials as
+//      source='google' rows. Cron-style auto-sync is a follow-up.
+//
+// The panel surfaces three states clearly:
+//   • No API key configured (server env missing) — link to docs.
+//   • API key set + no Place ID — prompt for the ID.
+//   • Both set — show last-sync timestamp + Sync button.
+function GoogleReviewsPanel({ auth, community, onSynced, t }) {
+  const [state, setState] = useState(null);
+  const [placeId, setPlaceId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  const load = () => {
+    if (!community?.id) return;
+    taxApi.adminGetGoogleReviewsState(auth, community.id)
+      .then(d => { setState(d); setPlaceId(d.placeId || ''); })
+      .catch(e => setMsg({ kind: 'error', text: e?.message || '' }));
+  };
+  useEffect(load, [community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onSave = async () => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetGooglePlaceId(auth, {
+        communitySlug: community.id, placeId: placeId.trim(),
+      });
+      setMsg({ kind: 'success', text: t('owner.settings.googleReviews.saved') });
+      load();
+    } catch (e) { setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' }); }
+    finally { setBusy(false); }
+  };
+
+  const onSync = async () => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const r = await taxApi.adminSyncGoogleReviews(auth, { communitySlug: community.id });
+      setMsg({ kind: 'success', text: t('owner.settings.googleReviews.synced', { n: r.upserted || 0 }) });
+      load();
+      if (typeof onSynced === 'function') onSynced();
+    } catch (e) { setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' }); }
+    finally { setBusy(false); }
+  };
+
+  if (!state) return null;
+  const fmtLast = (iso) => {
+    if (!iso) return t('owner.settings.googleReviews.neverSynced');
+    try { return new Date(iso).toLocaleString(); } catch { return iso; }
+  };
+  const dirty = (placeId.trim() || '') !== (state.placeId || '');
+
+  return (
+    <div style={{
+      marginBottom: 14, padding: 12, borderRadius: 8,
+      background: 'color-mix(in srgb, #2563eb 6%, #fff)',
+      border: '1px solid color-mix(in srgb, #2563eb 24%, #fff)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>
+          ⭐ {t('owner.settings.googleReviews.title')}
+        </div>
+        {!state.hasApiKey && (
+          <span style={{
+            padding: '1px 8px', borderRadius: 999,
+            background: '#fee2e2', color: '#991b1b',
+            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+          }}>
+            {t('owner.settings.googleReviews.apiKeyMissing')}
+          </span>
+        )}
+      </div>
+
+      <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--tax-muted)' }}>
+        {state.hasApiKey
+          ? t('owner.settings.googleReviews.lede')
+          : t('owner.settings.googleReviews.ledeNoKey')}
+      </p>
+
+      {msg.text && (
+        <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginBottom: 8 }}>{msg.text}</div>
+      )}
+
+      <div style={{ display: 'grid', gap: 8 }}>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.settings.googleReviews.placeIdLabel')}
+          </label>
+          <input type="text" value={placeId}
+                 onChange={e => setPlaceId(e.target.value)}
+                 placeholder="ChIJ…"
+                 disabled={busy}
+                 style={{ width: '100%' }} />
+          <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+            {t('owner.settings.googleReviews.placeIdHint')}
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={onSave} disabled={busy || !dirty}
+                  style={{ color: 'var(--tax-text)' }}>
+            {t('owner.settings.googleReviews.savePlaceId')}
+          </button>
+          <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                  onClick={onSync}
+                  disabled={busy || !state.hasApiKey || !state.placeId || dirty}>
+            {busy ? t('owner.settings.googleReviews.syncing') : t('owner.settings.googleReviews.syncNow')}
+          </button>
+          <span style={{ fontSize: 11, color: 'var(--tax-muted)', marginLeft: 6 }}>
+            {t('owner.settings.googleReviews.lastSync')}: {fmtLast(state.lastSyncAt)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Owner-facing testimonials CRUD. Each row is one quote shown in the
 // public TestimonialsSection. Defaults to an inline list with quick
 // edit/delete; "+ Add testimonial" expands an editor for a fresh row.
@@ -1345,6 +1467,8 @@ function TestimonialsSectionAdmin({ auth, community, t }) {
         <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
              style={{ marginBottom: 8 }}>{msg.text}</div>
       )}
+
+      <GoogleReviewsPanel auth={auth} community={community} onSynced={load} t={t} />
 
       {rows === null
         ? <p>{t('loading')}</p>

@@ -64,6 +64,7 @@ module.exports = function createTaxRouter(deps) {
     getTemplateDefaults,
     publicAppUrl,
     emailFrom: PLATFORM_EMAIL_FROM,
+    googlePlacesApiKey: GOOGLE_PLACES_API_KEY,
     isGlobalAdmin,
     isEnvGlobalAdminEmail,
     runReminderCron,
@@ -7150,6 +7151,142 @@ module.exports = function createTaxRouter(deps) {
     const { error } = await supabase.from('tax_testimonials').delete().eq('id', id);
     if (error) return sendSupabaseError(res, error);
     res.json({ ok: true });
+  });
+
+  // ── Phase 4n.63: Google Places reviews sync ────────────────────────────
+  //
+  // GET /admin/testimonials/google
+  //   Returns { placeId, lastSyncAt, hasApiKey } so the UI can render
+  //   the current state of the integration (set vs. unset, when the
+  //   last manual sync ran, and whether the platform has the API key
+  //   configured at all).
+  router.get('/admin/testimonials/google', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('tax_google_place_id').eq('id', communitySlug).maybeSingle();
+    // Most-recent google-sourced row stands in for "last synced" — the
+    // upsert path bumps updated_at on every sync.
+    const { data: lastRow } = await supabase.from('tax_testimonials')
+      .select('updated_at').eq('community_id', communitySlug).eq('source', 'google')
+      .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    res.json({
+      placeId: community?.tax_google_place_id || '',
+      lastSyncAt: lastRow?.updated_at || null,
+      hasApiKey: !!GOOGLE_PLACES_API_KEY,
+    });
+  });
+
+  router.put('/admin/community-settings/google-place-id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    // Accept place IDs and strip obvious URL wrappers so the owner can
+    // paste straight from a Google Maps URL.
+    const raw = String(req.body?.placeId || '').trim();
+    let placeId = raw;
+    const m = raw.match(/place_id[:=]([A-Za-z0-9_-]+)/);
+    if (m) placeId = m[1];
+    if (placeId.length > 200) placeId = placeId.slice(0, 200);
+    const { error } = await supabase.from('communities')
+      .update({ tax_google_place_id: placeId, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, placeId });
+  });
+
+  // POST /admin/testimonials/sync-google
+  //   Fetches up to 5 latest reviews from Google Places Details and
+  //   upserts each one into tax_testimonials with source='google'.
+  //   source_id is built from (time + author_name) — Places doesn't
+  //   ship stable review IDs in the legacy endpoint, but this
+  //   combination is stable enough that re-syncs don't duplicate.
+  //
+  //   Locale: stored as the community's default_locale because Google
+  //   returns one translation per call and we don't currently double-
+  //   fetch. The TestimonialsSection's locale fallback handles the
+  //   visitor's actual language.
+  router.post('/admin/testimonials/sync-google', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    if (!GOOGLE_PLACES_API_KEY) {
+      return res.status(400).json({ error: 'google_api_key_missing',
+        message: 'GOOGLE_PLACES_API_KEY is not configured on the server. Set it in the environment and redeploy.' });
+    }
+    const { data: community } = await supabase.from('communities')
+      .select('id, tax_google_place_id, default_locale').eq('id', communitySlug).maybeSingle();
+    if (!community || !community.tax_google_place_id) {
+      return res.status(400).json({ error: 'place_id_missing',
+        message: 'Save your Google Place ID before syncing.' });
+    }
+
+    const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
+    url.searchParams.set('place_id', community.tax_google_place_id);
+    url.searchParams.set('fields', 'reviews,rating,user_ratings_total,name');
+    url.searchParams.set('key', GOOGLE_PLACES_API_KEY);
+    url.searchParams.set('language', community.default_locale === 'en' ? 'en' : 'es');
+
+    let payload;
+    try {
+      const resp = await fetch(url.toString());
+      payload = await resp.json();
+    } catch (e) {
+      return res.status(502).json({ error: 'google_fetch_failed',
+        message: `Could not reach Google Places API: ${e?.message || e}` });
+    }
+    if (payload.status !== 'OK') {
+      return res.status(502).json({ error: 'google_api_status',
+        message: `Google Places API returned status: ${payload.status}${payload.error_message ? ' — ' + payload.error_message : ''}` });
+    }
+    const reviews = Array.isArray(payload.result?.reviews) ? payload.result.reviews : [];
+    let upserted = 0;
+    const locale = community.default_locale === 'en' ? 'en' : 'es';
+    for (const r of reviews) {
+      const author = String(r.author_name || '').slice(0, 200) || 'Google user';
+      const time = String(r.time || Date.now()).slice(0, 32);
+      // Stable-enough synthetic ID: epoch + author. Don't include the
+      // text because Google sometimes re-translates between syncs.
+      const sourceId = `${time}-${author.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)}`;
+      const row = {
+        community_id: communitySlug,
+        source: 'google',
+        source_id: sourceId,
+        author_name: author,
+        author_role: r.relative_time_description ? String(r.relative_time_description).slice(0, 200) : '',
+        rating: Math.max(1, Math.min(5, Math.round(Number(r.rating) || 5))),
+        body: String(r.text || '').slice(0, 4000),
+        locale,
+        active: true,
+        updated_at: new Date().toISOString(),
+      };
+      if (!row.body) continue;
+      // Upsert by (community, source, source_id) — partial unique index
+      // in schema.sql makes ON CONFLICT viable.
+      const { data: existing } = await supabase.from('tax_testimonials')
+        .select('id').eq('community_id', communitySlug).eq('source', 'google').eq('source_id', sourceId).maybeSingle();
+      if (existing) {
+        await supabase.from('tax_testimonials').update(row).eq('id', existing.id);
+      } else {
+        await supabase.from('tax_testimonials').insert({
+          id: 'tt_' + uuidv4().slice(0, 12),
+          ...row,
+          display_order: 0,
+          created_at: new Date().toISOString(),
+        });
+      }
+      upserted++;
+    }
+    try {
+      await auditLog({
+        entity: 'tax.community.testimonials', entityId: communitySlug,
+        action: 'sync_google',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { upserted, totalRating: payload.result?.rating || null, totalCount: payload.result?.user_ratings_total || null },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, upserted, placeName: payload.result?.name || null });
   });
 
   // ── Phase 4n.24: e-signature requests ──────────────────────────────────
