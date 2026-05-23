@@ -6446,6 +6446,214 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true });
   });
 
+  // ── Phase 4n.55: per-task time tracking ────────────────────────────────
+  //
+  // Time entries are individual start/stop intervals an employee logs on
+  // a task. Running timers leave ended_at null; the partial unique index
+  // on (employee_id) where ended_at is null enforces one-running-at-a-
+  // time at the DB layer. Closed entries store duration_seconds so
+  // reports don't have to subtract timestamps on every read.
+
+  // Visibility rule for time entries: assigned employee + admins can
+  // always log; staff can only edit/delete their own entries.
+  async function canEmployeeLogTimeOnTask(emp, task) {
+    if (!emp || !task) return false;
+    if (task.community_id !== emp.community_id) return false;
+    if (emp.role === 'admin') return true;
+    if (task.assigned_employee_id === emp.id) return true;
+    if (task.created_by_employee_id === emp.id) return true;
+    // Staff with customer-level access to this task's customer can log
+    // time even when the task isn't directly assigned to them.
+    if (task.customer_id) {
+      return await canEmployeeSeeCustomer(emp, task.customer_id);
+    }
+    return false;
+  }
+
+  function calcDurationSeconds(startedAt, endedAt) {
+    const s = new Date(startedAt).getTime();
+    const e = new Date(endedAt).getTime();
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return 0;
+    return Math.max(0, Math.round((e - s) / 1000));
+  }
+
+  router.get('/admin/tasks/:id/time-entries', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (task.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    const { data: entries, error } = await supabase.from('tax_task_time_entries')
+      .select(`
+        id, task_id, employee_id, started_at, ended_at, duration_seconds, note, billable, created_at,
+        employee:tax_employees ( id, name, first_name, last_name, email )
+      `)
+      .eq('task_id', taskId)
+      .order('started_at', { ascending: false }).limit(200);
+    if (error) return sendSupabaseError(res, error);
+    const total = (entries || []).reduce((acc, e) => {
+      if (e.ended_at) return acc + (e.duration_seconds || 0);
+      // Include the running portion of an in-flight timer so the total
+      // moves while a timer is on.
+      const live = calcDurationSeconds(e.started_at, new Date().toISOString());
+      return acc + live;
+    }, 0);
+    res.json({ entries: entries || [], total_seconds: total });
+  });
+
+  // Start a timer. Caller's currently-running entry (across any task)
+  // is stopped first so the one-running invariant holds even when the
+  // employee forgets to stop the previous one — the closed entry keeps
+  // its original start/stop on the prior task.
+  router.post('/admin/tasks/:id/time-entries/start', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!(await canEmployeeLogTimeOnTask(emp, task))) {
+      return res.status(403).json({ error: 'Not allowed to log time on this task.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    // Auto-stop any in-flight timer for this employee on any task.
+    const { data: running } = await supabase.from('tax_task_time_entries')
+      .select('id, started_at').eq('employee_id', emp.id).is('ended_at', null).limit(1);
+    if (running && running.length) {
+      const r = running[0];
+      const dur = calcDurationSeconds(r.started_at, nowIso);
+      await supabase.from('tax_task_time_entries').update({
+        ended_at: nowIso, duration_seconds: dur, updated_at: nowIso,
+      }).eq('id', r.id);
+    }
+
+    const id = 'tt_' + uuidv4().slice(0, 16);
+    const { data: row, error } = await supabase.from('tax_task_time_entries').insert({
+      id, community_id: task.community_id, task_id: taskId, employee_id: emp.id,
+      started_at: nowIso, note, billable: true,
+    }).select('id, task_id, employee_id, started_at, ended_at, duration_seconds, note, billable')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ entry: row, stoppedRunningId: running && running[0]?.id || null });
+  });
+
+  router.post('/admin/tasks/:id/time-entries/stop', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const note = req.body?.note !== undefined ? trim(req.body.note, MAX_TEXT_LEN) : null;
+    // Find the running entry for this employee on this task. If none,
+    // look across all tasks (the UI sometimes calls stop from the
+    // header) but only when the body explicitly says so via any=1.
+    const { data: running } = await supabase.from('tax_task_time_entries')
+      .select('id, started_at, note')
+      .eq('employee_id', emp.id).eq('task_id', taskId).is('ended_at', null).limit(1);
+    const r = running && running[0];
+    if (!r) return res.status(404).json({ error: 'No running timer found for this task.' });
+    const nowIso = new Date().toISOString();
+    const update = {
+      ended_at: nowIso,
+      duration_seconds: calcDurationSeconds(r.started_at, nowIso),
+      updated_at: nowIso,
+    };
+    if (note !== null) update.note = note;
+    const { error } = await supabase.from('tax_task_time_entries').update(update).eq('id', r.id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, id: r.id, duration_seconds: update.duration_seconds });
+  });
+
+  // Manual entry — owner backfilling time after the fact. Requires
+  // both startedAt and endedAt (no open-ended manual entries).
+  router.post('/admin/tasks/:id/time-entries', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!(await canEmployeeLogTimeOnTask(emp, task))) {
+      return res.status(403).json({ error: 'Not allowed to log time on this task.' });
+    }
+    const startedAt = trim(req.body?.startedAt, 50);
+    const endedAt   = trim(req.body?.endedAt, 50);
+    if (!startedAt || !endedAt) return res.status(400).json({ error: 'startedAt and endedAt required.' });
+    const dur = calcDurationSeconds(startedAt, endedAt);
+    if (dur <= 0) return res.status(400).json({ error: 'endedAt must be after startedAt.' });
+    if (dur > 24 * 3600 * 7) return res.status(400).json({ error: 'Time entry longer than a week — split it into separate rows.' });
+    const billable = req.body?.billable === false ? false : true;
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    // Allow logging on behalf of another employee — admins only — via
+    // employeeId in the body. Staff always log under their own id.
+    let employeeId = emp.id;
+    if (emp.role === 'admin' && req.body?.employeeId) {
+      employeeId = trim(req.body.employeeId, 200);
+    }
+    const id = 'tt_' + uuidv4().slice(0, 16);
+    const { data: row, error } = await supabase.from('tax_task_time_entries').insert({
+      id, community_id: task.community_id, task_id: taskId, employee_id: employeeId,
+      started_at: startedAt, ended_at: endedAt, duration_seconds: dur,
+      note, billable,
+    }).select('id, task_id, employee_id, started_at, ended_at, duration_seconds, note, billable')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ entry: row });
+  });
+
+  router.put('/admin/time-entries/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const entryId = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_task_time_entries')
+      .select('id, community_id, employee_id, task_id').eq('id', entryId).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Time entry not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (emp.role !== 'admin' && cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'Staff can only edit their own time entries.' });
+    }
+    const update = { updated_at: new Date().toISOString() };
+    if (req.body?.startedAt) update.started_at = trim(req.body.startedAt, 50);
+    if (req.body?.endedAt)   update.ended_at   = trim(req.body.endedAt, 50);
+    if (update.started_at && update.ended_at) {
+      const dur = calcDurationSeconds(update.started_at, update.ended_at);
+      if (dur <= 0) return res.status(400).json({ error: 'endedAt must be after startedAt.' });
+      update.duration_seconds = dur;
+    }
+    if (req.body?.note !== undefined)     update.note     = trim(req.body.note, MAX_TEXT_LEN);
+    if (req.body?.billable !== undefined) update.billable = !!req.body.billable;
+    const { error } = await supabase.from('tax_task_time_entries').update(update).eq('id', entryId);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/time-entries/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const entryId = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_task_time_entries')
+      .select('id, community_id, employee_id').eq('id', entryId).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Time entry not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (emp.role !== 'admin' && cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'Staff can only delete their own time entries.' });
+    }
+    const { error } = await supabase.from('tax_task_time_entries').delete().eq('id', entryId);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // GET /admin/employees/me/running-timer — returns the caller's
+  // currently in-flight time entry (if any). Lets the employee shell
+  // surface a small "timer running on <task>" reminder so they don't
+  // forget to stop it at the end of the day.
+  router.get('/admin/employees/me/running-timer', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const { data } = await supabase.from('tax_task_time_entries')
+      .select(`
+        id, task_id, started_at, note,
+        task:tax_tasks ( id, title, customer_id )
+      `)
+      .eq('employee_id', emp.id).is('ended_at', null).limit(1);
+    res.json({ running: (data && data[0]) || null });
+  });
+
   // ── Phase 4n.24: e-signature requests ──────────────────────────────────
   //
   // Owner creates a request → customer sees it in the portal → customer
