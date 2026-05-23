@@ -434,12 +434,14 @@ module.exports = function createTaxRouter(deps) {
   });
 
   // GET /community/:slug/testimonials — public reviews for the
-  // landing-page section. Returns the active set ordered by
-  // display_order asc then created_at desc, so an owner who pins
-  // specific reviews keeps that curation but the default (everything
-  // at display_order=0) falls through to most-recent-first. The
-  // configured displayLimit ships alongside so the client knows how
-  // many cards to render.
+  // landing-page section. Returns only Google-sourced rows so the
+  // section is fully dynamic off the Google sync; locally-authored
+  // rows stay in the DB (the admin CRUD still works) but no longer
+  // surface publicly. Ordered by display_order asc then created_at
+  // desc, where created_at is set to Google's publishTime on sync —
+  // so the default (everything at display_order=0) renders newest
+  // first. The configured displayLimit ships alongside so the client
+  // knows how many cards to render.
   router.get('/community/:slug/testimonials', async (req, res) => {
     if (!requireSupabaseEnv(res)) return;
     const slug = trim(req.params.slug, 200);
@@ -453,7 +455,7 @@ module.exports = function createTaxRouter(deps) {
       Number(community.tax_testimonials_display_limit) || 9));
     const { data, error } = await supabase.from('tax_testimonials')
       .select('id, source, author_name, author_role, rating, body, locale, display_order, created_at')
-      .eq('community_id', slug).eq('active', true)
+      .eq('community_id', slug).eq('active', true).eq('source', 'google')
       .order('display_order', { ascending: true })
       .order('created_at', { ascending: false })
       .limit(60);
@@ -7617,6 +7619,16 @@ module.exports = function createTaxRouter(deps) {
         .slice(0, 200)
         .toLowerCase()
         .replace(/[^a-z0-9_-]+/g, '-');
+      // Google ships ISO8601 in r.publishTime. We persist it as
+      // created_at so the public endpoint's "display_order asc,
+      // created_at desc" ordering surfaces the most recent review
+      // first — instead of ordering by sync time, which is
+      // effectively random for the 5 rows that come back in one
+      // batch.
+      const publishedAt = (() => {
+        const t = Date.parse(r.publishTime || '');
+        return Number.isFinite(t) ? new Date(t).toISOString() : new Date().toISOString();
+      })();
       const row = {
         community_id: communitySlug,
         source: 'google',
@@ -7627,6 +7639,7 @@ module.exports = function createTaxRouter(deps) {
         body: String(r.text?.text || r.originalText?.text || '').slice(0, 4000),
         locale,
         active: true,
+        created_at: publishedAt,
         updated_at: new Date().toISOString(),
       };
       if (!row.body) { skippedEmpty++; continue; }
@@ -7639,7 +7652,6 @@ module.exports = function createTaxRouter(deps) {
           id: 'tt_' + uuidv4().slice(0, 12),
           ...row,
           display_order: 0,
-          created_at: new Date().toISOString(),
         });
       }
       upserted++;
