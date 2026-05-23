@@ -3239,7 +3239,7 @@ insert into public.tax_relationship_default_faqs (id, relationship_type_id, disp
     'CT.gov — Filing Annual Reports'),
   ('business.annual_report.q3', 'business.annual_report', 30,
     '{"en":"What happens if I miss the annual report deadline?","es":"¿Qué pasa si pierdo la fecha del reporte anual?"}'::jsonb,
-    '{"en":"After the deadline your entity falls into "not in good standing." If you remain delinquent for an extended period, the state can administratively dissolve the entity — losing your limited-liability protection. Reinstatement is possible but adds late fees and paperwork. We send reminders 60, 30, and 7 days before the due date.","es":"Tras el plazo, su entidad queda en estado "no en regla". Si la mora se prolonga, el estado puede disolver administrativamente la entidad — perdiendo su protección de responsabilidad limitada. La reinstalación es posible pero implica multas y trámites adicionales. Enviamos recordatorios 60, 30 y 7 días antes del vencimiento."}'::jsonb,
+    '{"en":"After the deadline your entity falls into not-in-good-standing status. If you remain delinquent for an extended period, the state can administratively dissolve the entity — losing your limited-liability protection. Reinstatement is possible but adds late fees and paperwork. We send reminders 60, 30, and 7 days before the due date.","es":"Tras el plazo, su entidad queda en estado no-en-regla. Si la mora se prolonga, el estado puede disolver administrativamente la entidad — perdiendo su protección de responsabilidad limitada. La reinstalación es posible pero implica multas y trámites adicionales. Enviamos recordatorios 60, 30 y 7 días antes del vencimiento."}'::jsonb,
     'CT.gov — Administrative Dissolution'),
 
   -- Workers comp audit
