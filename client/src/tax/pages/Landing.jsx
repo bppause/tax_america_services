@@ -5,6 +5,7 @@ import Header from '../components/Header';
 import Hero from '../components/Hero';
 import ServicesGrid from '../components/ServicesGrid';
 import TeamSection from '../components/TeamSection';
+import TestimonialsSection from '../components/TestimonialsSection';
 import FaqsSection from '../components/FaqsSection';
 import ArticlesSection from '../components/ArticlesSection';
 import About from '../components/About';
@@ -123,6 +124,7 @@ export default function Landing({ communitySlug }) {
         <Hero community={community} />
         <ServicesGrid products={products} onRequestService={onRequestService} />
         <TeamSection communitySlug={communitySlug} />
+        <TestimonialsSection communitySlug={communitySlug} />
         <ArticlesSection communitySlug={communitySlug} />
         <FaqsSection communitySlug={communitySlug} />
         <About />

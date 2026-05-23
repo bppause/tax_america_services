@@ -428,6 +428,27 @@ module.exports = function createTaxRouter(deps) {
     } catch (e) { res.status(500).json({ error: e?.message || 'Failed to load articles.' }); }
   });
 
+  // GET /community/:slug/testimonials — public reviews for the
+  // landing-page section. Returns the active set ordered by display_order
+  // so the owner can stack their best ones up top.
+  router.get('/community/:slug/testimonials', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, business_type').eq('id', slug).maybeSingle();
+    if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
+      return res.status(404).json({ error: 'Tax community not found.' });
+    }
+    const { data, error } = await supabase.from('tax_testimonials')
+      .select('id, source, author_name, author_role, rating, body, locale, display_order')
+      .eq('community_id', slug).eq('active', true)
+      .order('display_order', { ascending: true })
+      .limit(60);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ testimonials: data || [] });
+  });
+
   // GET /community/:slug/deadlines — public list of tax deadlines for
   // the community. The page filters client-side by entity_type and
   // jurisdiction; we return the full active set so a fresh page render
@@ -6970,6 +6991,70 @@ module.exports = function createTaxRouter(deps) {
       return res.status(403).json({ error: 'You can only delete your own saved searches.' });
     }
     const { error } = await supabase.from('tax_saved_searches').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // ── Phase 4n.60: testimonials admin CRUD ───────────────────────────────
+  router.get('/admin/testimonials', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('tax_testimonials')
+      .select('id, source, source_id, author_name, author_role, rating, body, locale, display_order, active, created_at')
+      .eq('community_id', communitySlug)
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: false });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ testimonials: data || [] });
+  });
+
+  router.post('/admin/testimonials', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const authorName = trim(body.authorName, 200);
+    const text = trim(body.body, 4000);
+    if (!communitySlug || !authorName || !text) {
+      return res.status(400).json({ error: 'communitySlug, authorName, body required.' });
+    }
+    const rating = Math.max(1, Math.min(5, Math.round(Number(body.rating) || 5)));
+    const locale = body.locale === 'es' ? 'es' : 'en';
+    const id = 'tt_' + uuidv4().slice(0, 12);
+    const { data, error } = await supabase.from('tax_testimonials').insert({
+      id, community_id: communitySlug, source: 'local',
+      author_name: authorName,
+      author_role: trim(body.authorRole, 200),
+      rating, body: text, locale,
+      display_order: Math.max(0, Math.round(Number(body.displayOrder) || 0)),
+      active: true,
+    }).select('id, author_name, author_role, rating, body, locale, display_order, active')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ testimonial: data });
+  });
+
+  router.put('/admin/testimonials/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    const body = req.body || {};
+    const update = { updated_at: new Date().toISOString() };
+    if (body.authorName !== undefined) update.author_name = trim(body.authorName, 200);
+    if (body.authorRole !== undefined) update.author_role = trim(body.authorRole, 200);
+    if (body.body       !== undefined) update.body        = trim(body.body, 4000);
+    if (body.rating     !== undefined) update.rating      = Math.max(1, Math.min(5, Math.round(Number(body.rating) || 5)));
+    if (body.locale     !== undefined) update.locale      = body.locale === 'es' ? 'es' : 'en';
+    if (body.active     !== undefined) update.active      = !!body.active;
+    if (body.displayOrder !== undefined) update.display_order = Math.max(0, Math.round(Number(body.displayOrder) || 0));
+    const { error } = await supabase.from('tax_testimonials').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/testimonials/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    const { error } = await supabase.from('tax_testimonials').delete().eq('id', id);
     if (error) return sendSupabaseError(res, error);
     res.json({ ok: true });
   });

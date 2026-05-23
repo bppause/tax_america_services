@@ -436,6 +436,8 @@ export default function OwnerSettings() {
 
       <LandingCopySection settings={settings} auth={auth} community={community}
                           t={t} onSaved={load} />
+
+      <TestimonialsSectionAdmin auth={auth} community={community} t={t} />
     </EmployeeShell>
   );
 }
@@ -1307,6 +1309,207 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
         </div>
       )}
     </CollapsibleSection>
+  );
+}
+
+// Owner-facing testimonials CRUD. Each row is one quote shown in the
+// public TestimonialsSection. Defaults to an inline list with quick
+// edit/delete; "+ Add testimonial" expands an editor for a fresh row.
+function TestimonialsSectionAdmin({ auth, community, t }) {
+  const [rows, setRows] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState('');
+  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+
+  const load = () => {
+    if (!community?.id) return;
+    taxApi.adminListTestimonials(auth, community.id)
+      .then(d => setRows(d.testimonials || []))
+      .catch(e => setMsg({ kind: 'error', text: e?.message || '' }));
+  };
+  useEffect(load, [community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onDelete = async (id) => {
+    if (!window.confirm(t('owner.settings.testimonials.deleteConfirm'))) return;
+    try { await taxApi.adminDeleteTestimonial(auth, id); load(); }
+    catch (e) { setMsg({ kind: 'error', text: e?.message || '' }); }
+  };
+
+  return (
+    <CollapsibleSection
+      storageKey="testimonials"
+      defaultOpen={false}
+      title={t('owner.settings.testimonials.title')}
+      subtitle={t('owner.settings.testimonials.subtitle')}>
+      {msg.text && (
+        <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginBottom: 8 }}>{msg.text}</div>
+      )}
+
+      {rows === null
+        ? <p>{t('loading')}</p>
+        : (
+          <>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {rows.length === 0 && (
+                <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>
+                  {t('owner.settings.testimonials.empty')}
+                </p>
+              )}
+              {rows.map(r => (
+                editingId === r.id ? (
+                  <TestimonialForm key={r.id} initial={r} auth={auth} community={community}
+                                   onClose={() => setEditingId('')}
+                                   onSaved={() => { setEditingId(''); load(); }} t={t} />
+                ) : (
+                  <TestimonialRow key={r.id} row={r}
+                                  onEdit={() => setEditingId(r.id)}
+                                  onDelete={() => onDelete(r.id)} t={t} />
+                )
+              ))}
+            </div>
+
+            {adding
+              ? <div style={{ marginTop: 10 }}>
+                  <TestimonialForm initial={null} auth={auth} community={community}
+                                   onClose={() => setAdding(false)}
+                                   onSaved={() => { setAdding(false); load(); }} t={t} />
+                </div>
+              : <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                        onClick={() => setAdding(true)}
+                        style={{ marginTop: 10, color: 'var(--tax-brand-primary)' }}>
+                  + {t('owner.settings.testimonials.add')}
+                </button>}
+          </>
+        )}
+    </CollapsibleSection>
+  );
+}
+
+function TestimonialRow({ row, onEdit, onDelete, t }) {
+  return (
+    <div style={{ padding: 10, background: '#fff', border: '1px solid var(--tax-border)', borderRadius: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600 }}>
+            {row.author_name}
+            {row.author_role && <span style={{ color: 'var(--tax-muted)', fontWeight: 400, marginLeft: 8 }}>· {row.author_role}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: '#d97706', marginTop: 2 }}>
+            {'★'.repeat(row.rating)}{'☆'.repeat(5 - row.rating)}
+            <span style={{ marginLeft: 8, color: 'var(--tax-muted)' }}>
+              · {row.locale === 'es' ? 'Español' : 'English'}
+              {!row.active && ' · ' + t('owner.settings.testimonials.inactive')}
+            </span>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button type="button" onClick={onEdit} className="tax-btn tax-btn--ghost tax-btn--sm" style={{ color: 'var(--tax-text)' }}>
+            {t('owner.services.edit')}
+          </button>
+          <button type="button" onClick={onDelete} className="tax-btn tax-btn--ghost tax-btn--sm" style={{ color: 'var(--tax-error)' }}>
+            {t('owner.services.delete')}
+          </button>
+        </div>
+      </div>
+      <p style={{ margin: '6px 0 0', fontSize: 13, color: 'var(--tax-muted)' }}>
+        “{row.body}”
+      </p>
+    </div>
+  );
+}
+
+function TestimonialForm({ initial, auth, community, onClose, onSaved, t }) {
+  const isEdit = !!initial;
+  const [authorName, setAuthorName] = useState(initial?.author_name || '');
+  const [authorRole, setAuthorRole] = useState(initial?.author_role || '');
+  const [body, setBody] = useState(initial?.body || '');
+  const [rating, setRating] = useState(initial?.rating || 5);
+  const [locale, setLocale] = useState(initial?.locale || 'en');
+  const [active, setActive] = useState(initial?.active !== false);
+  const [order, setOrder] = useState(String(initial?.display_order || 0));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onSubmit = async (e) => {
+    e?.preventDefault?.();
+    if (!authorName.trim() || !body.trim()) {
+      setErr(t('owner.settings.testimonials.errRequired'));
+      return;
+    }
+    setBusy(true); setErr('');
+    try {
+      const payload = {
+        communitySlug: community.id,
+        authorName: authorName.trim(),
+        authorRole: authorRole.trim(),
+        body: body.trim(),
+        rating, locale, active,
+        displayOrder: Number(order) || 0,
+      };
+      if (isEdit) await taxApi.adminUpdateTestimonial(auth, initial.id, payload);
+      else        await taxApi.adminCreateTestimonial(auth, payload);
+      onSaved();
+    } catch (e) { setErr(e?.message || ''); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <form onSubmit={onSubmit} style={{ padding: 12, background: '#fff', border: '1px solid var(--tax-border)', borderRadius: 8, display: 'grid', gap: 8 }}>
+      <div className="tax-form__row2">
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.settings.testimonials.author')} *
+          </label>
+          <input type="text" value={authorName} onChange={e => setAuthorName(e.target.value)} maxLength={200} required />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.settings.testimonials.role')}
+          </label>
+          <input type="text" value={authorRole} onChange={e => setAuthorRole(e.target.value)} maxLength={200}
+                 placeholder={t('owner.settings.testimonials.rolePlaceholder')} />
+        </div>
+      </div>
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.body')} *
+        </label>
+        <textarea rows={3} value={body} onChange={e => setBody(e.target.value)} maxLength={4000} required />
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        <label style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.rating')}:&nbsp;
+          <select value={rating} onChange={e => setRating(Number(e.target.value))}>
+            {[5,4,3,2,1].map(n => <option key={n} value={n}>{'★'.repeat(n)}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.locale')}:&nbsp;
+          <select value={locale} onChange={e => setLocale(e.target.value)}>
+            <option value="en">English</option>
+            <option value="es">Español</option>
+          </select>
+        </label>
+        <label style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('owner.settings.testimonials.displayOrder')}:&nbsp;
+          <input type="number" value={order} onChange={e => setOrder(e.target.value)} min="0" max="10000" style={{ width: 80 }} />
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+          <input type="checkbox" checked={active} onChange={e => setActive(e.target.checked)} />
+          {t('owner.settings.testimonials.activeLabel')}
+        </label>
+      </div>
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm" disabled={busy}>
+          {busy ? t('lead.submitting') : (isEdit ? t('owner.services.save') : t('owner.settings.testimonials.create'))}
+        </button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={onClose}>
+          {t('preview.close')}
+        </button>
+      </div>
+    </form>
   );
 }
 

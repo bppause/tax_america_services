@@ -82,6 +82,7 @@ export const taxApi = {
   getCommunityFaqs(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/faqs`); },
   getCommunityArticles(slug)      { return request('GET',  `/community/${encodeURIComponent(slug)}/articles`); },
   getCommunityDeadlines(slug)     { return request('GET',  `/community/${encodeURIComponent(slug)}/deadlines`); },
+  getCommunityTestimonials(slug)  { return request('GET',  `/community/${encodeURIComponent(slug)}/testimonials`); },
   getCommunityTeam(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/team`); },
   submitLead(payload)             { return request('POST', '/leads', payload); },
   getResponse(token)              { return request('GET',  `/respond/${encodeURIComponent(token)}`); },
@@ -258,6 +259,12 @@ export const taxApi = {
   adminCreateSavedSearch(auth, payload)              { return request('POST',   '/admin/saved-searches', payload, auth); },
   adminUpdateSavedSearch(auth, id, payload)          { return request('PUT',    `/admin/saved-searches/${encodeURIComponent(id)}`, payload, auth); },
   adminDeleteSavedSearch(auth, id)                   { return request('DELETE', `/admin/saved-searches/${encodeURIComponent(id)}`, undefined, auth); },
+
+  // Phase 4n.60: testimonials admin.
+  adminListTestimonials(auth, communitySlug)         { return request('GET',    `/admin/testimonials?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminCreateTestimonial(auth, payload)              { return request('POST',   '/admin/testimonials', payload, auth, { admin: true }); },
+  adminUpdateTestimonial(auth, id, payload)          { return request('PUT',    `/admin/testimonials/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
+  adminDeleteTestimonial(auth, id)                   { return request('DELETE', `/admin/testimonials/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
 
   // Phase 4n.58: workload heatmap.
   adminGetWorkload(auth, opts = {}) {

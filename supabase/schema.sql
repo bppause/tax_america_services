@@ -3002,3 +3002,41 @@ values
     '{"en":"Foreign Bank Account Report due (automatic extension to October 15).","es":"Reporte de cuentas bancarias en el extranjero (extensión automática al 15 de octubre)."}'::jsonb,
     'annual', 4, 15, '{"individual","business"}', 'federal', null, 65)
 on conflict (id) do nothing;
+
+-- Testimonials / customer reviews (Phase 4n.60).
+--
+-- Each row is one testimonial shown in the public Reviews section.
+-- Source = 'local' for owner-authored entries; 'google' is reserved
+-- for the future Google Places API sync, which will upsert by
+-- (source, source_id) so a re-sync doesn't duplicate. Locale lets
+-- the public page filter to the visitor's language (with a fallback
+-- when the count is too low).
+create table if not exists public.tax_testimonials (
+  id            text primary key,
+  community_id  text not null references public.communities(id) on delete cascade,
+  source        text not null default 'local' check (source in ('local','google')),
+  source_id     text,
+  author_name   text not null,
+  author_role   text not null default '',
+  rating        smallint not null default 5 check (rating between 1 and 5),
+  body          text not null,
+  locale        text not null default 'en' check (locale in ('en','es')),
+  display_order int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create unique index if not exists idx_tax_testimonials_source
+  on public.tax_testimonials(community_id, source, source_id)
+  where source_id is not null;
+create index if not exists idx_tax_testimonials_community
+  on public.tax_testimonials(community_id, active, display_order);
+alter table public.tax_testimonials disable row level security;
+
+-- Google Place ID for the future reviews-sync job. Owners paste their
+-- Place ID in Owner Settings; the cron-ish syncer hits the Places
+-- Details endpoint, transforms each review into a tax_testimonials
+-- row with source='google', and upserts on (community_id, source,
+-- source_id). Empty = no sync configured.
+alter table public.communities
+  add column if not exists tax_google_place_id text not null default '';
