@@ -1,0 +1,48 @@
+{
+  "name": "Tax America Services",
+  "short_name": "Tax America",
+  "description": "Practice operations + customer portal for Tax America Services.",
+  "start_url": "/tax/tax-america-services/employee/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#0f766e",
+  "icons": [
+    {
+      "src": "/tax/tax-america-services-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/tax/tax-america-services-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/tax/tax-america-services-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Today",
+      "url": "/tax/tax-america-services/employee/dashboard",
+      "description": "Open the staff Today dashboard."
+    },
+    {
+      "name": "Tasks",
+      "url": "/tax/tax-america-services/employee/tasks",
+      "description": "Open the tasks board."
+    },
+    {
+      "name": "Inbox",
+      "url": "/tax/tax-america-services/employee/inbox",
+      "description": "Open the customer inbox."
+    }
+  ]
+}
