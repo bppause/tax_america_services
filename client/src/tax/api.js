@@ -57,13 +57,31 @@ function adminAuthHeaders(auth) {
   return hdrs;
 }
 
-async function request(method, path, body, auth, { admin } = {}) {
+async function request(method, path, body, auth, { admin, timeoutMs } = {}) {
   const headers = admin ? adminAuthHeaders(auth) : authHeaders(auth);
-  const res = await fetch(BASE + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // Optional timeout — most endpoints don't need one, but long-running
+  // server work (LLM calls) should fail fast on the client so the UI
+  // can show a useful error instead of leaving a button "Loading…".
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller ? controller.signal : undefined,
+    });
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    if (e?.name === 'AbortError') {
+      const err = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+      err.timeout = true;
+      throw err;
+    }
+    throw e;
+  }
+  if (timer) clearTimeout(timer);
   const text = await res.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch (_e) { parsed = { raw: text }; }
@@ -273,7 +291,10 @@ export const taxApi = {
   adminCreateNews(auth, payload)                     { return request('POST',   '/admin/news', payload, auth, { admin: true }); },
   adminUpdateNews(auth, id, payload)                 { return request('PUT',    `/admin/news/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
   adminDeleteNews(auth, id)                          { return request('DELETE', `/admin/news/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
-  adminRefreshNews(auth, payload)                    { return request('POST',   '/admin/news/refresh', payload, auth, { admin: true }); },
+  // Wraps an LLM round-trip server-side; cap the client wait to 120s
+  // so the button can recover and surface an error if Render's proxy
+  // drops the connection on a slow Anthropic call.
+  adminRefreshNews(auth, payload)                    { return request('POST',   '/admin/news/refresh', payload, auth, { admin: true, timeoutMs: 120_000 }); },
   adminSetNewsTopics(auth, payload)                  { return request('PUT',    '/admin/community-settings/news-topics', payload, auth, { admin: true }); },
   adminSetNewsDisplayLimit(auth, payload)            { return request('PUT',    '/admin/community-settings/news-display-limit', payload, auth, { admin: true }); },
   adminSetNewsAutoRefresh(auth, payload)             { return request('PUT',    '/admin/community-settings/news-auto-refresh', payload, auth, { admin: true }); },
