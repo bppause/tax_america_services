@@ -7436,8 +7436,10 @@ module.exports = function createTaxRouter(deps) {
       return { error: 'google_fetch_failed',
         message: `Could not reach Google Places API: ${e?.message || e}` };
     }
-    const reviews = Array.isArray(payload.reviews) ? payload.reviews : [];
+    const reviewsFieldPresent = Array.isArray(payload.reviews);
+    const reviews = reviewsFieldPresent ? payload.reviews : [];
     let upserted = 0;
+    let skippedEmpty = 0;
     const locale = community.default_locale === 'en' ? 'en' : 'es';
     for (const r of reviews) {
       const author = String(r.authorAttribution?.displayName || '').slice(0, 200) || 'Google user';
@@ -7461,7 +7463,7 @@ module.exports = function createTaxRouter(deps) {
         active: true,
         updated_at: new Date().toISOString(),
       };
-      if (!row.body) continue;
+      if (!row.body) { skippedEmpty++; continue; }
       const { data: existing } = await supabase.from('tax_testimonials')
         .select('id').eq('community_id', communitySlug).eq('source', 'google').eq('source_id', sourceId).maybeSingle();
       if (existing) {
@@ -7477,15 +7479,42 @@ module.exports = function createTaxRouter(deps) {
       upserted++;
     }
     const placeName = payload.displayName?.text || null;
+    const userRatingCount = Number(payload.userRatingCount) || 0;
+    // If Google reports ratings exist for this place but the response
+    // didn't include the `reviews` array at all, the most common cause
+    // is an API key without the Places Enterprise SKU — the reviews
+    // field is gated behind that tier in the new API. Surface a hint
+    // so the owner doesn't blame the place ID.
+    const likelyNoEnterpriseSku = !reviewsFieldPresent && userRatingCount > 0;
+    if (upserted === 0) {
+      warn('[google-reviews] sync returned 0 upserts', {
+        slug: communitySlug, placeId, placeName,
+        fetched: reviews.length, skippedEmpty,
+        reviewsFieldPresent, userRatingCount,
+        rating: payload.rating || null,
+        likelyNoEnterpriseSku,
+      });
+    }
     try {
       await auditLog({
         entity: 'tax.community.testimonials', entityId: communitySlug,
         action: 'sync_google',
         actorEmail,
-        after: { upserted, totalRating: payload.rating || null, totalCount: payload.userRatingCount || null },
+        after: { upserted, fetched: reviews.length, skippedEmpty,
+          totalRating: payload.rating || null, totalCount: userRatingCount || null },
       });
     } catch (_e) {}
-    return { ok: true, upserted, placeName };
+    return {
+      ok: true,
+      upserted,
+      fetched: reviews.length,
+      skippedEmpty,
+      reviewsFieldPresent,
+      placeName,
+      rating: payload.rating || null,
+      userRatingCount: userRatingCount || null,
+      likelyNoEnterpriseSku,
+    };
   }
 
   // Daily auto-sync entrypoint — invoked by the cron in server/index.js.
