@@ -1425,10 +1425,36 @@ function GoogleReviewsPanel({ auth, community, onSynced, t }) {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
       const r = await taxApi.adminSyncGoogleReviews(auth, { communitySlug: community.id });
-      setMsg({ kind: 'success', text: t('owner.settings.googleReviews.synced', { n: r.upserted || 0 }) });
+      setDebug({ lastSync: r, communitySlug: community.id });
+      const n = r.upserted || 0;
+      // When 0 were upserted, the generic "Synced 0" message hides
+      // why — could be SKU gating, no reviews on Google, or all
+      // returned reviews had empty bodies. Pick the most specific
+      // reason we can infer from the server diagnostics.
+      let text = t('owner.settings.googleReviews.synced', { n });
+      let kind = 'success';
+      if (n === 0) {
+        kind = 'error';
+        if (r.likelyNoEnterpriseSku) {
+          text = t('owner.settings.googleReviews.zeroNoSku', { count: r.userRatingCount || 0 });
+        } else if ((r.skippedEmpty || 0) > 0 && (r.fetched || 0) === r.skippedEmpty) {
+          text = t('owner.settings.googleReviews.zeroEmptyBodies', { n: r.skippedEmpty });
+        } else if ((r.fetched || 0) === 0 && !r.userRatingCount) {
+          text = t('owner.settings.googleReviews.zeroNoReviews');
+        } else {
+          text = t('owner.settings.googleReviews.zeroGeneric', {
+            fetched: r.fetched || 0,
+            total: r.userRatingCount || 0,
+          });
+        }
+      }
+      setMsg({ kind, text });
       load();
       if (typeof onSynced === 'function') onSynced();
-    } catch (e) { setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' }); }
+    } catch (e) {
+      setDebug({ syncError: e?.body || e?.message || String(e), communitySlug: community.id });
+      setMsg({ kind: 'error', text: e?.body?.message || e?.message || '' });
+    }
     finally { setBusy(false); }
   };
 
