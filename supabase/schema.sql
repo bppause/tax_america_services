@@ -2880,3 +2880,28 @@ create index if not exists idx_tax_tasks_blocked_by
 create index if not exists idx_tax_tasks_pending_review
   on public.tax_tasks(community_id, reviewer_employee_id)
   where pending_review_at is not null and reviewed_at is null;
+
+-- Smart lists / saved searches (Phase 4n.57).
+--
+-- Each row is one employee's named filter preset on a scope
+-- (tasks / customers / leads). Params is opaque JSON owned by the
+-- client — it captures whatever the relevant page understands
+-- (status chips, due window, customer-type chip, assigned-to, free-
+-- text query). Server doesn't introspect the shape; it just stores
+-- + returns. is_pinned surfaces the view in a compact top bar
+-- and on the Today dashboard.
+create table if not exists public.tax_saved_searches (
+  id            text primary key,
+  community_id  text not null references public.communities(id)  on delete cascade,
+  employee_id   text not null references public.tax_employees(id) on delete cascade,
+  scope         text not null check (scope in ('tasks','customers','leads')),
+  name          text not null,
+  params        jsonb not null default '{}'::jsonb,
+  is_pinned     boolean not null default false,
+  display_order int not null default 0,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index if not exists idx_tax_saved_searches_owner
+  on public.tax_saved_searches(employee_id, scope, display_order);
+alter table public.tax_saved_searches disable row level security;

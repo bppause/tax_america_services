@@ -6769,6 +6769,100 @@ module.exports = function createTaxRouter(deps) {
     res.json({ running: (data && data[0]) || null });
   });
 
+  // ── Phase 4n.57: smart lists / saved searches ─────────────────────────
+  //
+  // Each row is one employee's named filter preset on a scope. Server
+  // stores + returns the opaque params blob; the page (Tasks / Customers
+  // / Leads) owns the shape. List endpoint returns the caller's own
+  // rows; create/update/delete are scoped to ownership.
+  const SAVED_SEARCH_SCOPES = ['tasks','customers','leads'];
+
+  router.get('/admin/saved-searches', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const scope = trim(req.query.scope, 40);
+    let q = supabase.from('tax_saved_searches')
+      .select('id, scope, name, params, is_pinned, display_order, created_at, updated_at')
+      .eq('community_id', emp.community_id)
+      .eq('employee_id', emp.id)
+      .order('display_order', { ascending: true })
+      .order('created_at',   { ascending: true });
+    if (scope) {
+      if (!SAVED_SEARCH_SCOPES.includes(scope)) {
+        return res.status(400).json({ error: 'Invalid scope.' });
+      }
+      q = q.eq('scope', scope);
+    }
+    const { data, error } = await q;
+    if (error) return sendSupabaseError(res, error);
+    res.json({ searches: data || [] });
+  });
+
+  router.post('/admin/saved-searches', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const body = req.body || {};
+    const scope = trim(body.scope, 40);
+    const name = trim(body.name, 120);
+    if (!SAVED_SEARCH_SCOPES.includes(scope)) return res.status(400).json({ error: 'Invalid scope.' });
+    if (!name) return res.status(400).json({ error: 'name required.' });
+    const params = (body.params && typeof body.params === 'object') ? body.params : {};
+    // Caller-supplied params can be arbitrary client state; cap the
+    // serialized size so a misbehaving client can't store megabytes
+    // per row. 4KB is generous for a filter preset.
+    if (JSON.stringify(params).length > 4096) {
+      return res.status(413).json({ error: 'params too large (max 4KB).' });
+    }
+    const id = 'ss_' + uuidv4().slice(0, 12);
+    const { data, error } = await supabase.from('tax_saved_searches').insert({
+      id, community_id: emp.community_id, employee_id: emp.id,
+      scope, name, params,
+      is_pinned: !!body.isPinned,
+      display_order: Number.isFinite(Number(body.displayOrder)) ? Math.round(Number(body.displayOrder)) : 0,
+    }).select('id, scope, name, params, is_pinned, display_order')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ search: data });
+  });
+
+  router.put('/admin/saved-searches/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_saved_searches')
+      .select('id, employee_id, community_id').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Saved search not found.' });
+    if (cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'You can only edit your own saved searches.' });
+    }
+    const body = req.body || {};
+    const update = { updated_at: new Date().toISOString() };
+    if (body.name !== undefined)         update.name = trim(body.name, 120);
+    if (body.params !== undefined) {
+      const p = (body.params && typeof body.params === 'object') ? body.params : {};
+      if (JSON.stringify(p).length > 4096) {
+        return res.status(413).json({ error: 'params too large (max 4KB).' });
+      }
+      update.params = p;
+    }
+    if (body.isPinned !== undefined)     update.is_pinned = !!body.isPinned;
+    if (body.displayOrder !== undefined) update.display_order = Math.round(Number(body.displayOrder) || 0);
+    const { error } = await supabase.from('tax_saved_searches').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/saved-searches/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_saved_searches')
+      .select('id, employee_id').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Saved search not found.' });
+    if (cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'You can only delete your own saved searches.' });
+    }
+    const { error } = await supabase.from('tax_saved_searches').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
   // ── Phase 4n.24: e-signature requests ──────────────────────────────────
   //
   // Owner creates a request → customer sees it in the portal → customer

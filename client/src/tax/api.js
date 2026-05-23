@@ -250,6 +250,14 @@ export const taxApi = {
   adminReviewTask(auth, taskId, payload)             { return request('POST', `/admin/tasks/${encodeURIComponent(taskId)}/review`, payload, auth); },
   adminListAwaitingReview(auth)                      { return request('GET',  '/admin/tasks/awaiting-review', undefined, auth); },
 
+  // Phase 4n.57: saved searches / smart lists. Params is opaque
+  // client-defined JSON — each page (Tasks/Customers/Leads) decides
+  // what filter shape it persists.
+  adminListSavedSearches(auth, scope)                { return request('GET',    `/admin/saved-searches?scope=${encodeURIComponent(scope || '')}`, undefined, auth); },
+  adminCreateSavedSearch(auth, payload)              { return request('POST',   '/admin/saved-searches', payload, auth); },
+  adminUpdateSavedSearch(auth, id, payload)          { return request('PUT',    `/admin/saved-searches/${encodeURIComponent(id)}`, payload, auth); },
+  adminDeleteSavedSearch(auth, id)                   { return request('DELETE', `/admin/saved-searches/${encodeURIComponent(id)}`, undefined, auth); },
+
   // Phase 4n.24: signature requests
   adminListSignatureRequests(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, undefined, auth, { admin: true }); },
   adminCreateSignatureRequest(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, payload, auth, { admin: true }); },
