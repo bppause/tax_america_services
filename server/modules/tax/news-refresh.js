@@ -15,9 +15,16 @@
 
 const { v4: uuidv4 } = require('uuid');
 
-const MODEL = 'claude-sonnet-4-6';
+// Haiku 4.5 is fast enough to finish a 3–4 search refresh in ~20 s vs.
+// 60–90 s for Sonnet, while still producing solid bilingual summaries
+// grounded in real sources. Bump to Sonnet if quality regresses.
+const MODEL = 'claude-haiku-4-5-20251001';
 const ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const API_VERSION = '2023-06-01';
+// Hard cap on the Anthropic round-trip so the owner's Refresh button
+// can't hang forever. Render's proxy will eventually kill the request
+// anyway; failing fast lets the UI surface a clear error.
+const FETCH_TIMEOUT_MS = 90_000;
 
 async function fetchAiNews({ topics, desiredCount = 5, apiKey, locale = 'en' }) {
   if (!apiKey) return { error: 'no_api_key', message: 'ANTHROPIC_API_KEY is not configured.' };
@@ -58,6 +65,8 @@ Return STRICTLY a JSON array of ${count} objects with this shape (no prose, no m
 ]`;
 
   let resp;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     resp = await fetch(ENDPOINT, {
       method: 'POST',
@@ -68,14 +77,24 @@ Return STRICTLY a JSON array of ${count} objects with this shape (no prose, no m
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 8000,
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 8 }],
+        max_tokens: 4000,
+        // 3 searches is enough for 5 items — each search returns several
+        // results the model can cite. More uses = more latency without
+        // proportional quality gain on this prompt.
+        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
         messages: [{ role: 'user', content: prompt }],
       }),
+      signal: controller.signal,
     });
   } catch (e) {
-    return { error: 'fetch_failed', message: `Anthropic fetch failed: ${e?.message || e}` };
-  }
+    const aborted = e?.name === 'AbortError';
+    return {
+      error: aborted ? 'timeout' : 'fetch_failed',
+      message: aborted
+        ? `Anthropic call exceeded ${Math.round(FETCH_TIMEOUT_MS / 1000)}s and was aborted. Try again with fewer topics, or set a smaller display limit.`
+        : `Anthropic fetch failed: ${e?.message || e}`,
+    };
+  } finally { clearTimeout(timer); }
   let payload;
   try { payload = await resp.json(); }
   catch (e) { return { error: 'parse_failed', message: `Non-JSON response from Anthropic: ${e?.message}` }; }
