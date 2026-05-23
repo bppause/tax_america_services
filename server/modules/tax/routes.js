@@ -7586,13 +7586,14 @@ module.exports = function createTaxRouter(deps) {
     // the API key is a header, fields are an X-Goog-FieldMask, and
     // the response uses camelCase + nested text objects.
     //
-    // reviewsSort=NEWEST is undocumented on the New API but the
-    // legacy endpoint accepted it and Google sometimes honors it
-    // silently. If they ignore it we still get the default 5
-    // most-relevant reviews — no worse than before.
+    // The New API has no documented or undocumented sort parameter
+    // for reviews (we tried reviewsSort=NEWEST — Google rejects it
+    // with INVALID_ARGUMENT), so the 5 reviews come back ordered
+    // by Google's relevance heuristic. We locally sort by publishTime
+    // below to at least keep our stored ordering deterministic.
     let payload;
     try {
-      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?reviewsSort=NEWEST`, {
+      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
         headers: {
           'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
           'X-Goog-FieldMask': 'displayName,rating,userRatingCount,reviews',
