@@ -3053,3 +3053,48 @@ alter table public.tax_service_auto_tasks
   add column if not exists template_key text;
 create index if not exists idx_tax_service_auto_tasks_template
   on public.tax_service_auto_tasks(product_id, template_key) where template_key is not null;
+
+-- Connecticut state deadlines for the public tax calendar.
+-- Idempotent: on conflict (id) do nothing keeps re-runs safe.
+--
+-- Sales tax: quarterly filers are due the last day of the month
+-- following the quarter end (Apr 30 / Jul 31 / Oct 31 / Jan 31).
+-- Each quarter ships as its own annual row so the calendar's
+-- "next occurrence" computation handles year rollover cleanly.
+--
+-- Property tax: the Personal Property Declaration is due Nov 1
+-- each year (most CT towns; check the local Assessor for a 30-day
+-- extension). The actual property tax bills land in July and
+-- January (most towns; some use Aug/Feb instead).
+insert into public.tax_calendar_deadlines
+  (id, community_id, slug, title_i18n, description_i18n, recurrence, month, day, entity_types, jurisdiction, product_slug, display_order)
+values
+  ('tax-america-services:ct-sales-tax-q1', 'tax-america-services', 'ct-sales-tax-q1',
+    '{"en":"CT sales tax — Q1 (Jan–Mar)","es":"Impuesto sobre ventas de CT — 1T (ene–mar)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the January–March quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre enero–marzo, presentada ante el DRS."}'::jsonb,
+    'annual', 4, 30, '{"business"}', 'Connecticut', 'sales-tax', 200),
+  ('tax-america-services:ct-sales-tax-q2', 'tax-america-services', 'ct-sales-tax-q2',
+    '{"en":"CT sales tax — Q2 (Apr–Jun)","es":"Impuesto sobre ventas de CT — 2T (abr–jun)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the April–June quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre abril–junio, presentada ante el DRS."}'::jsonb,
+    'annual', 7, 31, '{"business"}', 'Connecticut', 'sales-tax', 210),
+  ('tax-america-services:ct-sales-tax-q3', 'tax-america-services', 'ct-sales-tax-q3',
+    '{"en":"CT sales tax — Q3 (Jul–Sep)","es":"Impuesto sobre ventas de CT — 3T (jul–sep)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the July–September quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre julio–septiembre, presentada ante el DRS."}'::jsonb,
+    'annual', 10, 31, '{"business"}', 'Connecticut', 'sales-tax', 220),
+  ('tax-america-services:ct-sales-tax-q4', 'tax-america-services', 'ct-sales-tax-q4',
+    '{"en":"CT sales tax — Q4 (Oct–Dec)","es":"Impuesto sobre ventas de CT — 4T (oct–dic)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the October–December quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre octubre–diciembre, presentada ante el DRS."}'::jsonb,
+    'annual', 1, 31, '{"business"}', 'Connecticut', 'sales-tax', 230),
+  ('tax-america-services:ct-personal-property-declaration', 'tax-america-services', 'ct-personal-property-declaration',
+    '{"en":"CT business personal property declaration","es":"Declaración de propiedad personal del negocio (CT)"}'::jsonb,
+    '{"en":"Annual personal property declaration filed with your local Connecticut municipality assessor. Most towns allow a written 30-day extension to December 1 on request.","es":"Declaración anual de propiedad personal presentada ante el asesor del municipio de Connecticut. La mayoría permite una extensión escrita de 30 días hasta el 1 de diciembre."}'::jsonb,
+    'annual', 11, 1, '{"business"}', 'Connecticut', 'property-tax', 240),
+  ('tax-america-services:ct-property-tax-jul', 'tax-america-services', 'ct-property-tax-jul',
+    '{"en":"CT property tax — first installment","es":"Impuesto predial de CT — primera cuota"}'::jsonb,
+    '{"en":"First installment of Connecticut real and personal property tax (most municipalities — confirm with your local town tax collector).","es":"Primera cuota del impuesto predial e impuesto sobre propiedad personal de Connecticut (la mayoría de los municipios — confirma con el cobrador local)."}'::jsonb,
+    'annual', 7, 1, '{"business"}', 'Connecticut', 'property-tax', 250),
+  ('tax-america-services:ct-property-tax-jan', 'tax-america-services', 'ct-property-tax-jan',
+    '{"en":"CT property tax — second installment","es":"Impuesto predial de CT — segunda cuota"}'::jsonb,
+    '{"en":"Second installment of Connecticut real and personal property tax (most municipalities — confirm with your local town tax collector).","es":"Segunda cuota del impuesto predial e impuesto sobre propiedad personal de Connecticut (la mayoría de los municipios — confirma con el cobrador local)."}'::jsonb,
+    'annual', 1, 1, '{"business"}', 'Connecticut', 'property-tax', 260)
+on conflict (id) do nothing;
