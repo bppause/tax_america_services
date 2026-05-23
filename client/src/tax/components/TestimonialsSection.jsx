@@ -9,16 +9,22 @@ import { taxApi } from '../api';
 //
 // The section render-skips itself when there are zero rows so a brand-
 // new tenant doesn't show an awkward "no reviews yet" placeholder.
-export default function TestimonialsSection({ communitySlug }) {
+//
+// `rows` can be passed in by the parent — Landing fetches once and
+// drives both this section and the Reviews nav link off the same data.
+// When omitted we fall back to self-fetching for backward compat.
+export default function TestimonialsSection({ communitySlug, rows: rowsProp }) {
   const { locale, t } = useT();
-  const [rows, setRows] = useState(null);
+  const [rowsState, setRowsState] = useState(null);
   useEffect(() => {
+    if (rowsProp !== undefined) return;
     let cancelled = false;
     taxApi.getCommunityTestimonials(communitySlug)
-      .then(d => !cancelled && setRows(d.testimonials || []))
-      .catch(() => !cancelled && setRows([]));
+      .then(d => !cancelled && setRowsState(d.testimonials || []))
+      .catch(() => !cancelled && setRowsState([]));
     return () => { cancelled = true; };
-  }, [communitySlug]);
+  }, [communitySlug, rowsProp]);
+  const rows = rowsProp !== undefined ? rowsProp : rowsState;
 
   if (!rows || rows.length === 0) return null;
 

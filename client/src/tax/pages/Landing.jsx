@@ -34,6 +34,10 @@ export default function Landing({ communitySlug }) {
   // modal. Passed down to LeadForm so the chip is pre-checked when the
   // visitor lands at the contact form.
   const [pendingService, setPendingService] = useState(null);
+  // Testimonials lifted to Landing so the Reviews nav link can hide
+  // itself when there are zero rows (instead of linking to a section
+  // that self-hides — a scroll-to-nothing surprise).
+  const [testimonials, setTestimonials] = useState(null);
 
   const onRequestService = (slug) => {
     setPendingService(slug);
@@ -56,6 +60,14 @@ export default function Landing({ communitySlug }) {
         const notFound = err?.status === 404;
         setState({ kind: notFound ? 'not-found' : 'error', data: null, error: err?.message || '' });
       });
+    return () => { cancelled = true; };
+  }, [communitySlug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    taxApi.getCommunityTestimonials(communitySlug)
+      .then(d => !cancelled && setTestimonials(d.testimonials || []))
+      .catch(() => !cancelled && setTestimonials([]));
     return () => { cancelled = true; };
   }, [communitySlug]);
 
@@ -112,6 +124,7 @@ export default function Landing({ communitySlug }) {
   const sections = {
     services: (products || []).length > 0,
     team: true,
+    reviews: Array.isArray(testimonials) && testimonials.length > 0,
     faqs: true,
     about: true,
     contact: true,
@@ -124,7 +137,7 @@ export default function Landing({ communitySlug }) {
         <Hero community={community} />
         <ServicesGrid products={products} onRequestService={onRequestService} />
         <TeamSection communitySlug={communitySlug} />
-        <TestimonialsSection communitySlug={communitySlug} />
+        <TestimonialsSection communitySlug={communitySlug} rows={testimonials} />
         <ArticlesSection communitySlug={communitySlug} />
         <FaqsSection communitySlug={communitySlug} />
         <About />
