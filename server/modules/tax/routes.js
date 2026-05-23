@@ -6769,6 +6769,95 @@ module.exports = function createTaxRouter(deps) {
     res.json({ running: (data && data[0]) || null });
   });
 
+  // ── Phase 4n.58: workload heatmap ──────────────────────────────────────
+  //
+  // GET /admin/workload?start=YYYY-MM-DD&days=14
+  //
+  // Per-employee per-day open-task counts, weighted by priority. The
+  // page renders a grid: rows = staff in the community, columns = the
+  // requested day range, each cell = total weight bucketed into a heat
+  // tone. Clicking a cell jumps to /tasks with assigned-to + due-date
+  // filters applied so the operator can drill down without copy-pasting
+  // dates.
+  //
+  // Weights tilt the heat so an "urgent" task counts more than three
+  // "low" ones — keeps the grid honest when one preparer has a wall
+  // of routine reminders next to another with a single 1040 audit.
+  router.get('/admin/workload', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (emp.role !== 'admin') {
+      return res.status(403).json({ error: 'Workload heatmap is admin-only.' });
+    }
+    const start = trim(req.query.start, 20) || new Date().toISOString().slice(0, 10);
+    const days  = Math.max(1, Math.min(31, Number(req.query.days) || 14));
+    // Inclusive window: start .. start + (days-1)
+    const startDate = new Date(`${start}T00:00:00Z`);
+    if (Number.isNaN(startDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid start date.' });
+    }
+    const endDate = new Date(startDate);
+    endDate.setUTCDate(endDate.getUTCDate() + days - 1);
+    const startIso = startDate.toISOString().slice(0, 10);
+    const endIso   = endDate.toISOString().slice(0, 10);
+
+    // Pull every active employee + the open tasks in window. Terminal
+    // statuses are excluded so a 100-task week of "done" doesn't show
+    // as a hot column.
+    const { data: statusOpts } = await supabase.from('tax_task_status_options')
+      .select('key, is_terminal').eq('community_id', emp.community_id);
+    const terminalKeys = (statusOpts || []).filter(s => s.is_terminal).map(s => s.key);
+    const { data: employees } = await supabase.from('tax_employees')
+      .select('id, name, first_name, last_name, email, role, status')
+      .eq('community_id', emp.community_id).eq('status', 'active')
+      .order('first_name', { ascending: true });
+    let q = supabase.from('tax_tasks')
+      .select('id, assigned_employee_id, due_date, priority, status_key, completed_at, archived_at')
+      .eq('community_id', emp.community_id)
+      .is('archived_at', null).is('completed_at', null)
+      .gte('due_date', startIso).lte('due_date', endIso);
+    if (terminalKeys.length) q = q.not('status_key', 'in', `(${terminalKeys.map(k => `"${k}"`).join(',')})`);
+    const { data: tasks } = await q.limit(5000);
+
+    // Priority weights tuned so urgent > 2× high; low contributes
+    // half — matches operators' lived sense of pressure better than
+    // a flat count.
+    const W = { urgent: 4, high: 2, normal: 1, low: 0.5 };
+    const matrix = new Map(); // employeeId → { dateIso → { count, weight } }
+    function bump(empId, dateIso, weight) {
+      if (!matrix.has(empId)) matrix.set(empId, {});
+      const row = matrix.get(empId);
+      const slot = row[dateIso] || { count: 0, weight: 0 };
+      slot.count++; slot.weight += weight;
+      row[dateIso] = slot;
+    }
+    for (const t1 of (tasks || [])) {
+      const key = t1.assigned_employee_id || '__unassigned__';
+      bump(key, t1.due_date, W[t1.priority] || W.normal);
+    }
+
+    const dates = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startDate);
+      d.setUTCDate(d.getUTCDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const rows = (employees || []).map(e => ({
+      employeeId: e.id,
+      name: [e.first_name, e.last_name].filter(Boolean).join(' ').trim() || e.name || e.email,
+      email: e.email,
+      role: e.role,
+      cells: dates.map(d => matrix.get(e.id)?.[d] || { count: 0, weight: 0 }),
+    }));
+    const unassigned = matrix.get('__unassigned__');
+    if (unassigned) {
+      rows.push({
+        employeeId: '__unassigned__', name: 'Unassigned', email: '', role: '',
+        cells: dates.map(d => unassigned[d] || { count: 0, weight: 0 }),
+      });
+    }
+    res.json({ dates, rows, totalTasks: (tasks || []).length });
+  });
+
   // ── Phase 4n.57: smart lists / saved searches ─────────────────────────
   //
   // Each row is one employee's named filter preset on a scope. Server

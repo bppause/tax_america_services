@@ -258,6 +258,14 @@ export const taxApi = {
   adminUpdateSavedSearch(auth, id, payload)          { return request('PUT',    `/admin/saved-searches/${encodeURIComponent(id)}`, payload, auth); },
   adminDeleteSavedSearch(auth, id)                   { return request('DELETE', `/admin/saved-searches/${encodeURIComponent(id)}`, undefined, auth); },
 
+  // Phase 4n.58: workload heatmap.
+  adminGetWorkload(auth, opts = {}) {
+    const qs = new URLSearchParams();
+    if (opts.start) qs.set('start', opts.start);
+    if (opts.days)  qs.set('days',  String(opts.days));
+    return request('GET', `/admin/workload?${qs.toString()}`, undefined, auth);
+  },
+
   // Phase 4n.24: signature requests
   adminListSignatureRequests(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, undefined, auth, { admin: true }); },
   adminCreateSignatureRequest(auth, customerId, payload) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, payload, auth, { admin: true }); },

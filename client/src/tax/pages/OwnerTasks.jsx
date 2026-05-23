@@ -151,6 +151,7 @@ export default function OwnerTasks() {
       customerId: flat(filters.customerId),
       customerType: filters.customerType && filters.customerType !== 'all' ? filters.customerType : undefined,
       due: filters.due,
+      dueDateExact: filters.dueDateExact || '',
       q: filters.q,
       sort: sortKey,
     };
@@ -236,6 +237,27 @@ export default function OwnerTasks() {
       window.history.replaceState(null, '', next);
     }
   }, [tasks]);
+
+  // Workload-heatmap drill-through: ?assignedTo=<empId>&dueDate=YYYY-MM-DD.
+  // Applied once on mount. The params are stripped after they land so
+  // a refresh doesn't keep re-applying them after the operator changes
+  // filters by hand.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const assignedTo = params.get('assignedTo');
+    const dueDate = params.get('dueDate');
+    if (!assignedTo && !dueDate) return;
+    setFilters(prev => ({
+      ...prev,
+      assignedTo: assignedTo ? [assignedTo] : prev.assignedTo,
+      dueDateExact: dueDate || prev.dueDateExact || '',
+    }));
+    params.delete('assignedTo');
+    params.delete('dueDate');
+    const qs = params.toString();
+    const next = window.location.pathname + (qs ? `?${qs}` : '');
+    window.history.replaceState(null, '', next);
+  }, []);
 
   const onClearFilters = () => setFilters({ ...EMPTY_FILTERS });
   // customerType always carries a string ('all' / 'individual' /
