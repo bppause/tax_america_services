@@ -11782,7 +11782,8 @@ module.exports = function createTaxRouter(deps) {
       return res.status(400).json({ error: 'no_email', message: 'Customer has no email on file.' });
     }
     const { data: comm } = await supabase.from('communities')
-      .select('id, name, default_locale').eq('id', rpt.community_id).maybeSingle();
+      .select('id, name, name_en, default_locale, logo_url, address_line1, address_line2, city, state, postal_code, phone, contact_email, whatsapp')
+      .eq('id', rpt.community_id).maybeSingle();
 
     // Mint (or rotate, if asked) the access token + build the URL.
     const shouldRotate = req.body && req.body.rotateToken === true;
