@@ -11505,22 +11505,44 @@ module.exports = function createTaxRouter(deps) {
     return `${base}/tax/${encodeURIComponent(communityId)}/r/${rawToken}`;
   }
 
+  // Returns true when the customer has any active relationship row
+  // whose relationship_type is linked to a `bookkeeping`-slug product.
+  // The bookkeeping reports section on the owner's customer-detail
+  // page is gated on this — adding/removing the service via the
+  // standard Services tagging UI flips this flag.
+  async function customerHasBookkeepingService(customerId) {
+    const { data, error } = await supabase
+      .from('tax_customer_relationships')
+      .select(`
+        id, active,
+        type:tax_relationship_types ( id, product:tax_products ( id, slug ) )
+      `)
+      .eq('customer_id', customerId).eq('active', true);
+    if (error || !data) return false;
+    return data.some(r => r?.type?.product?.slug === 'bookkeeping');
+  }
+
   // ── Admin: list + CRUD reports for a customer ─────────────────────────────
   router.get('/admin/customers/:customerId/financial-reports', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_customers'))) return;
     const customerId = trim(req.params.customerId, 200);
     if (!customerId) return res.status(400).json({ error: 'customerId required.' });
-    const { data, error } = await supabase.from('tax_financial_reports')
-      .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, created_at, updated_at')
-      .eq('customer_id', customerId)
-      .order('period_end', { ascending: false });
-    if (error) return sendSupabaseError(res, error);
-    // Pair with the access-token presence info so the UI knows
-    // whether a link is provisioned.
-    const { data: tok } = await supabase.from('tax_report_access_tokens')
-      .select('id, revoked_at, last_used_at, created_at')
-      .eq('customer_id', customerId).maybeSingle();
-    res.json({ reports: data || [], accessToken: tok || null });
+    const [reportsRes, tokenRes, eligible] = await Promise.all([
+      supabase.from('tax_financial_reports')
+        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, created_at, updated_at')
+        .eq('customer_id', customerId)
+        .order('period_end', { ascending: false }),
+      supabase.from('tax_report_access_tokens')
+        .select('id, revoked_at, last_used_at, created_at')
+        .eq('customer_id', customerId).maybeSingle(),
+      customerHasBookkeepingService(customerId),
+    ]);
+    if (reportsRes.error) return sendSupabaseError(res, reportsRes.error);
+    res.json({
+      reports: reportsRes.data || [],
+      accessToken: tokenRes.data || null,
+      bookkeepingActive: eligible,
+    });
   });
 
   router.get('/admin/financial-reports/:id', async (req, res) => {

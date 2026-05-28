@@ -161,6 +161,24 @@ const TEMPLATES_BY_SLUG = {
       anchor_rule:  { type: 'annual', month: 1, day: 31 },
       default_priority: 'high',
     },
+    {
+      key: 'semi-annual-h1-report',
+      title:       { en: 'Publish H1 Bookkeeping report (Jan–Jun)',            es: 'Publicar informe contable H1 (Ene–Jun)' },
+      description: { en: 'Capture H1 P&L + Balance Sheet in the customer record, review the numbers, and email the dashboard. Due July 31.',
+                     es: 'Capturar P&L + Balance del H1 en la ficha del cliente, revisar los números y enviar el panel al cliente. Vence 31 de julio.' },
+      cadence_kind: 'annual',
+      anchor_rule:  { type: 'annual', month: 7, day: 31 },
+      default_priority: 'high',
+    },
+    {
+      key: 'semi-annual-h2-report',
+      title:       { en: 'Publish H2 / annual Bookkeeping report (Jul–Dec)',   es: 'Publicar informe contable H2 / anual (Jul–Dic)' },
+      description: { en: 'Capture H2 P&L + Balance Sheet in the customer record, review the numbers, and email the dashboard. Due January 31.',
+                     es: 'Capturar P&L + Balance del H2 en la ficha del cliente, revisar los números y enviar el panel al cliente. Vence 31 de enero.' },
+      cadence_kind: 'annual',
+      anchor_rule:  { type: 'annual', month: 1, day: 31 },
+      default_priority: 'high',
+    },
   ],
 
   payroll: [
