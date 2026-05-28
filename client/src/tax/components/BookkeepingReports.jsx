@@ -304,6 +304,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null });
   };
   const startEdit = (r) => {
+    setPdfMeta({ pl: null, balance: null });
     setBusy(true);
     taxApi.adminGetFinancialReport(auth, r.id)
       .then(d => { setForm(reportToForm(d.report)); setEditingId(r.id); setCreating(false); setMsg({ kind: '', text: '' }); })
@@ -443,7 +444,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         return mergeParsedIntoForm(cleared, parseResult.parsed, kind);
       });
       const companyName = parseResult.parsed?.companyName || null;
-      const businessName = customer?.business_name || null;
+      const businessName = customer?.business_name || customer?.name || null;
       const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
       setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch } }));
       if (dbg.detectedType === 'unknown' && (dbg.matched || 0) === 0) {
@@ -512,7 +513,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
                     editing={!!editingId} onUploadPdf={uploadAndParsePdf}
                     onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
-                    contactName={customer?.business_name || null}
+                    contactName={customer?.business_name || customer?.name || null}
                     reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
       )}
 
