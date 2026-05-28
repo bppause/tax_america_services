@@ -259,16 +259,42 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       if (!putResp.ok) throw new Error(`Upload failed (${putResp.status}).`);
       setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsing') });
       const parseResult = await taxApi.adminFinancialReportParse(auth, editingId, kind);
-      // Merge parsed values into form. Parser returns either
-      // { pl: { revenue:{}, expenses:{}, cogs, ... } } or { balance: {…} }.
-      setForm(prev => mergeParsedIntoForm(prev, parseResult.parsed, kind));
       const dbg = parseResult.parsed?.debug || {};
-      setMsg({
-        kind: 'ok',
-        text: t('owner.customer.bookkeeping.msg.parsed', {
-          kind, matched: dbg.matched || 0, total: (dbg.matched || 0) + (dbg.unmatched || 0),
-        }),
-      });
+      // Wrong-type detection — the file is a balance sheet dropped
+      // into the P&L slot (or vice versa). Don't merge anything; tell
+      // the owner so they can pick the right file. The PDF stays
+      // uploaded so they can re-upload over it.
+      if (dbg.typeMismatch) {
+        const expected = kind === 'balance'
+          ? t('owner.customer.bookkeeping.pdf.balance')
+          : t('owner.customer.bookkeeping.pdf.pl');
+        const got = dbg.detectedType === 'pl'
+          ? t('owner.customer.bookkeeping.pdf.pl')
+          : dbg.detectedType === 'balance'
+          ? t('owner.customer.bookkeeping.pdf.balance')
+          : t('owner.customer.bookkeeping.pdf.unknown');
+        setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.wrongType', { expected, got }) });
+        return;
+      }
+      // Recognizable PDF but the parser couldn't read text from it
+      // (most likely a scanned image — no text layer).
+      if (dbg.error === 'pdf_no_text_layer') {
+        setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.noTextLayer') });
+        return;
+      }
+      if (dbg.error) {
+        setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.parseError', { error: dbg.error }) });
+        return;
+      }
+      setForm(prev => mergeParsedIntoForm(prev, parseResult.parsed, kind));
+      if ((dbg.matched || 0) === 0) {
+        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }) });
+      } else {
+        setMsg({
+          kind: 'ok',
+          text: t('owner.customer.bookkeeping.msg.parsed', { kind, matched: dbg.matched }),
+        });
+      }
     } catch (e) {
       setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.uploadFailed') });
     } finally { setBusy(false); }
