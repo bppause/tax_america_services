@@ -2000,6 +2000,7 @@
   "owner.faq.errQuestion": "Proporcione una pregunta en al menos un idioma.",
   "owner.faq.errAnswer": "Proporcione una respuesta en al menos un idioma.",
   "owner.customer.bookkeeping.heading": "Informes de contabilidad (P&L + Balance)",
+  "owner.customer.bookkeeping.serviceInactive": "La contabilidad no está activa para este cliente. Agregue el servicio Contabilidad en el panel de Servicios arriba para habilitar nuevos informes. Los informes existentes se pueden reenviar.",
   "owner.customer.bookkeeping.newBtn": "+ Nuevo informe",
   "owner.customer.bookkeeping.loading": "Cargando informes…",
   "owner.customer.bookkeeping.empty": "Aún no hay informes para este cliente. Haga clic en + Nuevo informe para crear el primero.",

@@ -2001,6 +2001,7 @@
   "owner.faq.errQuestion": "Provide a question in at least one language.",
   "owner.faq.errAnswer": "Provide an answer in at least one language.",
   "owner.customer.bookkeeping.heading": "Bookkeeping reports (P&L + Balance)",
+  "owner.customer.bookkeeping.serviceInactive": "Bookkeeping is not active for this customer. Add the Bookkeeping service in the Services panel above to enable new reports. Existing reports remain available for resend.",
   "owner.customer.bookkeeping.newBtn": "+ New report",
   "owner.customer.bookkeeping.loading": "Loading reports…",
   "owner.customer.bookkeeping.empty": "No reports yet for this customer. Click + New report to create the first one.",

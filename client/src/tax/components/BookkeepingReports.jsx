@@ -123,6 +123,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
   const { t, locale } = useT();
   const [reports, setReports] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
+  const [bookkeepingActive, setBookkeepingActive] = useState(null);
   const [editingId, setEditingId] = useState('');
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState(emptyForm);
@@ -131,7 +132,11 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
 
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
-      .then(d => { setReports(d.reports || []); setAccessToken(d.accessToken || null); })
+      .then(d => {
+        setReports(d.reports || []);
+        setAccessToken(d.accessToken || null);
+        setBookkeepingActive(!!d.bookkeepingActive);
+      })
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }));
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId]);
@@ -212,16 +217,29 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
 
   if (!reports) return <section className="tax-card" style={{ marginTop: 24 }}><p>{t('owner.customer.bookkeeping.loading')}</p></section>;
 
+  // Service-gated: hide the section entirely unless the customer has
+  // the bookkeeping product tagged via the Services panel above. If
+  // they have legacy reports from before the service was removed, we
+  // keep the section visible (read-only banner) so the owner can
+  // still resend/preview.
+  if (!bookkeepingActive && reports.length === 0) return null;
+
   return (
     <section className="tax-card" style={{ marginTop: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <h3 style={{ margin: 0 }}>{t('owner.customer.bookkeeping.heading')}</h3>
-        {!creating && !editingId && (
+        {bookkeepingActive && !creating && !editingId && (
           <button type="button" className="tax-btn tax-btn--primary" onClick={startCreate} disabled={busy}>
             {t('owner.customer.bookkeeping.newBtn')}
           </button>
         )}
       </div>
+
+      {!bookkeepingActive && (
+        <div style={{ background: '#fef3c7', borderLeft: '3px solid #b45309', color: '#78350f', padding: '10px 12px', borderRadius: 6, fontSize: 13, marginBottom: 8 }}>
+          {t('owner.customer.bookkeeping.serviceInactive')}
+        </div>
+      )}
 
       {msg.text && (
         <div className={`tax-msg ${msg.kind === 'err' ? 'tax-msg--error' : msg.kind === 'warn' ? '' : 'tax-msg--success'}`}
