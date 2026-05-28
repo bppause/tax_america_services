@@ -11505,21 +11505,25 @@ module.exports = function createTaxRouter(deps) {
     return `${base}/tax/${encodeURIComponent(communityId)}/r/${rawToken}`;
   }
 
-  // Returns true when the customer has any active relationship row
-  // whose relationship_type is linked to a `bookkeeping`-slug product.
-  // The bookkeeping reports section on the owner's customer-detail
-  // page is gated on this — adding/removing the service via the
-  // standard Services tagging UI flips this flag.
+  // Returns true when the customer has the bookkeeping product
+  // attached. Checks both join tables — `tax_customer_services` is
+  // the newer (product-direct) tagging path, `tax_customer_relationships`
+  // is the older relationship-type path. Either one is enough.
   async function customerHasBookkeepingService(customerId) {
-    const { data, error } = await supabase
-      .from('tax_customer_relationships')
-      .select(`
-        id, active,
-        type:tax_relationship_types ( id, product:tax_products ( id, slug ) )
-      `)
+    // Newer path: tax_customer_services row pointing at a product
+    // with slug='bookkeeping'.
+    const { data: svcRows } = await supabase
+      .from('tax_customer_services')
+      .select(`active, product:tax_products ( slug )`)
       .eq('customer_id', customerId).eq('active', true);
-    if (error || !data) return false;
-    return data.some(r => r?.type?.product?.slug === 'bookkeeping');
+    if ((svcRows || []).some(r => r?.product?.slug === 'bookkeeping')) return true;
+    // Legacy path: tax_customer_relationships pointing at a
+    // relationship_type linked to the bookkeeping product.
+    const { data: relRows } = await supabase
+      .from('tax_customer_relationships')
+      .select(`active, type:tax_relationship_types ( product:tax_products ( slug ) )`)
+      .eq('customer_id', customerId).eq('active', true);
+    return (relRows || []).some(r => r?.type?.product?.slug === 'bookkeeping');
   }
 
   // ── Admin: list + CRUD reports for a customer ─────────────────────────────
