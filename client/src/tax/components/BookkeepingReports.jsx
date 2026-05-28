@@ -157,6 +157,20 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Returns true if any group in the P&L data has a declared total that
+// doesn't match the sum of its items (the only condition that blocks publish).
+function plHasMismatch(plData) {
+  if (!plData?.sections) return false;
+  for (const section of Object.values(plData.sections)) {
+    for (const g of (section?.groups || [])) {
+      const itemSum = (g.items || []).reduce((s, i) => s + num(i.amount), 0);
+      const declared = g.total != null && g.total !== '' ? num(g.total) : null;
+      if (declared != null && Math.abs(declared - itemSum) > 0.5) return true;
+    }
+  }
+  return false;
+}
+
 // Compute totals from the section/group tree. Sums groups within each
 // section, derives the canonical totals (gross_profit, net_income,
 // etc.). Used to display live totals + sent to the server alongside
@@ -381,6 +395,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const publish = async (r) => {
     setBusy(true);
     let missing = [];
+    let mismatch = false;
     try {
       const d = await taxApi.adminGetFinancialReport(auth, r.id);
       const rpt = d.report;
@@ -388,8 +403,14 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       const balOk = rpt.balance_data && Object.values(rpt.balance_data).some(v => v != null && v !== '' && Number(v) !== 0);
       if (!plOk) missing.push('P&L');
       if (!balOk) missing.push('balance sheet');
-    } catch (_e) { /* fetch failed — skip check, let publish proceed */ }
+      mismatch = plHasMismatch(rpt.pl_data);
+    } catch (_e) { /* fetch failed — skip checks, let publish proceed */ }
     finally { setBusy(false); }
+
+    if (mismatch) {
+      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.publishMismatch') });
+      return;
+    }
 
     const confirmText = missing.length > 0
       ? t('owner.customer.bookkeeping.confirm.publishMissing', { period: r.period_label, missing: missing.join(' and ') })
@@ -754,17 +775,24 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
   const removeGroup = (idx) => onChange({ ...section, groups: section.groups.filter((_, i) => i !== idx) });
   const sectionTotal = section.groups.reduce((s, g) =>
     s + (Number(g.total) || (g.items || []).reduce((a, i) => a + num(i.amount), 0)), 0);
+  const sectionHasMismatch = section.groups.some(g => {
+    const itemSum = (g.items || []).reduce((a, i) => a + num(i.amount), 0);
+    const declared = g.total != null && g.total !== '' ? num(g.total) : null;
+    return declared != null && Math.abs(declared - itemSum) > 0.5;
+  });
   return (
-    <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
       <div
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '9px 12px', cursor: 'pointer', userSelect: 'none', background: '#fafafa',
-          borderBottom: collapsed ? 'none' : '1px solid #e2e8f0' }}
+          padding: '9px 12px', cursor: 'pointer', userSelect: 'none',
+          background: sectionHasMismatch ? '#fef3c7' : '#fafafa',
+          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}` }}
         onClick={() => setCollapsed(c => !c)}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1, width: 14, textAlign: 'center' }}>{collapsed ? '▶' : '▼'}</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>{title}</span>
+          {sectionHasMismatch && collapsed && <span style={{ color: '#b45309', fontSize: 14, lineHeight: 1 }}>⚠</span>}
         </div>
         <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
       </div>
@@ -791,6 +819,7 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
 }
 
 function GroupEditor({ t, group, onChange, onDelete }) {
+  const [collapsed, setCollapsed] = useState(false);
   const setItem = (idx, item) => onChange({ ...group, items: group.items.map((x, i) => i === idx ? item : x) });
   const addItem = () => onChange({ ...group, items: [...group.items, { name: '', amount: '' }] });
   const removeItem = (idx) => onChange({ ...group, items: group.items.filter((_, i) => i !== idx) });
@@ -798,36 +827,54 @@ function GroupEditor({ t, group, onChange, onDelete }) {
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
   const mismatch = declaredTotal != null && Math.abs(declaredTotal - itemSum) > 0.5;
   return (
-    <div style={{ marginTop: 8, padding: 10, border: '1px solid #e2e8f0', borderRadius: 6, background: '#fafafa' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div style={{ marginTop: 8, border: `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 6, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 10px',
+                    background: mismatch ? '#fef3c7' : '#f8fafc',
+                    borderBottom: collapsed ? 'none' : `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}` }}>
+        <button type="button" onClick={() => setCollapsed(c => !c)}
+                style={{ background: 'none', border: 0, cursor: 'pointer', padding: '0 2px',
+                         color: '#64748b', fontSize: 13, lineHeight: 1, flexShrink: 0, width: 16 }}>
+          {collapsed ? '▶' : '▼'}
+        </button>
         <input type="text" value={group.name} onChange={e => onChange({ ...group, name: e.target.value })}
                placeholder={t('owner.customer.bookkeeping.group.namePlaceholder')}
-               style={{ ...inputStyle, flex: 1, fontWeight: 600 }} />
+               style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
+               onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#f59e0b' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
+               onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
         <input type="number" inputMode="decimal" step="0.01"
                value={group.total ?? ''}
                onChange={e => onChange({ ...group, total: e.target.value })}
                placeholder={String(itemSum.toFixed(2))}
                title={t('owner.customer.bookkeeping.group.totalHint')}
-               style={{ ...inputStyle, width: 110, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }} />
+               style={{ ...inputStyle, width: 100, fontVariantNumeric: 'tabular-nums', textAlign: 'right',
+                        borderColor: mismatch ? '#f59e0b' : undefined, fontWeight: 700 }} />
+        {mismatch && (
+          <span title={t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+                style={{ color: '#b45309', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>⚠</span>
+        )}
         <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
-                style={{ background: 'transparent', border: 0, color: '#b91c1c', cursor: 'pointer', fontSize: 18, padding: '0 4px' }}>×</button>
+                style={{ background: 'transparent', border: 0, color: '#b91c1c', cursor: 'pointer', fontSize: 18, padding: '0 2px', flexShrink: 0 }}>×</button>
       </div>
-      {mismatch && (
-        <div style={{ marginTop: 4, fontSize: 11, color: '#b45309' }}>
-          {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+      {!collapsed && (
+        <div style={{ padding: '8px 10px', background: '#fff' }}>
+          {mismatch && (
+            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fef3c7', borderRadius: 4, fontSize: 11, color: '#b45309', fontWeight: 600 }}>
+              ⚠ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+            </div>
+          )}
+          {group.items.length > 0 && (
+            <div style={{ display: 'grid', gap: 4 }}>
+              {group.items.map((it, idx) => (
+                <ItemRow key={idx} t={t} item={it} onChange={i => setItem(idx, i)} onDelete={() => removeItem(idx)} />
+              ))}
+            </div>
+          )}
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addItem}
+                  style={{ marginTop: 6, fontSize: 11 }}>
+            + {t('owner.customer.bookkeeping.group.addItem')}
+          </button>
         </div>
       )}
-      {group.items.length > 0 && (
-        <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
-          {group.items.map((it, idx) => (
-            <ItemRow key={idx} t={t} item={it} onChange={i => setItem(idx, i)} onDelete={() => removeItem(idx)} />
-          ))}
-        </div>
-      )}
-      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addItem}
-              style={{ marginTop: 6, fontSize: 11 }}>
-        + {t('owner.customer.bookkeeping.group.addItem')}
-      </button>
     </div>
   );
 }

@@ -2078,6 +2078,7 @@
   "owner.customer.bookkeeping.msg.saved": "Guardado.",
   "owner.customer.bookkeeping.msg.loadFailed": "No se pudo cargar.",
   "owner.customer.bookkeeping.msg.saveFailed": "No se pudo guardar.",
+  "owner.customer.bookkeeping.msg.publishMismatch": "No se puede publicar — los totales de una o más categorías del P&L no coinciden con sus partidas. Abra Editar, busque las advertencias ⚠, corrija los totales, guarde e intente publicar de nuevo.",
   "owner.customer.bookkeeping.msg.publishFailed": "No se pudo publicar.",
   "owner.customer.bookkeeping.msg.sendFailed": "No se pudo enviar.",
   "owner.customer.bookkeeping.msg.deleteFailed": "No se pudo eliminar.",

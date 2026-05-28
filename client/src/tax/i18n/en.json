@@ -2079,6 +2079,7 @@
   "owner.customer.bookkeeping.msg.saved": "Saved.",
   "owner.customer.bookkeeping.msg.loadFailed": "Could not load.",
   "owner.customer.bookkeeping.msg.saveFailed": "Could not save.",
+  "owner.customer.bookkeeping.msg.publishMismatch": "Cannot publish — one or more P&L category totals don't match their line items. Open Edit, look for ⚠ warnings, correct the totals, save, then try publishing again.",
   "owner.customer.bookkeeping.msg.publishFailed": "Could not publish.",
   "owner.customer.bookkeeping.msg.sendFailed": "Could not send.",
   "owner.customer.bookkeeping.msg.deleteFailed": "Could not delete.",
