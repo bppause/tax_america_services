@@ -383,7 +383,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       }
       if (dbg.error === 'pdf_no_text_layer') { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.noTextLayer') }); return; }
       if (dbg.error) { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.parseError', { error: dbg.error }) }); return; }
-      setForm(prev => mergeParsedIntoForm(prev, parseResult.parsed, kind));
+      setForm(prev => {
+        const cleared = kind === 'pl'
+          ? { ...prev, pl_data: emptyPlData() }
+          : { ...prev, balance_data: Object.fromEntries(BALANCE_KEYS.map(k => [k, ''])) };
+        return mergeParsedIntoForm(cleared, parseResult.parsed, kind);
+      });
       if ((dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }) });
       } else {
@@ -563,8 +568,8 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pdfs')}>
         {editing ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} busy={busy} />
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} busy={busy} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} />
           </div>
         ) : (
           <div style={{ padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569' }}>
@@ -785,23 +790,33 @@ function Total({ label, value, bold }) {
   );
 }
 
-function PdfDrop({ label, onPick, busy }) {
-  const inputId = `pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`;
-  // After every pick we clear the input.value so the slot resets to
-  // "No file chosen" — owner sees a clean dropzone and can re-upload
-  // the same file again if a parse needs a redo. The status banner
-  // above the form ("Parsed N fields …") is the confirmation that
-  // the upload worked.
+function PdfDrop({ label, onPick, onReset, busy, t }) {
+  const inputId = useRef(`pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`).current;
+  const [lastFileName, setLastFileName] = useState('');
   return (
     <div style={{ display: 'grid', gap: 4 }}>
       <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
-      <input id={inputId} type="file" accept="application/pdf,.pdf" disabled={busy}
-             onChange={e => {
-               const f = e.target.files && e.target.files[0];
-               if (f) onPick(f);
-               e.target.value = '';
-             }}
-             style={{ padding: '8px', border: '1px dashed var(--tax-border)', borderRadius: 6, background: '#fff', fontSize: 13 }} />
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input id={inputId} type="file" accept="application/pdf,.pdf" disabled={busy}
+               onChange={e => {
+                 const f = e.target.files && e.target.files[0];
+                 if (f) { setLastFileName(f.name); onPick(f); }
+                 e.target.value = '';
+               }}
+               style={{ flex: 1, minWidth: 0, padding: '8px', border: '1px dashed var(--tax-border)', borderRadius: 6, background: '#fff', fontSize: 13 }} />
+        {onReset && (
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={onReset} disabled={busy}
+                  style={{ fontSize: 11, color: '#b91c1c', whiteSpace: 'nowrap' }}>
+            {t('owner.customer.bookkeeping.action.reset')}
+          </button>
+        )}
+      </div>
+      {lastFileName && (
+        <div style={{ fontSize: 11, color: '#475569' }}>
+          {t('owner.customer.bookkeeping.pdf.lastFile')}: <strong style={{ fontWeight: 600 }}>{lastFileName}</strong>
+        </div>
+      )}
     </div>
   );
 }
