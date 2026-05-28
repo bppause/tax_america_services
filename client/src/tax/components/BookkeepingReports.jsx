@@ -268,6 +268,17 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId, refreshNonce]);
 
+  const resetPl = () => {
+    if (!confirm(t('owner.customer.bookkeeping.confirm.resetPl'))) return;
+    setForm(prev => ({ ...prev, pl_data: emptyPlData() }));
+  };
+  const resetBalance = () => {
+    if (!confirm(t('owner.customer.bookkeeping.confirm.resetBalance'))) return;
+    const blank = {};
+    for (const k of BALANCE_KEYS) blank[k] = '';
+    setForm(prev => ({ ...prev, balance_data: blank }));
+  };
+
   const startCreate = () => {
     setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' });
   };
@@ -435,7 +446,8 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
 
       {(creating || editingId) && (
         <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
-                    editing={!!editingId} onUploadPdf={uploadAndParsePdf} />
+                    editing={!!editingId} onUploadPdf={uploadAndParsePdf}
+                    onResetPl={resetPl} onResetBalance={resetBalance} />
       )}
 
       {!creating && !editingId && (
@@ -516,7 +528,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
 
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 };
 
-function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf }) {
+function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance }) {
   const set = (k, v) => setForm({ ...form, [k]: v });
   const setSection = (key, sec) => {
     setForm({ ...form, pl_data: { ...form.pl_data, sections: { ...form.pl_data.sections, [key]: sec } } });
@@ -561,16 +573,35 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
         )}
       </FormGroup>
 
-      {SECTION_KEYS.map(sectionKey => (
-        <SectionEditor key={sectionKey} t={t}
-          sectionKey={sectionKey}
-          title={t(SECTION_TITLE_KEY[sectionKey])}
-          section={form.pl_data.sections[sectionKey]}
-          onChange={s => setSection(sectionKey, s)}
-        />
-      ))}
+      <div style={{ marginTop: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569' }}>
+            {t('owner.customer.bookkeeping.form.group.pl')}
+          </div>
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={onResetPl} disabled={busy}
+                  style={{ fontSize: 11, color: '#b91c1c' }}>
+            {t('owner.customer.bookkeeping.action.resetPl')}
+          </button>
+        </div>
+        {SECTION_KEYS.map(sectionKey => (
+          <SectionEditor key={sectionKey} t={t}
+            sectionKey={sectionKey}
+            title={t(SECTION_TITLE_KEY[sectionKey])}
+            section={form.pl_data.sections[sectionKey]}
+            onChange={s => setSection(sectionKey, s)}
+          />
+        ))}
+      </div>
 
-      <FormGroup title={t('owner.customer.bookkeeping.form.group.balance')}>
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.balance')}
+                 action={
+                   <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                           onClick={onResetBalance} disabled={busy}
+                           style={{ fontSize: 11, color: '#b91c1c' }}>
+                     {t('owner.customer.bookkeeping.action.resetBalance')}
+                   </button>
+                 }>
         <NumericGrid>
           {BALANCE_KEYS.map(k => (
             <Field key={k} label={t(`owner.customer.bookkeeping.balance.${k}`)}>
@@ -719,11 +750,14 @@ function NumericInput({ value, onChange }) {
            style={{ ...inputStyle, fontVariantNumeric: 'tabular-nums' }} />
   );
 }
-function FormGroup({ title, children }) {
+function FormGroup({ title, children, action }) {
   return (
     <div style={{ marginTop: 14 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569', marginBottom: 8 }}>
-        {title}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569' }}>
+          {title}
+        </div>
+        {action}
       </div>
       {children}
     </div>
