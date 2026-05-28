@@ -4,6 +4,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import TaskHover from '../components/TaskHover';
+import BookkeepingReportsSection from '../components/BookkeepingReports';
 import { ensureCompletionNotes } from './OwnerTasks';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
@@ -153,6 +154,8 @@ export default function OwnerCustomerDetail({ customerId }) {
                     locale={locale} t={t} />
 
       <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
+
+      <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} />
 
       <DocumentsSection
         data={data} auth={auth} customerId={customerId} onChange={load} t={t} />

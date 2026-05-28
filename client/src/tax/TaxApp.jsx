@@ -14,6 +14,7 @@ import Landing from './pages/Landing';
 import PublicFaqs from './pages/PublicFaqs';
 import PublicArticles from './pages/PublicArticles';
 import Respond from './pages/Respond';
+import TaxReport from './pages/TaxReport';
 import PortalLogin from './pages/PortalLogin';
 import PortalDashboard from './pages/PortalDashboard';
 import PortalFiling from './pages/PortalFiling';
@@ -79,6 +80,12 @@ function parseTaxPath() {
   if (parts[2] === 'faqs')     return { route: 'public-faqs', slug };
   if (parts[2] === 'articles') return { route: 'public-articles', slug };
   if (parts[2] === 'calendar') return { route: 'public-calendar', slug };
+  // Bookkeeping report magic-link viewer at /tax/:slug/r/{token}.
+  // Public; the page enforces email-confirmation via the server's
+  // /report-access/:token gate.
+  if (parts[2] === 'r' && parts[3]) {
+    return { route: 'report-view', slug, token: decodeURIComponent(parts[3]) };
+  }
   if (parts[2] === 'employee') {
     if (parts[3] === 'profile') return { route: 'employee-profile', slug };
     if (parts[3] === 'threads' && parts[4]) return { route: 'employee-thread', slug, threadId: decodeURIComponent(parts[4]) };
@@ -133,6 +140,8 @@ export default function TaxApp() {
     <TaxLocaleProvider>
       {parsed.route === 'respond'
         ? <Respond token={parsed.token} />
+        : parsed.route === 'report-view'
+        ? <TaxReport communitySlug={parsed.slug} token={parsed.token} />
         : parsed.route.startsWith('platform')
           ? <PlatformRoot parsed={parsed} />
           : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))

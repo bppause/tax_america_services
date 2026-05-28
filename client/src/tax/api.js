@@ -512,4 +512,23 @@ export const taxApi = {
   platformVerify(auth)                         { return request('POST', '/platform/auth/verify', {}, auth, { admin: true }); },
   platformListCommunities(auth)                { return request('GET',  '/platform/communities', undefined, auth, { admin: true }); },
   platformCreateCommunity(auth, payload)       { return request('POST', '/platform/communities', payload, auth, { admin: true }); },
+
+  // Phase 4n.70: bookkeeping financial reports (admin side).
+  adminListFinancialReports(auth, customerId)             { return request('GET',    `/admin/customers/${encodeURIComponent(customerId)}/financial-reports`, undefined, auth, { admin: true }); },
+  adminGetFinancialReport(auth, id)                       { return request('GET',    `/admin/financial-reports/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminCreateFinancialReport(auth, customerId, payload)   { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/financial-reports`, payload, auth, { admin: true }); },
+  adminUpdateFinancialReport(auth, id, payload)           { return request('PUT',    `/admin/financial-reports/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
+  adminDeleteFinancialReport(auth, id)                    { return request('DELETE', `/admin/financial-reports/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminPublishFinancialReport(auth, id)                   { return request('POST',   `/admin/financial-reports/${encodeURIComponent(id)}/publish`, {}, auth, { admin: true }); },
+  adminSendFinancialReport(auth, id, opts = {})           { return request('POST',   `/admin/financial-reports/${encodeURIComponent(id)}/send`, opts, auth, { admin: true }); },
+  adminRotateReportAccessToken(auth, customerId)          { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/report-access-token/rotate`, {}, auth, { admin: true }); },
+  adminPreviewReportAccess(auth, customerId)              { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/report-access-preview`, {}, auth, { admin: true }); },
+
+  // Phase 4n.70: bookkeeping financial reports (public, token-gated).
+  // No auth headers — server gates via signed token in the URL + an
+  // httpOnly cookie set on confirm. Same-origin fetch sends cookies
+  // by default, so no extra options are needed.
+  getReportAccess(token)                                  { return request('GET',  `/report-access/${encodeURIComponent(token)}`); },
+  confirmReportAccess(token, email)                       { return request('POST', `/report-access/${encodeURIComponent(token)}/confirm`, { email }); },
+  getReportAccessReport(token, reportId)                  { return request('GET',  `/report-access/${encodeURIComponent(token)}/reports/${encodeURIComponent(reportId)}`); },
 };

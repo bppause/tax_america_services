@@ -146,6 +146,7 @@ const {
   sendTaxMessageEmail, sendTaxMessagePracticeEmail, sendTaxMessageEmployeeEmail,
   sendTaxWelcomeEmail, sendTaxStaffWelcomeEmail,
   sendTaxSignatureRequestEmail, sendTaxSignatureSignedEmail,
+  sendTaxBookkeepingReportEmail,
   previewTaxEmail, getTemplateDefaults,
 } = require('./modules/tax/email-senders')({
   sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery,
@@ -184,6 +185,7 @@ const taxRouter = taxModule.createRouter({
   sendTaxStaffWelcomeEmail,
   sendTaxSignatureRequestEmail,
   sendTaxSignatureSignedEmail,
+  sendTaxBookkeepingReportEmail,
   previewTaxEmail,
   getTemplateDefaults,
   publicAppUrl: () => publicAppUrl(),

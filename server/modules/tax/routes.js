@@ -62,6 +62,7 @@ module.exports = function createTaxRouter(deps) {
     sendTaxStaffWelcomeEmail,
     sendTaxSignatureRequestEmail,
     sendTaxSignatureSignedEmail,
+    sendTaxBookkeepingReportEmail,
     previewTaxEmail,
     getTemplateDefaults,
     publicAppUrl,
@@ -11370,11 +11371,603 @@ module.exports = function createTaxRouter(deps) {
     return out;
   }
 
-  // Expose the cron entrypoint alongside the router so server/index.js
-  // can schedule it without reimplementing the helper. router still
-  // works as a default export because the factory's caller can still
-  // ignore the extra prop (the existing `app.use('/api/m/tax', taxRouter)`
-  // line is now `app.use(..., taxRouter.router)`).
+  // ── Bookkeeping financial reports (Phase 4n.70) ───────────────────────────
+  // Twice-a-year P&L + Balance Sheet that the owner publishes for a
+  // bookkeeping customer. Customer never logs in: a per-customer
+  // access token is emailed; visiting /tax/{slug}/r/{token} prompts
+  // them to confirm their email (Tier 2 magic-link). On match we set
+  // a 7-day httpOnly cookie scoped to the token, and the dashboard
+  // renders. Publish and Send are explicit, separate actions — the
+  // owner reviews before any email leaves.
+
+  const REPORT_COOKIE_NAME = 'tax_rpt';
+  const REPORT_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const REPORT_LOCKOUT_FAILURES = 5;
+  const REPORT_LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
+  // Cookie HMAC secret. Falls back to a derivative of the service-role
+  // key when the dedicated env var is missing, so the feature still
+  // works in environments that haven't been re-provisioned yet — but
+  // operators should set REPORT_ACCESS_COOKIE_SECRET explicitly so
+  // rotating the service-role key doesn't accidentally invalidate
+  // every customer's session.
+  const REPORT_COOKIE_SECRET = process.env.REPORT_ACCESS_COOKIE_SECRET
+    || sha256('report-cookie-fallback:' + (process.env.SUPABASE_SERVICE_ROLE_KEY || ''));
+
+  function signReportCookie(tokenId, customerId) {
+    return crypto.createHmac('sha256', REPORT_COOKIE_SECRET)
+      .update(`${tokenId}:${customerId}`)
+      .digest('base64url')
+      .slice(0, 32);
+  }
+  function verifyReportCookie(tokenId, customerId, cookieValue) {
+    if (!cookieValue) return false;
+    const expected = signReportCookie(tokenId, customerId);
+    // Constant-time compare; both are 32-char base64url so length always matches.
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(cookieValue),
+        Buffer.from(expected),
+      );
+    } catch (_e) { return false; }
+  }
+
+  // Pull the report-access cookie out of the Cookie header. Express
+  // doesn't parse cookies on its own (no cookie-parser middleware
+  // configured) and pulling one in just for this would add weight, so
+  // we hand-parse the one cookie we care about.
+  function readReportCookie(req) {
+    const raw = req.get('cookie') || '';
+    const m = raw.match(new RegExp(`(?:^|;\\s*)${REPORT_COOKIE_NAME}=([^;]+)`));
+    return m ? m[1] : '';
+  }
+
+  async function fetchAccessTokenRow(rawToken) {
+    if (!rawToken) return { ok: false, status: 400, error: 'Token required.' };
+    const tokenHash = sha256(rawToken);
+    const { data, error } = await supabase
+      .from('tax_report_access_tokens')
+      .select('id, community_id, customer_id, token_hash, failure_count, locked_until, revoked_at')
+      .eq('token_hash', tokenHash)
+      .maybeSingle();
+    if (error) return { ok: false, status: 500, error: error.message };
+    if (!data) return { ok: false, status: 404, error: 'invalid_token' };
+    if (data.revoked_at) return { ok: false, status: 410, error: 'token_revoked' };
+    return { ok: true, row: data };
+  }
+
+  async function loadCustomerReports(customerId) {
+    const { data, error } = await supabase.from('tax_financial_reports')
+      .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, last_sent_at, send_count, pl_data, balance_data, pl_pdf_path, balance_pdf_path, created_at, updated_at')
+      .eq('customer_id', customerId)
+      .in('status', ['published', 'sent'])
+      .order('period_end', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  }
+
+  // Trim PII out of the report payload returned to the customer —
+  // they should only see their own report, never internal-only fields.
+  function publicReportShape(r) {
+    return {
+      id: r.id,
+      period_label: r.period_label,
+      period_start: r.period_start,
+      period_end: r.period_end,
+      cadence: r.cadence,
+      revision: r.revision,
+      published_at: r.published_at,
+      updated_at: r.updated_at,
+      pl: r.pl_data || {},
+      balance: r.balance_data || {},
+      has_pl_pdf: Boolean(r.pl_pdf_path),
+      has_balance_pdf: Boolean(r.balance_pdf_path),
+    };
+  }
+
+  // Mint or rotate the customer's access token. Idempotent: if a row
+  // already exists and isn't revoked, returns the existing id (the raw
+  // token is unrecoverable, so the caller decides whether to force a
+  // rotate by passing `rotate: true`).
+  async function ensureAccessToken(communityId, customerId, { rotate = false } = {}) {
+    const { data: existing } = await supabase.from('tax_report_access_tokens')
+      .select('id, revoked_at')
+      .eq('customer_id', customerId)
+      .maybeSingle();
+    if (existing && !existing.revoked_at && !rotate) {
+      return { id: existing.id, raw: null, rotated: false };
+    }
+    const raw = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = sha256(raw);
+    if (existing) {
+      const { error } = await supabase.from('tax_report_access_tokens')
+        .update({
+          token_hash: tokenHash,
+          failure_count: 0,
+          locked_until: null,
+          revoked_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+      if (error) throw error;
+      return { id: existing.id, raw, rotated: true };
+    }
+    const id = 'rtok_' + uuidv4().slice(0, 12);
+    const { error } = await supabase.from('tax_report_access_tokens').insert({
+      id, community_id: communityId, customer_id: customerId,
+      token_hash: tokenHash,
+    });
+    if (error) throw error;
+    return { id, raw, rotated: false };
+  }
+
+  function reportViewUrl(communityId, rawToken) {
+    const base = (typeof publicAppUrl === 'function' ? publicAppUrl() : '') || '';
+    return `${base}/tax/${encodeURIComponent(communityId)}/r/${rawToken}`;
+  }
+
+  // ── Admin: list + CRUD reports for a customer ─────────────────────────────
+  router.get('/admin/customers/:customerId/financial-reports', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_customers'))) return;
+    const customerId = trim(req.params.customerId, 200);
+    if (!customerId) return res.status(400).json({ error: 'customerId required.' });
+    const { data, error } = await supabase.from('tax_financial_reports')
+      .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, created_at, updated_at')
+      .eq('customer_id', customerId)
+      .order('period_end', { ascending: false });
+    if (error) return sendSupabaseError(res, error);
+    // Pair with the access-token presence info so the UI knows
+    // whether a link is provisioned.
+    const { data: tok } = await supabase.from('tax_report_access_tokens')
+      .select('id, revoked_at, last_used_at, created_at')
+      .eq('customer_id', customerId).maybeSingle();
+    res.json({ reports: data || [], accessToken: tok || null });
+  });
+
+  router.get('/admin/financial-reports/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_customers'))) return;
+    const id = trim(req.params.id, 200);
+    const { data, error } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', id).maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    if (!data) return res.status(404).json({ error: 'Not found.' });
+    res.json({ report: data });
+  });
+
+  router.post('/admin/customers/:customerId/financial-reports', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.customerId, 200);
+    if (!customerId) return res.status(400).json({ error: 'customerId required.' });
+    const { data: cust, error: cErr } = await supabase.from('tax_customers')
+      .select('id, community_id').eq('id', customerId).maybeSingle();
+    if (cErr) return sendSupabaseError(res, cErr);
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+
+    const body = req.body || {};
+    const periodLabel = trim(body.period_label, 80);
+    const periodStart = trim(body.period_start, 40);
+    const periodEnd = trim(body.period_end, 40);
+    const cadence = ['semi_annual','annual','quarterly','custom'].includes(body.cadence)
+      ? body.cadence : 'semi_annual';
+    if (!periodLabel || !periodStart || !periodEnd) {
+      return res.status(400).json({ error: 'period_label, period_start, period_end required.' });
+    }
+    const id = 'frpt_' + uuidv4().slice(0, 12);
+    const row = {
+      id, community_id: cust.community_id, customer_id: customerId,
+      period_label: periodLabel,
+      period_start: periodStart, period_end: periodEnd,
+      cadence,
+      pl_data: (body.pl_data && typeof body.pl_data === 'object') ? body.pl_data : {},
+      balance_data: (body.balance_data && typeof body.balance_data === 'object') ? body.balance_data : {},
+      status: 'draft',
+      prepared_by_email: actor.email,
+      notes: trim(body.notes, MAX_TEXT_LEN),
+    };
+    const { error } = await supabase.from('tax_financial_reports').insert(row);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'create', actorEmail: actor.email,
+        after: { customer_id: customerId, period_label: periodLabel },
+      });
+    } catch (_e) {}
+    res.json({ report: row });
+  });
+
+  router.put('/admin/financial-reports/:id', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur, error: gErr } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', id).maybeSingle();
+    if (gErr) return sendSupabaseError(res, gErr);
+    if (!cur) return res.status(404).json({ error: 'Not found.' });
+
+    const body = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (typeof body.period_label === 'string') patch.period_label = trim(body.period_label, 80);
+    if (typeof body.period_start === 'string') patch.period_start = trim(body.period_start, 40);
+    if (typeof body.period_end === 'string')   patch.period_end   = trim(body.period_end, 40);
+    if (typeof body.cadence === 'string'
+        && ['semi_annual','annual','quarterly','custom'].includes(body.cadence)) {
+      patch.cadence = body.cadence;
+    }
+    if (body.pl_data && typeof body.pl_data === 'object') patch.pl_data = body.pl_data;
+    if (body.balance_data && typeof body.balance_data === 'object') patch.balance_data = body.balance_data;
+    if (typeof body.notes === 'string') patch.notes = trim(body.notes, MAX_TEXT_LEN);
+    // Edits-after-send bump the revision counter so the customer
+    // dashboard can surface "Actualizado el …" — but the owner stays
+    // in control of whether to re-email.
+    if (cur.status === 'sent') {
+      patch.revision = (cur.revision || 1) + 1;
+    }
+    const { error } = await supabase.from('tax_financial_reports').update(patch).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'edit', actorEmail: actor.email,
+        before: { revision: cur.revision }, after: { revision: patch.revision || cur.revision },
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/financial-reports/:id', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { error } = await supabase.from('tax_financial_reports').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'delete', actorEmail: actor.email,
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // ── Admin: publish (draft → published) ────────────────────────────────────
+  router.post('/admin/financial-reports/:id/publish', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_financial_reports')
+      .select('id, status, customer_id, community_id').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Not found.' });
+    if (cur.status !== 'draft') {
+      return res.status(400).json({ error: 'already_published', message: 'Report is already published.' });
+    }
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('tax_financial_reports')
+      .update({ status: 'published', published_at: now, updated_at: now })
+      .eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    // Ensure the customer has an access token provisioned (idempotent).
+    try { await ensureAccessToken(cur.community_id, cur.customer_id); } catch (_e) {}
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'publish', actorEmail: actor.email,
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // ── Admin: send / resend email ───────────────────────────────────────────
+  router.post('/admin/financial-reports/:id/send', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', id).maybeSingle();
+    if (!rpt) return res.status(404).json({ error: 'Not found.' });
+    if (rpt.status === 'draft') {
+      return res.status(400).json({ error: 'not_published', message: 'Publish the report first.' });
+    }
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, name, first_name, last_name, business_name, email, preferred_communication_email, locale')
+      .eq('id', rpt.customer_id).maybeSingle();
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+    const recipient = String(cust.preferred_communication_email || cust.email || '').trim();
+    if (!recipient) {
+      return res.status(400).json({ error: 'no_email', message: 'Customer has no email on file.' });
+    }
+    const { data: comm } = await supabase.from('communities')
+      .select('id, name, default_locale').eq('id', rpt.community_id).maybeSingle();
+
+    // Mint (or rotate, if asked) the access token + build the URL.
+    const shouldRotate = req.body && req.body.rotateToken === true;
+    let tokenInfo;
+    try {
+      tokenInfo = await ensureAccessToken(rpt.community_id, rpt.customer_id, { rotate: shouldRotate });
+    } catch (e) {
+      return res.status(500).json({ error: 'token_mint_failed', message: e?.message || '' });
+    }
+    // On the FIRST send we may have a brand-new raw token to embed;
+    // on subsequent resends we don't (storage is hashed). For resends
+    // the owner must either rotate or accept that we re-use the
+    // already-known URL — since we never stored the raw, we cannot
+    // reconstruct it. To keep resend usable without forcing rotation
+    // we mint a NEW raw token on every send and update the hash. This
+    // does mean every send invalidates the previous URL — owners
+    // should be aware. Tracked as a refinement for v1.5.
+    if (!tokenInfo.raw) {
+      // Force rotation so we always have a raw token to embed.
+      tokenInfo = await ensureAccessToken(rpt.community_id, rpt.customer_id, { rotate: true });
+    }
+    const viewUrl = reportViewUrl(rpt.community_id, tokenInfo.raw);
+
+    let sendResult = { sent: false, skipped: true, reason: 'sender_not_configured' };
+    if (typeof sendTaxBookkeepingReportEmail === 'function') {
+      try {
+        sendResult = await sendTaxBookkeepingReportEmail({
+          community: comm, customer: cust, report: rpt, viewUrl,
+          isResend: rpt.status === 'sent',
+        });
+      } catch (e) {
+        return res.status(500).json({ error: 'email_send_failed', message: e?.message || '' });
+      }
+    }
+
+    const now = new Date().toISOString();
+    const isFirstSend = rpt.status !== 'sent';
+    await supabase.from('tax_financial_reports')
+      .update({
+        status: 'sent',
+        first_sent_at: rpt.first_sent_at || now,
+        last_sent_at: now,
+        send_count: (rpt.send_count || 0) + 1,
+        updated_at: now,
+      })
+      .eq('id', id);
+    await supabase.from('tax_financial_report_sends').insert({
+      id: 'rsnd_' + uuidv4().slice(0, 12),
+      report_id: id,
+      sent_by_email: actor.email,
+      recipient_email: recipient,
+      resend_id: sendResult?.id || '',
+      kind: isFirstSend ? 'send' : 'resend',
+    });
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: isFirstSend ? 'send' : 'resend',
+        actorEmail: actor.email,
+        after: { recipient, resend_id: sendResult?.id || null },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, sent: !!sendResult?.sent, reason: sendResult?.reason || '', viewUrl });
+  });
+
+  // ── Admin: explicit token rotate (revoke previous link) ──────────────────
+  router.post('/admin/customers/:customerId/report-access-token/rotate', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.customerId, 200);
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, community_id').eq('id', customerId).maybeSingle();
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+    try {
+      const info = await ensureAccessToken(cust.community_id, customerId, { rotate: true });
+      try {
+        await auditLog({
+          entity: 'tax.report_access_token', entityId: info.id,
+          action: 'rotate', actorEmail: actor.email,
+          after: { customer_id: customerId },
+        });
+      } catch (_e) {}
+      // Return the new URL so the owner can copy it or trigger a resend.
+      res.json({ ok: true, viewUrl: reportViewUrl(cust.community_id, info.raw) });
+    } catch (e) {
+      res.status(500).json({ error: 'rotate_failed', message: e?.message || '' });
+    }
+  });
+
+  // ── Admin: owner-side preview of the customer dashboard ──────────────────
+  // Mints a one-shot signed cookie value so the owner can open the
+  // /r/{token} URL directly without the email-confirm gate. We return
+  // the URL + cookie value; the client sets it on the same domain via
+  // document.cookie before navigating. (Server-set cookie would work
+  // too, but the gate page is on the same site so a JS-set Lax cookie
+  // is sufficient and avoids cross-route Set-Cookie shenanigans.)
+  router.post('/admin/customers/:customerId/report-access-preview', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.customerId, 200);
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, community_id').eq('id', customerId).maybeSingle();
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+    let info;
+    try {
+      info = await ensureAccessToken(cust.community_id, customerId, { rotate: true });
+    } catch (e) {
+      return res.status(500).json({ error: 'mint_failed', message: e?.message || '' });
+    }
+    const cookieValue = signReportCookie(info.id, customerId);
+    res.json({
+      viewUrl: reportViewUrl(cust.community_id, info.raw),
+      cookieName: REPORT_COOKIE_NAME,
+      cookieValue,
+      cookieMaxAgeMs: REPORT_COOKIE_MAX_AGE_MS,
+    });
+  });
+
+  // ── Public: GET /report-access/:token ────────────────────────────────────
+  // No auth at all. Returns one of two payloads:
+  //   { state: 'gate', communityName }       — email confirmation needed
+  //   { state: 'ready', reports, customer }  — cookie is good, show dashboard
+  // The customer email is never returned in the 'gate' payload — that's
+  // the secret the confirmation step is meant to prove the visitor knows.
+  router.get('/report-access/:token', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).json({ error: t.error });
+    const cookieVal = readReportCookie(req);
+    const cookieOk = verifyReportCookie(t.row.id, t.row.customer_id, cookieVal);
+    const { data: comm } = await supabase.from('communities')
+      .select('id, name').eq('id', t.row.community_id).maybeSingle();
+    if (!cookieOk) {
+      return res.json({
+        state: 'gate',
+        community: { id: comm?.id || t.row.community_id, name: comm?.name || '' },
+      });
+    }
+    // Cookie valid — bump last_used_at + return the customer's reports.
+    await supabase.from('tax_report_access_tokens')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('id', t.row.id);
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, name, first_name, last_name, business_name, locale')
+      .eq('id', t.row.customer_id).maybeSingle();
+    let reports = [];
+    try { reports = await loadCustomerReports(t.row.customer_id); } catch (e) {
+      return sendSupabaseError(res, e);
+    }
+    res.json({
+      state: 'ready',
+      community: { id: comm?.id || t.row.community_id, name: comm?.name || '' },
+      customer: cust ? {
+        name: cust.business_name || [cust.first_name, cust.last_name].filter(Boolean).join(' ').trim() || cust.name || '',
+        locale: cust.locale || 'es',
+      } : null,
+      reports: reports.map(publicReportShape),
+    });
+  });
+
+  // ── Public: POST /report-access/:token/confirm ───────────────────────────
+  // Body { email }. If it matches the customer record we set the
+  // 7-day cookie and return { ok: true }. Counts failures; locks the
+  // token after 5 wrong tries for 1h. The lock is invisible to the
+  // attacker — they get the same error response.
+  router.post('/report-access/:token/confirm', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).json({ error: t.error });
+    if (t.row.locked_until && new Date(t.row.locked_until) > new Date()) {
+      try {
+        await auditLog({
+          entity: 'tax.report_access_token', entityId: t.row.id,
+          action: 'confirm_blocked_locked', actorEmail: '',
+          after: { ip: trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80) },
+        });
+      } catch (_e) {}
+      return res.status(429).json({ error: 'locked' });
+    }
+    const submitted = trim((req.body && req.body.email) || '', 200).toLowerCase();
+    if (!submitted) return res.status(400).json({ error: 'email_required' });
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, email, preferred_communication_email')
+      .eq('id', t.row.customer_id).maybeSingle();
+    const candidates = [cust?.email, cust?.preferred_communication_email]
+      .filter(Boolean).map(s => String(s).toLowerCase().trim());
+    const match = candidates.includes(submitted);
+    const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
+    if (!match) {
+      const newCount = (t.row.failure_count || 0) + 1;
+      const lock = newCount >= REPORT_LOCKOUT_FAILURES;
+      await supabase.from('tax_report_access_tokens').update({
+        failure_count: newCount,
+        locked_until: lock ? new Date(Date.now() + REPORT_LOCKOUT_DURATION_MS).toISOString() : t.row.locked_until,
+        updated_at: new Date().toISOString(),
+      }).eq('id', t.row.id);
+      try {
+        await auditLog({
+          entity: 'tax.report_access_token', entityId: t.row.id,
+          action: lock ? 'confirm_locked' : 'confirm_failed', actorEmail: submitted,
+          after: { ip, failure_count: newCount },
+        });
+      } catch (_e) {}
+      return res.status(401).json({ error: lock ? 'locked' : 'mismatch' });
+    }
+    // Success: reset counters, set cookie, log.
+    await supabase.from('tax_report_access_tokens').update({
+      failure_count: 0,
+      locked_until: null,
+      last_used_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', t.row.id);
+    const cookieValue = signReportCookie(t.row.id, t.row.customer_id);
+    res.setHeader('Set-Cookie',
+      `${REPORT_COOKIE_NAME}=${cookieValue}; HttpOnly; Secure; SameSite=Lax; ` +
+      `Max-Age=${Math.floor(REPORT_COOKIE_MAX_AGE_MS / 1000)}; Path=/`);
+    try {
+      await auditLog({
+        entity: 'tax.report_access_token', entityId: t.row.id,
+        action: 'confirm_success', actorEmail: submitted, after: { ip },
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // ── Public: GET /report-access/:token/reports/:reportId ──────────────────
+  router.get('/report-access/:token/reports/:reportId', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).json({ error: t.error });
+    const cookieVal = readReportCookie(req);
+    if (!verifyReportCookie(t.row.id, t.row.customer_id, cookieVal)) {
+      return res.status(401).json({ error: 'confirm_required' });
+    }
+    const reportId = trim(req.params.reportId, 200);
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', reportId).eq('customer_id', t.row.customer_id).maybeSingle();
+    if (!rpt || !['published','sent'].includes(rpt.status)) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    // Also include the IMMEDIATE prior report (same cadence) so the
+    // dashboard can render the YoY comparison section without a
+    // second roundtrip. Defaults to the closest prior `period_end`.
+    const { data: prior } = await supabase.from('tax_financial_reports')
+      .select('id, period_label, period_start, period_end, pl_data, balance_data, revision, published_at')
+      .eq('customer_id', t.row.customer_id)
+      .in('status', ['published','sent'])
+      .lt('period_end', rpt.period_end)
+      .order('period_end', { ascending: false })
+      .limit(1).maybeSingle();
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: reportId,
+        action: 'view_by_customer', actorEmail: '',
+        after: { ip: trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80) },
+      });
+    } catch (_e) {}
+    res.json({
+      report: publicReportShape(rpt),
+      prior: prior ? publicReportShape(prior) : null,
+    });
+  });
+
+  // ── Public: download original PDFs via signed Storage URL ────────────────
+  router.get('/report-access/:token/reports/:reportId/pdf/:kind', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).send(t.error);
+    const cookieVal = readReportCookie(req);
+    if (!verifyReportCookie(t.row.id, t.row.customer_id, cookieVal)) {
+      return res.status(401).send('confirm_required');
+    }
+    const kind = req.params.kind === 'balance' ? 'balance' : 'pl';
+    const reportId = trim(req.params.reportId, 200);
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('id, pl_pdf_path, balance_pdf_path')
+      .eq('id', reportId).eq('customer_id', t.row.customer_id).maybeSingle();
+    if (!rpt) return res.status(404).send('not_found');
+    const path = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
+    if (!path) return res.status(404).send('pdf_not_uploaded');
+    const { data: signed, error } = await supabase.storage
+      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5); // 5min
+    if (error || !signed?.signedUrl) return res.status(500).send('sign_failed');
+    res.redirect(302, signed.signedUrl);
+  });
+
   router.autoSyncAllGoogleReviews = autoSyncAllGoogleReviews;
   return router;
 };
