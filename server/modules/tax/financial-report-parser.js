@@ -16,6 +16,42 @@
 
 const pdfParse = require('pdf-parse/lib/pdf-parse.js');
 
+// Custom page renderer: group text items by Y-coordinate (rounded
+// to integer), then sort by X within each Y-line, then join with
+// single spaces. Default pdf-parse render simply concatenates items
+// at the same Y with no separator and can interleave columns out of
+// reading order — that's why QuickBooks exports like
+// "Total COGS                141.757,05" came out as either
+// "Total COGS141.757,05" (no space) or scrambled across the page.
+// This renderer reconstructs an honest left-to-right, top-to-bottom
+// view that matches what a human sees.
+function spatialPageRender(pageData) {
+  return pageData.getTextContent({
+    normalizeWhitespace: false,
+    disableCombineTextItems: false,
+  }).then(tc => {
+    const lines = new Map();
+    for (const item of tc.items) {
+      if (!item.str) continue;
+      const y = Math.round(item.transform[5]);
+      const x = item.transform[4];
+      if (!lines.has(y)) lines.set(y, []);
+      lines.get(y).push({ x, str: item.str });
+    }
+    // PDF coordinate origin is the lower-left corner — sort Y values
+    // descending so the top of the page comes first.
+    const sortedYs = [...lines.keys()].sort((a, b) => b - a);
+    const out = [];
+    for (const y of sortedYs) {
+      const items = lines.get(y).sort((a, b) => a.x - b.x);
+      out.push(items.map(i => i.str).join(' '));
+    }
+    return out.join('\n');
+  });
+}
+
+const PDF_PARSE_OPTIONS = { pagerender: spatialPageRender };
+
 // Convert "173.568,15" → 173568.15 or "173,568.15" → 173568.15.
 function parseAmount(s) {
   if (!s) return null;
@@ -49,9 +85,15 @@ const PL_PATTERNS = [
   { label: 'Sales\\s*Uber',                                       target: 'pl.revenue.uber' },
   { label: 'Sales\\s*Grubhub',                                    target: 'pl.revenue.grubhub' },
   { label: 'Sales\\s*Menufy',                                     target: 'pl.revenue.menufy' },
-  { label: 'Sales\\s*Cash[\\s\\w]{0,20}',                         target: 'pl.revenue.cash' },
+  // "Sales Cash <name>" — let the 80-char gap step over the cashier
+  // name; the previous bracket class also ate the leading digits of
+  // the amount and clipped the value (21115 → 115).
+  { label: 'Sales\\s*Cash\\b',                                    target: 'pl.revenue.cash' },
   { label: 'Merch\\s*Bnkcd\\s*Deposit\\s*\\d+(?:\\s*no\\s*Tax)?', target: 'pl.revenue.bank_deposits', add: true, multi: true },
-  { label: 'Deposit\\s+\\d{3,}',                                  target: 'pl.revenue.bank_deposits', add: true, multi: true },
+  // Negative lookbehind so this doesn't also match inside the
+  // "Merch Bnkcd Deposit" pattern above (which would double-count
+  // those rows).
+  { label: '(?<!Bnkcd\\s)\\bDeposit\\s+\\d{3,}',                  target: 'pl.revenue.bank_deposits', add: true, multi: true },
   { label: 'Payoneer',                                            target: 'pl.revenue.bank_deposits', add: true },
   { label: 'Other\\s*Payments',                                   target: 'pl.revenue.other', add: true },
 
@@ -146,7 +188,7 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
   }
   let text;
   try {
-    const parsed = await pdfParse(buffer);
+    const parsed = await pdfParse(buffer, PDF_PARSE_OPTIONS);
     text = (parsed?.text || '').replace(/ /g, ' '); // normalize non-breaking spaces
   } catch (e) {
     out.debug.error = String(e?.message || e);
