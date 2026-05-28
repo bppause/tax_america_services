@@ -25,7 +25,28 @@ const { escapeHtml } = require('../../core/utils');
 const { firstNameOf, displayNameOf } = require('./names');
 
 module.exports = function createTaxSenders(deps) {
-  const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery, publicAppUrl } = deps;
+  const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery, publicAppUrl, supabase } = deps;
+
+  // Branded customer-facing emails need the practice's logo + contact
+  // info to render header and footer. The wide variety of call sites
+  // pass different community projections (some have logo_url, some
+  // don't), so the helper backfills the missing branding columns from
+  // the DB when needed. No-op when the columns are already present —
+  // cost of one extra select per email when not, which is negligible.
+  async function ensureBrandingFields(community) {
+    if (!community || !community.id || !supabase) return community || {};
+    const needsFetch = community.logo_url === undefined
+      || community.contact_email === undefined
+      || community.address_line1 === undefined;
+    if (!needsFetch) return community;
+    try {
+      const { data } = await supabase.from('communities')
+        .select('id, name, name_en, default_locale, logo_url, address_line1, address_line2, city, state, postal_code, phone, contact_email, whatsapp')
+        .eq('id', community.id).maybeSingle();
+      if (data) return { ...community, ...data };
+    } catch (_e) {}
+    return community;
+  }
 
   // Resolve the deployed app's base URL for clickable links in emails.
   // Falls through to empty string in tests so the helper never throws —
@@ -84,6 +105,22 @@ module.exports = function createTaxSenders(deps) {
     </td></tr>
   </table>
 </body></html>`;
+  }
+
+  // Wrap a customer-facing email body in the branded header + footer
+  // layout. Resolves the community's branding columns (logo, address,
+  // phone, contact email, etc.) on demand so legacy call sites that
+  // pass a stripped-down community projection still get the full
+  // branded chrome. `cust.community_id` is used as a fallback when the
+  // caller didn't pass a community at all.
+  async function brandedWrap({ community, cust, lang, html }) {
+    const seed = community || (cust?.community_id ? { id: cust.community_id } : null);
+    const resolved = await ensureBrandingFields(seed) || {};
+    return brandedEmailLayout({
+      community: resolved,
+      lang,
+      innerHtml: `<tr><td style="padding:24px 26px;color:#0f172a;font-size:14px;line-height:1.55">${html}</td></tr>`,
+    });
   }
 
   // Phase 4i: owner-editable subject + intro paragraph per (template_key, lang).
@@ -312,7 +349,7 @@ module.exports = function createTaxSenders(deps) {
     return { lang, langTag, defaults, vars };
   }
 
-  const sendTaxReminderEmail = async ({ row, cust, sch, sub, magicUrl, offsetDays, tips, extraDocs, workflowRuleId, skipLog }) => {
+  const sendTaxReminderEmail = async ({ row, cust, sch, sub, magicUrl, offsetDays, tips, extraDocs, workflowRuleId, skipLog, community }) => {
     if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
     // Prefer the customer's chosen communication email (Phase 2e) when set;
     // otherwise fall back to the login email.
@@ -324,8 +361,9 @@ module.exports = function createTaxSenders(deps) {
       communityId: cust.community_id, key: 'reminder',
       lang: built.lang, vars: built.vars, defaults: built.defaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang: built.lang, html: finalCopy.html });
     const result = await sendSpanishEmail({
-      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: built.langTag,
+      to, subject: finalCopy.subject, text: finalCopy.text, html: wrappedHtml, lang: built.langTag,
     });
     // Phase 4n: persist a row keyed by Resend's message id so the webhook
     // receiver can match incoming opened/clicked events back to a customer.
@@ -816,8 +854,9 @@ module.exports = function createTaxSenders(deps) {
     const finalCopy = await applyOverride({
       communityId: cust.community_id, key: 'document', lang, vars, defaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: finalCopy.html });
     const result = await sendSpanishEmail({
-      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+      to, subject: finalCopy.subject, text: finalCopy.text, html: wrappedHtml, lang: langTag,
     });
     if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -901,8 +940,9 @@ module.exports = function createTaxSenders(deps) {
     const finalCopy = await applyOverride({
       communityId: cust.community_id, key: 'signature_request', lang, vars, defaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: finalCopy.html });
     const result = await sendSpanishEmail({
-      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+      to, subject: finalCopy.subject, text: finalCopy.text, html: wrappedHtml, lang: langTag,
     });
     if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -1045,8 +1085,9 @@ module.exports = function createTaxSenders(deps) {
     const msgFinal = await applyOverride({
       communityId: cust.community_id, key: 'message_to_customer', lang, vars: msgVars, defaults: msgDefaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: msgFinal.html });
     const msgResult = await sendSpanishEmail({
-      to, subject: msgFinal.subject, text: msgFinal.text, html: msgFinal.html, lang: langTag,
+      to, subject: msgFinal.subject, text: msgFinal.text, html: wrappedHtml, lang: langTag,
     });
     if (msgResult && msgResult.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -1331,8 +1372,9 @@ module.exports = function createTaxSenders(deps) {
     const wFinal = await applyOverride({
       communityId: cust.community_id, key: 'welcome_customer', lang, vars: wVars, defaults: wDefaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: wFinal.html });
     const wResult = await sendSpanishEmail({
-      to, subject: wFinal.subject, text: wFinal.text, html: wFinal.html, lang: langTag,
+      to, subject: wFinal.subject, text: wFinal.text, html: wrappedHtml, lang: langTag,
     });
     if (wResult && wResult.sent && typeof logTaxEmailDelivery === 'function') {
       try {
