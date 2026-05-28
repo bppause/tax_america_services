@@ -311,9 +311,12 @@ function parseDynamic(text) {
       // line group (QB exports skip the "Header / item / Total Header"
       // wrapper for things like "Depreciation Expense 19,800.00" that
       // have no sub-items). Treat as a standalone group named after
-      // the line itself, then immediately flush so the NEXT real
-      // group header doesn't get pulled in as a subgroup under it.
-      group = { name: label, total: amount, items: [{ name: label, amount }] };
+      // the line itself with total = amount and NO child items —
+      // listing both the group and a self-named item underneath read
+      // as redundant clutter. Owner can still + Add line item if they
+      // want to break it down later. Flush immediately so the next
+      // real header opens fresh.
+      group = { name: label, total: amount, items: [] };
       flushGroup();
     }
   }
