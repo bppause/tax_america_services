@@ -426,22 +426,24 @@ function parseBalance(text) {
   return { fields: out, matched };
 }
 
+// Extract the company name from the first ~25 lines of extracted PDF text.
+// QuickBooks puts the company name near the top, often on the same spatial
+// row as the timestamp (e.g. "9:23 AM  Sabor Latino Restaurant"). When that
+// pattern is found we strip the timestamp prefix; otherwise we take the first
+// non-header line that contains letters.
 function extractCompanyName(text) {
   const lines = String(text || '').split(/\r?\n/).slice(0, 25);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // QB header: "5:10 PM   Company Name Here" — timestamp + company on same spatial row.
     const m = trimmed.match(/^\d{1,2}:\d{2}\s*[AP]M\s+(.+)$/i);
     if (m) {
       const candidate = m[1].trim();
-      // Reject if the remainder is itself just a date or a bare QB keyword.
       if (!/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(candidate) && /[A-Za-z]/.test(candidate) && candidate.length > 3) {
         return candidate;
       }
     }
   }
-  // Fallback: first non-chrome, alphabetic line in the header area.
   for (const line of lines) {
     const l = line.trim();
     if (!l || l.length < 4) continue;
@@ -459,7 +461,6 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
   const out = {
     pl: null,
     balance: null,
-    companyName: null,
     debug: { matched: 0, characters: 0, detectedType: null, typeMismatch: false, warnings: [] },
   };
   if (!buffer || !buffer.length) {
@@ -479,11 +480,6 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     out.debug.error = 'pdf_no_text_layer';
     return out;
   }
-
-  // Extract company name from the QB header before filtering. QB exports
-  // place the company name on the same spatial row as the timestamp
-  // ("5:10 PM  Company Name"), which the page-chrome regex would otherwise
-  // drop. We strip the timestamp and take whatever follows as the name.
   out.companyName = extractCompanyName(text);
   const hasPl = PL_MARKERS.test(text);
   const hasBalance = BALANCE_MARKERS.test(text);
