@@ -353,7 +353,23 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const publish = async (r) => {
-    if (!confirm(t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label }))) return;
+    setBusy(true);
+    let missing = [];
+    try {
+      const d = await taxApi.adminGetFinancialReport(auth, r.id);
+      const rpt = d.report;
+      const plOk = rpt.pl_data?.sections && Object.values(rpt.pl_data.sections).some(s => s?.groups?.length > 0);
+      const balOk = rpt.balance_data && Object.values(rpt.balance_data).some(v => v != null && v !== '' && Number(v) !== 0);
+      if (!plOk) missing.push('P&L');
+      if (!balOk) missing.push('balance sheet');
+    } catch (_e) { /* fetch failed — skip check, let publish proceed */ }
+    finally { setBusy(false); }
+
+    const confirmText = missing.length > 0
+      ? t('owner.customer.bookkeeping.confirm.publishMissing', { period: r.period_label, missing: missing.join(' and ') })
+      : t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label });
+    if (!confirm(confirmText)) return;
+
     setBusy(true);
     try { await taxApi.adminPublishFinancialReport(auth, r.id); load(); }
     catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.publishFailed') }); }

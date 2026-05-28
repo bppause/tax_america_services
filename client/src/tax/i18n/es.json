@@ -2062,6 +2062,7 @@
   "owner.customer.bookkeeping.confirm.resetPl": "¿Borrar todos los datos de P&L? Esta acción no se puede deshacer.",
   "owner.customer.bookkeeping.confirm.resetBalance": "¿Borrar todos los datos del balance general? Esta acción no se puede deshacer.",
   "owner.customer.bookkeeping.confirm.publish": "¿Publicar el informe {period}? Esto NO envía el correo todavía — solo lo prepara para revisión.",
+  "owner.customer.bookkeeping.confirm.publishMissing": "Los datos de {missing} parecen estar faltantes o vacíos en el informe {period}. ¿Seguro que desea publicar un informe incompleto?",
   "owner.customer.bookkeeping.confirm.send": "¿Enviar el informe {period} al cliente?",
   "owner.customer.bookkeeping.confirm.resend": "¿Reenviar el informe {period} al cliente?",
   "owner.customer.bookkeeping.confirm.delete": "¿Eliminar permanentemente el informe {period}?",

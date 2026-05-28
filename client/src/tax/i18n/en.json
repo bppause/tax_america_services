@@ -2063,6 +2063,7 @@
   "owner.customer.bookkeeping.confirm.resetPl": "Clear all P&L data? This cannot be undone.",
   "owner.customer.bookkeeping.confirm.resetBalance": "Clear all balance sheet data? This cannot be undone.",
   "owner.customer.bookkeeping.confirm.publish": "Publish report {period}? This does NOT send the email yet — it just prepares the report for review.",
+  "owner.customer.bookkeeping.confirm.publishMissing": "The {missing} data appears to be missing or empty for report {period}. Are you sure you want to publish an incomplete report?",
   "owner.customer.bookkeeping.confirm.send": "Send the report {period} to the customer?",
   "owner.customer.bookkeeping.confirm.resend": "Resend the report {period} to the customer?",
   "owner.customer.bookkeeping.confirm.delete": "Permanently delete the report {period}?",
