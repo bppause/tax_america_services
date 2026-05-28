@@ -2028,6 +2028,7 @@
   "owner.customer.bookkeeping.pdf.mismatch.pdf": "En el PDF",
   "owner.customer.bookkeeping.pdf.mismatch.contact": "Nombre del contacto",
   "owner.customer.bookkeeping.form.redraftWarning": "Este informe está publicado — guardar cambios lo revertirá a borrador y requerirá volver a publicar para que el cliente vea las actualizaciones.",
+  "owner.customer.bookkeeping.msg.notRecognized": "Este archivo no parece ser una exportación de QuickBooks de tipo {kind} — puede ser un estado de cuenta, factura u otro documento. Verifique que seleccionó el archivo correcto.",
   "owner.customer.bookkeeping.msg.uploading": "Subiendo {kind}…",
   "owner.customer.bookkeeping.msg.parsing": "Analizando el PDF…",
   "owner.customer.bookkeeping.msg.parsed": "Se extrajeron {matched} campos del PDF {kind}. Revise cada número contra el original.",

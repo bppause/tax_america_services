@@ -273,7 +273,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: '', text: '' });
-  const [pdfMeta, setPdfMeta] = useState({ pl: null, balance: null }); // { fileName, companyName, mismatch, businessName }
+  const [pdfMeta, setPdfMeta] = useState({ pl: null, balance: null }); // { fileName, companyName, mismatch }
   const sectionRef = useRef(null);
 
   const load = () => {
@@ -445,8 +445,10 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       const companyName = parseResult.parsed?.companyName || null;
       const businessName = customer?.business_name || null;
       const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
-      setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch, businessName: businessName || null } }));
-      if ((dbg.matched || 0) === 0) {
+      setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch } }));
+      if (dbg.detectedType === 'unknown' && (dbg.matched || 0) === 0) {
+        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.notRecognized', { kind }) });
+      } else if ((dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }) });
       } else {
         setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsed', { kind, matched: dbg.matched }) });
@@ -510,6 +512,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
                     editing={!!editingId} onUploadPdf={uploadAndParsePdf}
                     onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
+                    contactName={customer?.business_name || null}
                     reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
       )}
 
@@ -591,7 +594,22 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
 
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 };
 
-function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, reportStatus }) {
+function SaveButtons({ t, onSave, onCancel, busy, editing, sm }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+      <button type="button" className={`tax-btn tax-btn--ghost${sm ? ' tax-btn--sm' : ''}`} onClick={onCancel} disabled={busy}>
+        {t('owner.customer.bookkeeping.action.cancel')}
+      </button>
+      <button type="button" className={`tax-btn tax-btn--primary${sm ? ' tax-btn--sm' : ''}`} onClick={onSave} disabled={busy}>
+        {busy ? t('owner.customer.bookkeeping.action.saving') : t(editing ? 'owner.customer.bookkeeping.action.saveChanges' : 'owner.customer.bookkeeping.action.saveDraft')}
+      </button>
+    </div>
+  );
+}
+
+function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus }) {
+  const [plCollapsed, setPlCollapsed] = useState(false);
+  const [balCollapsed, setBalCollapsed] = useState(false);
   const set = (k, v) => setForm({ ...form, [k]: v });
   const setSection = (key, sec) => {
     setForm({ ...form, pl_data: { ...form.pl_data, sections: { ...form.pl_data.sections, [key]: sec } } });
@@ -600,7 +618,10 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
 
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa' }}>
-      <h4 style={{ margin: '0 0 12px' }}>{t(editing ? 'owner.customer.bookkeeping.form.heading.edit' : 'owner.customer.bookkeeping.form.heading.create')}</h4>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+        <h4 style={{ margin: 0 }}>{t(editing ? 'owner.customer.bookkeeping.form.heading.edit' : 'owner.customer.bookkeeping.form.heading.create')}</h4>
+        <SaveButtons t={t} onSave={onSave} onCancel={onCancel} busy={busy} editing={editing} sm />
+      </div>
 
       {(reportStatus === 'published' || reportStatus === 'sent') && (
         <div style={{ padding: '10px 12px', background: '#fef3c7', borderLeft: '3px solid #d97706', borderRadius: 6, fontSize: 13, color: '#78350f', marginBottom: 12 }}>
@@ -632,8 +653,8 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pdfs')}>
         {editing ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} fileName={pdfMeta?.pl?.fileName} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} businessName={pdfMeta?.pl?.businessName} />
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} fileName={pdfMeta?.balance?.fileName} companyName={pdfMeta?.balance?.companyName} mismatch={pdfMeta?.balance?.mismatch} businessName={pdfMeta?.balance?.businessName} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} fileName={pdfMeta?.pl?.fileName} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} contactName={contactName} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} fileName={pdfMeta?.balance?.fileName} companyName={pdfMeta?.balance?.companyName} mismatch={pdfMeta?.balance?.mismatch} contactName={contactName} />
           </div>
         ) : (
           <div style={{ padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569' }}>
@@ -642,17 +663,15 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
         )}
       </FormGroup>
 
-      <div style={{ marginTop: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569' }}>
-            {t('owner.customer.bookkeeping.form.group.pl')}
-          </div>
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                  onClick={onResetPl} disabled={busy}
-                  style={{ fontSize: 11, color: '#b91c1c' }}>
-            {t('owner.customer.bookkeeping.action.resetPl')}
-          </button>
-        </div>
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.pl')}
+                 collapsed={plCollapsed} onToggle={() => setPlCollapsed(c => !c)}
+                 action={
+                   <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                           onClick={e => { e.stopPropagation(); onResetPl(); }} disabled={busy}
+                           style={{ fontSize: 11, color: '#b91c1c' }}>
+                     {t('owner.customer.bookkeeping.action.resetPl')}
+                   </button>
+                 }>
         {SECTION_KEYS.map(sectionKey => (
           <SectionEditor key={sectionKey} t={t}
             sectionKey={sectionKey}
@@ -661,12 +680,13 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
             onChange={s => setSection(sectionKey, s)}
           />
         ))}
-      </div>
+      </FormGroup>
 
       <FormGroup title={t('owner.customer.bookkeeping.form.group.balance')}
+                 collapsed={balCollapsed} onToggle={() => setBalCollapsed(c => !c)}
                  action={
                    <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                           onClick={onResetBalance} disabled={busy}
+                           onClick={e => { e.stopPropagation(); onResetBalance(); }} disabled={busy}
                            style={{ fontSize: 11, color: '#b91c1c' }}>
                      {t('owner.customer.bookkeeping.action.resetBalance')}
                    </button>
@@ -692,46 +712,54 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
         {t('owner.customer.bookkeeping.form.verifyBanner')}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-        <button type="button" className="tax-btn tax-btn--ghost" onClick={onCancel} disabled={busy}>{t('owner.customer.bookkeeping.action.cancel')}</button>
-        <button type="button" className="tax-btn tax-btn--primary" onClick={onSave} disabled={busy}>
-          {busy ? t('owner.customer.bookkeeping.action.saving') : t(editing ? 'owner.customer.bookkeeping.action.saveChanges' : 'owner.customer.bookkeeping.action.saveDraft')}
-        </button>
+      <div style={{ marginTop: 14 }}>
+        <SaveButtons t={t} onSave={onSave} onCancel={onCancel} busy={busy} editing={editing} />
       </div>
     </div>
   );
 }
 
 function SectionEditor({ t, sectionKey, title, section, onChange }) {
+  const [collapsed, setCollapsed] = useState(false);
   const setGroup = (idx, g) => onChange({ ...section, groups: section.groups.map((x, i) => i === idx ? g : x) });
   const addGroup = () => onChange({ ...section, groups: [...section.groups, { name: '', total: null, items: [] }] });
   const removeGroup = (idx) => onChange({ ...section, groups: section.groups.filter((_, i) => i !== idx) });
   const sectionTotal = section.groups.reduce((s, g) =>
     s + (Number(g.total) || (g.items || []).reduce((a, i) => a + num(i.amount), 0)), 0);
   return (
-    <div style={{ marginTop: 14, border: '1px solid #e2e8f0', borderRadius: 8, padding: 12, background: '#fff' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+    <div style={{ marginTop: 10, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+      <div
+        style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '9px 12px', cursor: 'pointer', userSelect: 'none', background: '#fafafa',
+          borderBottom: collapsed ? 'none' : '1px solid #e2e8f0' }}
+        onClick={() => setCollapsed(c => !c)}
+      >
         <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>
           {title}
         </div>
-        <div style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>
-          {fmtMoney(sectionTotal)}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
+          <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{collapsed ? '▶' : '▼'}</span>
         </div>
       </div>
-      {section.groups.length === 0 && (
-        <div style={{ fontSize: 12, color: 'var(--tax-muted)', fontStyle: 'italic', padding: '6px 0' }}>
-          {t('owner.customer.bookkeeping.section.empty')}
+      {!collapsed && (
+        <div style={{ padding: 12 }}>
+          {section.groups.length === 0 && (
+            <div style={{ fontSize: 12, color: 'var(--tax-muted)', fontStyle: 'italic', padding: '4px 0' }}>
+              {t('owner.customer.bookkeeping.section.empty')}
+            </div>
+          )}
+          {section.groups.map((g, idx) => (
+            <GroupEditor key={idx} t={t} group={g}
+                         onChange={ng => setGroup(idx, ng)}
+                         onDelete={() => removeGroup(idx)} />
+          ))}
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addGroup}
+                  style={{ marginTop: 6, fontSize: 12 }}>
+            + {t('owner.customer.bookkeeping.section.addGroup')}
+          </button>
         </div>
       )}
-      {section.groups.map((g, idx) => (
-        <GroupEditor key={idx} t={t} group={g}
-                     onChange={ng => setGroup(idx, ng)}
-                     onDelete={() => removeGroup(idx)} />
-      ))}
-      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addGroup}
-              style={{ marginTop: 6, fontSize: 12 }}>
-        + {t('owner.customer.bookkeeping.section.addGroup')}
-      </button>
     </div>
   );
 }
@@ -819,7 +847,28 @@ function NumericInput({ value, onChange }) {
            style={{ ...inputStyle, fontVariantNumeric: 'tabular-nums' }} />
   );
 }
-function FormGroup({ title, children, action }) {
+function FormGroup({ title, children, action, collapsed, onToggle }) {
+  if (onToggle !== undefined) {
+    return (
+      <div style={{ marginTop: 14, border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden' }}>
+        <div
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            padding: '9px 12px', background: '#f8fafc', cursor: 'pointer', userSelect: 'none',
+            borderBottom: collapsed ? 'none' : '1px solid #e2e8f0' }}
+          onClick={onToggle}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569' }}>
+            {title}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {action}
+            <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{collapsed ? '▶' : '▼'}</span>
+          </div>
+        </div>
+        {!collapsed && <div style={{ padding: 12 }}>{children}</div>}
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -854,34 +903,37 @@ function Total({ label, value, bold }) {
   );
 }
 
-function PdfDrop({ label, onPick, onReset, busy, t, fileName, companyName, mismatch, businessName }) {
+function PdfDrop({ label, onPick, onReset, busy, t, fileName, companyName, mismatch, contactName }) {
   const inputId = useRef(`pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`).current;
+  const showCard = fileName || contactName;
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
 
-      {fileName && (
+      {showCard && (
         <div style={{ padding: '8px 10px', background: mismatch ? '#fef9ec' : '#f8fafc', border: `1px solid ${mismatch ? '#d97706' : '#e2e8f0'}`, borderRadius: 6, fontSize: 12 }}>
-          <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all', marginBottom: companyName ? 6 : 0 }}>{fileName}</div>
-          {companyName && (
-            <div style={{ display: 'grid', gap: 2 }}>
+          {fileName && (
+            <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all', marginBottom: 6 }}>{fileName}</div>
+          )}
+          <div style={{ display: 'grid', gap: 2 }}>
+            {companyName && (
               <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                 <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.mismatch.pdf')}</span>
                 <span style={{ fontWeight: 700, color: mismatch ? '#b45309' : '#0f172a' }}>{companyName}</span>
               </div>
-              {businessName && (
-                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
-                  <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.mismatch.contact')}</span>
-                  <span style={{ fontWeight: 600, color: mismatch ? '#b45309' : '#475569' }}>{businessName}</span>
-                </div>
-              )}
-              {mismatch && (
-                <div style={{ marginTop: 4, color: '#b45309', fontWeight: 700, fontSize: 11 }}>
-                  ⚠ {t('owner.customer.bookkeeping.pdf.mismatch.title')}
-                </div>
-              )}
-            </div>
-          )}
+            )}
+            {contactName && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.mismatch.contact')}</span>
+                <span style={{ fontWeight: 600, color: mismatch ? '#b45309' : '#475569' }}>{contactName}</span>
+              </div>
+            )}
+            {mismatch && (
+              <div style={{ marginTop: 4, color: '#b45309', fontWeight: 700, fontSize: 11 }}>
+                ⚠ {t('owner.customer.bookkeeping.pdf.mismatch.title')}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

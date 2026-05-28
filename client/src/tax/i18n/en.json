@@ -2029,6 +2029,7 @@
   "owner.customer.bookkeeping.pdf.mismatch.pdf": "In PDF",
   "owner.customer.bookkeeping.pdf.mismatch.contact": "Contact name",
   "owner.customer.bookkeeping.form.redraftWarning": "This report is published — saving changes will reset it to draft and require re-publishing before the customer can see the updates.",
+  "owner.customer.bookkeeping.msg.notRecognized": "This file doesn't appear to be a QuickBooks {kind} export — it may be a bank statement, invoice, or other document. Check you selected the right file.",
   "owner.customer.bookkeeping.msg.uploading": "Uploading {kind}…",
   "owner.customer.bookkeeping.msg.parsing": "Parsing the PDF…",
   "owner.customer.bookkeeping.msg.parsed": "Parsed {matched} fields from the {kind} PDF. Review every number against the original.",
