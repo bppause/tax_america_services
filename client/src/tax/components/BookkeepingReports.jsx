@@ -841,13 +841,13 @@ function GroupEditor({ t, group, onChange, onDelete }) {
                style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
                onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#f59e0b' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
                onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
-        <input type="number" inputMode="decimal" step="0.01"
-               value={group.total ?? ''}
-               onChange={e => onChange({ ...group, total: e.target.value })}
-               placeholder={String(itemSum.toFixed(2))}
-               title={t('owner.customer.bookkeeping.group.totalHint')}
-               style={{ ...inputStyle, width: 100, fontVariantNumeric: 'tabular-nums', textAlign: 'right',
-                        borderColor: mismatch ? '#f59e0b' : undefined, fontWeight: 700 }} />
+        <MoneyInput value={group.total ?? ''}
+                    onChange={v => onChange({ ...group, total: v })}
+                    placeholder={itemSum.toFixed(2)}
+                    title={t('owner.customer.bookkeeping.group.totalHint')}
+                    width={110}
+                    borderColor={mismatch ? '#f59e0b' : undefined}
+                    extraInputStyle={{ fontWeight: 700 }} />
         {mismatch && (
           <span title={t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
                 style={{ color: '#b45309', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>⚠</span>
@@ -885,11 +885,9 @@ function ItemRow({ t, item, onChange, onDelete }) {
       <input type="text" value={item.name} onChange={e => onChange({ ...item, name: e.target.value })}
              placeholder={t('owner.customer.bookkeeping.item.namePlaceholder')}
              style={{ ...inputStyle, flex: 1 }} />
-      <input type="number" inputMode="decimal" step="0.01"
-             value={item.amount ?? ''}
-             onChange={e => onChange({ ...item, amount: e.target.value })}
-             placeholder="0.00"
-             style={{ ...inputStyle, width: 110, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }} />
+      <MoneyInput value={item.amount ?? ''}
+                  onChange={v => onChange({ ...item, amount: v })}
+                  width={110} />
       {item.rollup && (
         <span title={t('owner.customer.bookkeeping.item.rollup')}
               style={{ fontSize: 10, fontWeight: 700, color: '#64748b', padding: '2px 6px', background: '#f1f5f9', borderRadius: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>
@@ -913,12 +911,27 @@ function Field({ label, children }) {
 function NumericGrid({ children }) {
   return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>{children}</div>;
 }
-function NumericInput({ value, onChange }) {
+// Wraps a numeric input with a left-aligned $ adornment.
+// `inputStyle` props go on the inner <input>; width/borderColor are on the wrapper.
+function MoneyInput({ value, onChange, placeholder, width, borderColor, extraInputStyle, disabled, title }) {
   return (
-    <input type="number" inputMode="decimal" step="0.01"
-           value={value} onChange={e => onChange(e.target.value)} placeholder="0.00"
-           style={{ ...inputStyle, fontVariantNumeric: 'tabular-nums' }} />
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center',
+                  width: width || '100%', flexShrink: 0,
+                  border: `1px solid ${borderColor || 'var(--tax-border)'}`, borderRadius: 6,
+                  background: disabled ? '#f8fafc' : '#fff' }}>
+      <span style={{ position: 'absolute', left: 8, color: '#94a3b8', fontSize: 13,
+                     pointerEvents: 'none', userSelect: 'none', fontVariantNumeric: 'tabular-nums' }}>$</span>
+      <input type="number" inputMode="decimal" step="0.01" disabled={disabled} title={title}
+             value={value} onChange={e => onChange(e.target.value)}
+             placeholder={placeholder || '0.00'}
+             style={{ width: '100%', padding: '6px 8px 6px 20px', border: 'none', borderRadius: 6,
+                      fontSize: 13, background: 'transparent', outline: 'none',
+                      fontVariantNumeric: 'tabular-nums', textAlign: 'right', ...extraInputStyle }} />
+    </div>
   );
+}
+function NumericInput({ value, onChange }) {
+  return <MoneyInput value={value} onChange={onChange} />;
 }
 function FormGroup({ title, children, action, collapsed, onToggle }) {
   if (onToggle !== undefined) {
