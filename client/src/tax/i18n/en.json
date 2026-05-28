@@ -2026,6 +2026,7 @@
   "owner.customer.bookkeeping.msg.uploading": "Uploading {kind}…",
   "owner.customer.bookkeeping.msg.parsing": "Parsing the PDF…",
   "owner.customer.bookkeeping.msg.parsed": "Parsed {matched} fields from the {kind} PDF. Review every number against the original.",
+  "owner.customer.bookkeeping.msg.companyMismatch": "PDF company name \"{pdf}\" doesn't match the contact's business name \"{contact}\" — double-check you uploaded the right file.",
   "owner.customer.bookkeeping.msg.parsedZero": "Could not extract any fields from this {kind} PDF — the layout doesn't match the expected QuickBooks export format. Please enter the numbers manually.",
   "owner.customer.bookkeeping.msg.wrongType": "Wrong file type. The slot expects a {expected} but the uploaded file looks like a {got}. Upload the correct file.",
   "owner.customer.bookkeeping.msg.noTextLayer": "Could not read any text from the PDF — it looks like a scanned image. Re-export from QuickBooks as a text-based PDF, or enter the numbers manually.",

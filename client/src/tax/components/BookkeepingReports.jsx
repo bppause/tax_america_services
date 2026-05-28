@@ -16,6 +16,23 @@ import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { taxApi } from '../api';
 
+// Fuzzy company-name match: normalize away legal suffixes, common type
+// words (Restaurant, Deli, DBA…), punctuation, then check whether the
+// two name's meaningful words share any overlap. Returns true when the
+// names are close enough, false when they look like different businesses.
+function companyNamesMatch(a, b) {
+  if (!a || !b) return true;
+  const stop = /\b(dba|the|a|an|and|or|of|inc|llc|corp|ltd|co|restaurant|cafe|bar|grill|kitchen|deli|bakery|store|shop|services|group|enterprise|enterprises)\b/g;
+  const normalize = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(stop, ' ').replace(/\s+/g, ' ').trim();
+  const words = s => new Set(normalize(s).split(' ').filter(w => w.length > 2));
+  const wa = words(a);
+  const wb = words(b);
+  if (!wa.size || !wb.size) {
+    return normalize(a).includes(normalize(b)) || normalize(b).includes(normalize(a));
+  }
+  return [...wa].some(w => wb.has(w));
+}
+
 const BALANCE_KEYS = [
   'cash', 'inventory', 'other_current_assets', 'fixed_assets_gross',
   'accumulated_depreciation', 'other_assets', 'current_liabilities',
@@ -392,8 +409,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       });
       const companyName = parseResult.parsed?.companyName || null;
       setPdfMeta(prev => ({ ...prev, [kind]: companyName ? { companyName } : null }));
+      const businessName = customer?.business_name || null;
+      const nameMismatch = companyName && businessName && !companyNamesMatch(companyName, businessName);
       if ((dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }) });
+      } else if (nameMismatch) {
+        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.companyMismatch', { pdf: companyName, contact: businessName }) });
       } else {
         setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsed', { kind, matched: dbg.matched }) });
       }
