@@ -12013,9 +12013,23 @@ module.exports = function createTaxRouter(deps) {
     const { data: comm } = await supabase.from('communities')
       .select('id, name').eq('id', t.row.community_id).maybeSingle();
     if (!cookieOk) {
+      // The customer's preferred locale is returned here so the
+      // confirmation page renders in their language from the first
+      // paint. Strictly less info than the customer's name/email —
+      // anyone with the URL already proves token existence by hitting
+      // this endpoint, so a single 'en'/'es' flag adds no meaningful
+      // leak. Community default is used as a fallback when the
+      // customer row has no locale set.
+      const { data: cust } = await supabase.from('tax_customers')
+        .select('locale').eq('id', t.row.customer_id).maybeSingle();
+      const { data: commLocale } = await supabase.from('communities')
+        .select('default_locale').eq('id', t.row.community_id).maybeSingle();
+      const locale = (cust?.locale === 'en' || cust?.locale === 'es') ? cust.locale
+        : (commLocale?.default_locale === 'en' ? 'en' : 'es');
       return res.json({
         state: 'gate',
         community: { id: comm?.id || t.row.community_id, name: comm?.name || '' },
+        locale,
       });
     }
     // Cookie valid — bump last_used_at + return the customer's reports.

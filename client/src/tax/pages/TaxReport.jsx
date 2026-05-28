@@ -145,10 +145,18 @@ export default function TaxReport({ communitySlug, token }) {
     try {
       const d = await taxApi.getReportAccess(token);
       setCommunity(d.community || null);
+      // Apply the customer/community locale from either payload shape:
+      //   gate  → server includes `locale` so the confirmation page
+      //           renders in the customer's language from the first
+      //           paint instead of defaulting to platform Spanish.
+      //   ready → falls through to the existing customer.locale path
+      //           below (post-confirm we know who they are).
+      if (d.locale === 'en' || d.locale === 'es') setLang(d.locale);
       if (d.state === 'ready') {
         setCustomer(d.customer || null);
         setReports(d.reports || []);
         if (d.customer?.locale === 'en') setLang('en');
+        else if (d.customer?.locale === 'es') setLang('es');
         const hashId = readParsedHashReport();
         if (hashId && (d.reports || []).some(r => r.id === hashId)) {
           setSelectedId(hashId);
