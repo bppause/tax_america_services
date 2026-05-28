@@ -307,8 +307,14 @@ function parseDynamic(text) {
     if (subgroup)      subgroup.items.push({ name: label, amount });
     else if (group)    group.items.push({ name: label, amount });
     else if (section) {
-      // Orphan item under a section with no current group — synthesize one.
-      group = { name: '(uncategorized)', total: null, items: [{ name: label, amount }] };
+      // Orphan item under a section with no current group — single-
+      // line group (QB exports skip the "Header / item / Total Header"
+      // wrapper for things like "Depreciation Expense 19,800.00" that
+      // have no sub-items). Treat as a standalone group named after
+      // the line itself, then immediately flush so the NEXT real
+      // group header doesn't get pulled in as a subgroup under it.
+      group = { name: label, total: amount, items: [{ name: label, amount }] };
+      flushGroup();
     }
   }
 
