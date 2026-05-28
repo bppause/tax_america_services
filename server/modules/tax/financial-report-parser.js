@@ -426,6 +426,37 @@ function parseBalance(text) {
   return { fields: out, matched };
 }
 
+// Extract the company name from the first ~25 lines of extracted PDF text.
+// QuickBooks puts the company name near the top, often on the same spatial
+// row as the timestamp (e.g. "9:23 AM  Sabor Latino Restaurant"). When that
+// pattern is found we strip the timestamp prefix; otherwise we take the first
+// non-header line that contains letters.
+function extractCompanyName(text) {
+  const lines = String(text || '').split(/\r?\n/).slice(0, 25);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const m = trimmed.match(/^\d{1,2}:\d{2}\s*[AP]M\s+(.+)$/i);
+    if (m) {
+      const candidate = m[1].trim();
+      if (!/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(candidate) && /[A-Za-z]/.test(candidate) && candidate.length > 3) {
+        return candidate;
+      }
+    }
+  }
+  for (const line of lines) {
+    const l = line.trim();
+    if (!l || l.length < 4) continue;
+    if (/\d{1,2}:\d{2}\s*[AP]M/i.test(l)) continue;
+    if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l)) continue;
+    if (/Accrual\s+Basis|Cash\s+Basis|Profit\s*&\s*Loss|Balance\s+Sheet|Page\s+\d+/i.test(l)) continue;
+    if (/^(?:[A-Z][a-z]+\s+through\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]{2,8}\s*[-–]\s*[A-Z][a-z]{2,8}\s*\d{2,4}|\d{4})$/.test(l)) continue;
+    if (/^\d+$/.test(l)) continue;
+    if (/[A-Za-z]/.test(l)) return l;
+  }
+  return null;
+}
+
 async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
   const out = {
     pl: null,
@@ -449,6 +480,7 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     out.debug.error = 'pdf_no_text_layer';
     return out;
   }
+  out.companyName = extractCompanyName(text);
   const hasPl = PL_MARKERS.test(text);
   const hasBalance = BALANCE_MARKERS.test(text);
   out.debug.detectedType =

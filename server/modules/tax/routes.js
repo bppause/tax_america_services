@@ -11632,6 +11632,12 @@ module.exports = function createTaxRouter(deps) {
     if (cur.status === 'sent') {
       patch.revision = (cur.revision || 1) + 1;
     }
+    // If the financial data changes on a published or sent report, reset
+    // to draft so the owner must re-publish before the customer sees the
+    // updated numbers.
+    if ((body.pl_data || body.balance_data) && (cur.status === 'published' || cur.status === 'sent')) {
+      patch.status = 'draft';
+    }
     const { error } = await supabase.from('tax_financial_reports').update(patch).eq('id', id);
     if (error) return sendSupabaseError(res, error);
     try {
@@ -11918,9 +11924,22 @@ module.exports = function createTaxRouter(deps) {
     const id = trim(req.params.id, 200);
     const kind = (req.body && req.body.kind === 'balance') ? 'balance' : 'pl';
     const { data: rpt } = await supabase.from('tax_financial_reports')
-      .select('id, community_id, customer_id').eq('id', id).maybeSingle();
+      .select('id, community_id, customer_id, status').eq('id', id).maybeSingle();
     if (!rpt) return res.status(404).json({ error: 'Not found.' });
-    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}.pdf`;
+    // Include a timestamp nonce so each upload lands in a fresh storage
+    // object. Re-using the same path with upsert can leave the old blob
+    // cached in Supabase's CDN window, causing the parse step to read
+    // stale data. The nonce makes every upload unique.
+    const nonce = Date.now().toString(36);
+    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}_${nonce}.pdf`;
+    const pathCol = kind === 'balance' ? 'balance_pdf_path' : 'pl_pdf_path';
+    const uploadPatch = { [pathCol]: path, updated_at: new Date().toISOString() };
+    // Uploading a new PDF on a published or sent report resets to draft
+    // so the owner must re-publish before the customer sees updated data.
+    if (rpt.status === 'published' || rpt.status === 'sent') uploadPatch.status = 'draft';
+    await supabase.from('tax_financial_reports')
+      .update(uploadPatch)
+      .eq('id', id);
     const { data: signed, error } = await supabase.storage
       .from('tax-bookkeeping-pdfs')
       .createSignedUploadUrl(path, { upsert: true });
@@ -11939,13 +11958,10 @@ module.exports = function createTaxRouter(deps) {
       .select('id, community_id, customer_id, pl_pdf_path, balance_pdf_path, pl_data, balance_data')
       .eq('id', id).maybeSingle();
     if (!rpt) return res.status(404).json({ error: 'Not found.' });
-    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}.pdf`;
-    // Stamp the path on the report row first so the customer dashboard
-    // can offer the PDF download even before the parse finishes.
-    const pathCol = kind === 'balance' ? 'balance_pdf_path' : 'pl_pdf_path';
-    await supabase.from('tax_financial_reports')
-      .update({ [pathCol]: path, updated_at: new Date().toISOString() })
-      .eq('id', id);
+    // Use the path the upload-url endpoint already saved to the DB.
+    // Fall back to the legacy fixed path for reports uploaded before this change.
+    const storedPath = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
+    const path = storedPath || `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}.pdf`;
     // Download the just-uploaded PDF and parse it.
     const { data: blob, error: dlErr } = await supabase.storage
       .from('tax-bookkeeping-pdfs').download(path);

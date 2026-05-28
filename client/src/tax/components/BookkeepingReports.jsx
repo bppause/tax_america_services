@@ -16,6 +16,23 @@ import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { taxApi } from '../api';
 
+// Fuzzy company-name match: normalize away legal suffixes, common type
+// words (Restaurant, Deli, DBA…), punctuation, then check whether the
+// two names' meaningful words share any overlap. Returns true when the
+// names are close enough, false when they look like different businesses.
+function companyNamesMatch(a, b) {
+  if (!a || !b) return true;
+  const stop = /\b(dba|the|a|an|and|or|of|inc|llc|corp|ltd|co|restaurant|cafe|bar|grill|kitchen|deli|bakery|store|shop|services|group|enterprise|enterprises)\b/g;
+  const normalize = s => s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(stop, ' ').replace(/\s+/g, ' ').trim();
+  const words = s => new Set(normalize(s).split(' ').filter(w => w.length > 2));
+  const wa = words(a);
+  const wb = words(b);
+  if (!wa.size || !wb.size) {
+    return normalize(a).includes(normalize(b)) || normalize(b).includes(normalize(a));
+  }
+  return [...wa].some(w => wb.has(w));
+}
+
 const BALANCE_KEYS = [
   'cash', 'inventory', 'other_current_assets', 'fixed_assets_gross',
   'accumulated_depreciation', 'other_assets', 'current_liabilities',
@@ -256,6 +273,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: '', text: '' });
+  const [pdfMeta, setPdfMeta] = useState({ pl: null, balance: null }); // { companyName, mismatch, businessName }
 
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
@@ -280,7 +298,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const startCreate = () => {
-    setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' });
+    setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null });
   };
   const startEdit = (r) => {
     setBusy(true);
@@ -289,7 +307,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
       .finally(() => setBusy(false));
   };
-  const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); };
+  const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); };
 
   const triedHashIds = useRef(new Set());
   useEffect(() => {
@@ -335,7 +353,23 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const publish = async (r) => {
-    if (!confirm(t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label }))) return;
+    setBusy(true);
+    let missing = [];
+    try {
+      const d = await taxApi.adminGetFinancialReport(auth, r.id);
+      const rpt = d.report;
+      const plOk = rpt.pl_data?.sections && Object.values(rpt.pl_data.sections).some(s => s?.groups?.length > 0);
+      const balOk = rpt.balance_data && Object.values(rpt.balance_data).some(v => v != null && v !== '' && Number(v) !== 0);
+      if (!plOk) missing.push('P&L');
+      if (!balOk) missing.push('balance sheet');
+    } catch (_e) { /* fetch failed — skip check, let publish proceed */ }
+    finally { setBusy(false); }
+
+    const confirmText = missing.length > 0
+      ? t('owner.customer.bookkeeping.confirm.publishMissing', { period: r.period_label, missing: missing.join(' and ') })
+      : t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label });
+    if (!confirm(confirmText)) return;
+
     setBusy(true);
     try { await taxApi.adminPublishFinancialReport(auth, r.id); load(); }
     catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.publishFailed') }); }
@@ -359,11 +393,25 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const uploadAndParsePdf = async (kind, file) => {
-    if (!editingId) { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.saveDraftFirst') }); return; }
     if (!file) return;
-    setBusy(true); setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.uploading', { kind }) });
+    let reportId = editingId;
+    setBusy(true);
     try {
-      const sig = await taxApi.adminFinancialReportUploadUrl(auth, editingId, kind);
+      if (!reportId) {
+        // Auto-save a draft before uploading so we have an ID to attach to.
+        if (!form.period_label || !form.period_start || !form.period_end) {
+          setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.fillPeriodFirst') });
+          return;
+        }
+        setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.autoSaving') });
+        const d = await taxApi.adminCreateFinancialReport(auth, customerId, formToPayload(form));
+        reportId = d.report.id;
+        setEditingId(reportId);
+        setCreating(false);
+        load();
+      }
+      setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.uploading', { kind }) });
+      const sig = await taxApi.adminFinancialReportUploadUrl(auth, reportId, kind);
       const putResp = await fetch(sig.uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' },
@@ -371,7 +419,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       });
       if (!putResp.ok) throw new Error(`Upload failed (${putResp.status}).`);
       setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsing') });
-      const parseResult = await taxApi.adminFinancialReportParse(auth, editingId, kind);
+      const parseResult = await taxApi.adminFinancialReportParse(auth, reportId, kind);
       const dbg = parseResult.parsed?.debug || {};
       if (dbg.typeMismatch) {
         const expected = kind === 'balance' ? t('owner.customer.bookkeeping.pdf.balance') : t('owner.customer.bookkeeping.pdf.pl');
@@ -389,6 +437,10 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
           : { ...prev, balance_data: Object.fromEntries(BALANCE_KEYS.map(k => [k, ''])) };
         return mergeParsedIntoForm(cleared, parseResult.parsed, kind);
       });
+      const companyName = parseResult.parsed?.companyName || null;
+      const businessName = customer?.business_name || null;
+      const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
+      setPdfMeta(prev => ({ ...prev, [kind]: { companyName, mismatch: nameMismatch, businessName: businessName || null } }));
       if ((dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }) });
       } else {
@@ -452,7 +504,8 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       {(creating || editingId) && (
         <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
                     editing={!!editingId} onUploadPdf={uploadAndParsePdf}
-                    onResetPl={resetPl} onResetBalance={resetBalance} />
+                    onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
+                    reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
       )}
 
       {!creating && !editingId && (
@@ -533,7 +586,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
 
 const inputStyle = { padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 };
 
-function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance }) {
+function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, reportStatus }) {
   const set = (k, v) => setForm({ ...form, [k]: v });
   const setSection = (key, sec) => {
     setForm({ ...form, pl_data: { ...form.pl_data, sections: { ...form.pl_data.sections, [key]: sec } } });
@@ -543,6 +596,12 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa' }}>
       <h4 style={{ margin: '0 0 12px' }}>{t(editing ? 'owner.customer.bookkeeping.form.heading.edit' : 'owner.customer.bookkeeping.form.heading.create')}</h4>
+
+      {(reportStatus === 'published' || reportStatus === 'sent') && (
+        <div style={{ padding: '10px 12px', background: '#fef3c7', borderLeft: '3px solid #d97706', borderRadius: 6, fontSize: 13, color: '#78350f', marginBottom: 12 }}>
+          {t('owner.customer.bookkeeping.form.redraftWarning')}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
         <Field label={t('owner.customer.bookkeeping.form.period')}>
@@ -568,8 +627,8 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pdfs')}>
         {editing ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} />
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} businessName={pdfMeta?.pl?.businessName} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} companyName={pdfMeta?.balance?.companyName} mismatch={pdfMeta?.balance?.mismatch} businessName={pdfMeta?.balance?.businessName} />
           </div>
         ) : (
           <div style={{ padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569' }}>
@@ -790,12 +849,30 @@ function Total({ label, value, bold }) {
   );
 }
 
-function PdfDrop({ label, onPick, onReset, busy, t }) {
+function PdfDrop({ label, onPick, onReset, busy, t, companyName, mismatch, businessName }) {
   const inputId = useRef(`pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`).current;
   const [lastFileName, setLastFileName] = useState('');
   return (
-    <div style={{ display: 'grid', gap: 4 }}>
+    <div style={{ display: 'grid', gap: 6 }}>
       <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
+
+      {lastFileName && (
+        <div style={{ padding: '8px 10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all' }}>{lastFileName}</div>
+          {companyName && (
+            <div style={{ marginTop: 2, fontWeight: 600, color: mismatch ? '#b45309' : '#334155' }}>{companyName}</div>
+          )}
+        </div>
+      )}
+
+      {mismatch && (
+        <div style={{ padding: '8px 10px', background: '#fef3c7', border: '1px solid #d97706', borderRadius: 6, fontSize: 12, color: '#78350f' }}>
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{t('owner.customer.bookkeeping.pdf.mismatch.title')}</div>
+          <div>{t('owner.customer.bookkeeping.pdf.mismatch.pdf')}: <strong>{companyName}</strong></div>
+          <div>{t('owner.customer.bookkeeping.pdf.mismatch.contact')}: <strong>{businessName}</strong></div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
         <input id={inputId} type="file" accept="application/pdf,.pdf" disabled={busy}
                onChange={e => {
@@ -812,11 +889,6 @@ function PdfDrop({ label, onPick, onReset, busy, t }) {
           </button>
         )}
       </div>
-      {lastFileName && (
-        <div style={{ fontSize: 11, color: '#475569' }}>
-          {t('owner.customer.bookkeeping.pdf.lastFile')}: <strong style={{ fontWeight: 600 }}>{lastFileName}</strong>
-        </div>
-      )}
     </div>
   );
 }
