@@ -9,7 +9,7 @@
 // (TaxReport.jsx) is independently bilingual — that one defaults to
 // the customer's locale and shouldn't follow the owner's preference.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import { taxApi } from '../api';
 
@@ -184,23 +184,35 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   // #bookkeeping-edit=REPORT_ID. We poll the hash on mount + on
   // hashchange and call startEdit. Hash is cleared after we consume
   // it so a refresh doesn't re-trigger.
+  // Track ids we've already tried so a genuinely-bad hash id doesn't
+  // trigger an endless load loop when reports refetches without
+  // finding it.
+  const triedHashIds = useRef(new Set());
   useEffect(() => {
     function handleHash() {
       const m = (window.location.hash || '').match(/bookkeeping-edit=([^&]+)/);
       if (!m) return;
       const id = decodeURIComponent(m[1]);
-      // Wait for the report list to load (or trigger load).
       if (!reports) return;
       const row = reports.find(r => r.id === id);
       if (row) {
+        triedHashIds.current.delete(id);
         startEdit(row);
         // Clear the hash so a remount/refresh doesn't re-open.
         try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_e) {}
-        // Scroll into view.
         setTimeout(() => {
           const el = document.querySelector('section.tax-card h3');
           if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 50);
+        return;
+      }
+      // The id wasn't in our current snapshot — almost always because
+      // the task button just minted a brand-new draft on the server.
+      // Refetch once; the effect re-runs when `reports` updates and
+      // the second pass finds the row.
+      if (!triedHashIds.current.has(id)) {
+        triedHashIds.current.add(id);
+        load();
       }
     }
     handleHash();
