@@ -165,7 +165,7 @@ function plHasMismatch(plData) {
     for (const g of (section?.groups || [])) {
       const itemSum = (g.items || []).reduce((s, i) => s + num(i.amount), 0);
       const declared = g.total != null && g.total !== '' ? num(g.total) : null;
-      if (declared != null && Math.abs(declared - itemSum) > 0.5) return true;
+      if (declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5) return true;
     }
   }
   return false;
@@ -778,7 +778,7 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
   const sectionHasMismatch = section.groups.some(g => {
     const itemSum = (g.items || []).reduce((a, i) => a + num(i.amount), 0);
     const declared = g.total != null && g.total !== '' ? num(g.total) : null;
-    return declared != null && Math.abs(declared - itemSum) > 0.5;
+    return declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5;
   });
   return (
     <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
@@ -825,7 +825,7 @@ function GroupEditor({ t, group, onChange, onDelete }) {
   const removeItem = (idx) => onChange({ ...group, items: group.items.filter((_, i) => i !== idx) });
   const itemSum = group.items.reduce((s, i) => s + num(i.amount), 0);
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
-  const mismatch = declaredTotal != null && Math.abs(declaredTotal - itemSum) > 0.5;
+  const mismatch = declaredTotal != null && group.items.length > 0 && Math.abs(declaredTotal - itemSum) > 0.5;
   return (
     <div style={{ marginTop: 8, border: `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 6, overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 10px',
