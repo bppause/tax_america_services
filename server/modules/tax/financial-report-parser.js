@@ -24,27 +24,50 @@
 
 const pdfParse = require('pdf-parse/lib/pdf-parse.js');
 
+// Custom page renderer: cluster text items by Y-coordinate with a
+// small tolerance window, then sort by X within each cluster, then
+// join with single spaces.
+//
+// The earlier implementation used Math.round(transform[5]) as the
+// row key. That works when every glyph in a row sits on the exact
+// same baseline, but real PDFs (and especially multi-font tables
+// like QuickBooks exports) emit labels and amounts at slightly
+// different Y values — text labels at the letter baseline, numbers
+// at the digit baseline, often 0.5–1.5pt apart. Rounding splits
+// those into adjacent "lines" and the section parser misreads
+// label-only lines as subgroup headers, sweeping the next row's
+// number in as the subgroup's only item. The tolerance fix below
+// snaps anything within ±Y_TOLERANCE of the current row's baseline
+// to that row.
+const Y_TOLERANCE = 3;
 function spatialPageRender(pageData) {
   return pageData.getTextContent({
     normalizeWhitespace: false,
     disableCombineTextItems: false,
   }).then(tc => {
-    const lines = new Map();
+    const items = [];
     for (const item of tc.items || []) {
       if (!item || !item.str) continue;
       const transform = item.transform || [1, 0, 0, 1, 0, 0];
-      const y = Math.round(transform[5] || 0);
-      const x = transform[4] || 0;
-      if (!lines.has(y)) lines.set(y, []);
-      lines.get(y).push({ x, str: item.str });
+      items.push({ y: transform[5] || 0, x: transform[4] || 0, str: item.str });
     }
-    const sortedYs = [...lines.keys()].sort((a, b) => b - a);
-    const out = [];
-    for (const y of sortedYs) {
-      const items = lines.get(y).sort((a, b) => a.x - b.x);
-      out.push(items.map(i => i.str).join(' '));
+    // Top-down (PDF Y axis goes bottom-up).
+    items.sort((a, b) => b.y - a.y);
+    const rows = [];
+    let currentRow = null;
+    let anchorY = null;
+    for (const it of items) {
+      if (anchorY === null || Math.abs(it.y - anchorY) > Y_TOLERANCE) {
+        if (currentRow) rows.push(currentRow);
+        currentRow = [];
+        anchorY = it.y;
+      }
+      currentRow.push(it);
     }
-    return out.join('\n');
+    if (currentRow) rows.push(currentRow);
+    return rows
+      .map(row => row.sort((a, b) => a.x - b.x).map(i => i.str).join(' '))
+      .join('\n');
   });
 }
 const PDF_PARSE_OPTIONS = { pagerender: spatialPageRender };
@@ -91,8 +114,16 @@ const RE = {
   netOtherIncome:        /^Net\s+Other\s+Income$/i,
   netIncome:             /^Net\s+Income$/i,
 
-  // Page chrome that should never count as a section / item.
-  pageHeader: /^(\d{1,2}:\d{2}\s*[AP]M|\d{1,2}\/\d{1,2}\/\d{2,4}|Accrual\s+Basis|Cash\s+Basis|Page\s+\d+|Profit\s*&?\s*Loss)$/i,
+  // Page chrome that should never count as a section / item. QB
+  // exports repeat this header on every page; the time + date stamp
+  // can also collide with the company name on a single text-stream
+  // line, so we drop anything CONTAINING these markers, not just
+  // lines that start with them.
+  pageHeaderContains: /\d{1,2}:\d{2}\s*[AP]M|\d{1,2}\/\d{1,2}\/\d{2,4}|Accrual\s+Basis|Cash\s+Basis|Profit\s*&\s*Loss|Page\s+\d+\s*$/i,
+  // The period-label header at the top of each page (e.g.
+  // "January through December 2025" or "Jan - Dec 25"). Drop
+  // standalone date-range labels; never an item.
+  periodLabel: /^(?:[A-Z][a-z]+\s+through\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]{2,8}\s*[-–]\s*[A-Z][a-z]{2,8}\s*\d{2,4}|\d{4})$/,
 };
 
 function newSection() { return { groups: [], total: null }; }
@@ -155,11 +186,8 @@ function parseDynamic(text) {
   };
 
   for (const line of lines) {
-    if (RE.pageHeader.test(line)) continue;
-    // Per-page company-name header line: skip anything that's the
-    // company name (looks like words with no amount and no leading
-    // structural keyword). Cheap heuristic: skip lines that match
-    // page chrome from above; everything else is in scope.
+    if (RE.pageHeaderContains.test(line)) continue;
+    if (RE.periodLabel.test(line)) continue;
 
     const m = AMOUNT_AT_END.exec(line);
     const hasAmount = !!m;
@@ -218,6 +246,12 @@ function parseDynamic(text) {
 
     // ── Section / group headers (no amount) ───────────────────────
     if (!hasAmount) {
+      // Skip bare numeric tokens — when pdf-parse strands an amount
+      // on its own line (which the tolerant Y-clustering above should
+      // mostly prevent, but can still happen with extreme baseline
+      // jitter), it would otherwise become a fake subgroup whose
+      // following rows get rolled up under a name like "258,32".
+      if (/^[\-(]?\$?[\d.,]+\)?$/.test(label)) continue;
       // Unambiguous top-level headers — fire regardless of current
       // state. "Income" appears only once at the top of the report;
       // same for "Cost of Goods Sold" / "Expense". The wrapper
@@ -310,6 +344,28 @@ function parseDynamic(text) {
   }
   if (out.totals.net_income == null && out.totals.net_ordinary_income != null) {
     out.totals.net_income = out.totals.net_ordinary_income + (Number(out.totals.net_other_income) || 0);
+  }
+
+  // Post-pass: consolidate duplicate group names within each
+  // section. QB exports + pdf-parse occasionally produce the same
+  // group header twice (once as a partial accumulation and again as
+  // the "real" group bracketed by Total X). When that happens the
+  // entry with the larger total wins and the other's items merge in.
+  for (const sec of Object.values(out.sections)) {
+    if (!sec.groups || sec.groups.length < 2) continue;
+    const byName = new Map();
+    for (const g of sec.groups) {
+      const key = (g.name || '').trim().toLowerCase();
+      if (!key) { continue; }
+      const prev = byName.get(key);
+      if (!prev) { byName.set(key, g); continue; }
+      // Merge: keep the larger of the two totals, append items.
+      const prevTotal = Number(prev.total) || 0;
+      const curTotal = Number(g.total) || 0;
+      if (curTotal > prevTotal) prev.total = g.total;
+      prev.items = [...(prev.items || []), ...(g.items || [])];
+    }
+    sec.groups = [...byName.values()];
   }
 
   // Sanity check: each section's group totals should sum to the
@@ -411,10 +467,13 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     out.debug.warnings = out.pl.debug.warnings || [];
   }
 
-  if (out.debug.matched === 0) {
-    out.debug.textSample = text.slice(0, 1200);
-    out.debug.markersFound = { hasPl, hasBalance };
-  }
+  // Always carry the first 1500 chars of extracted text + the marker
+  // hits in debug. The server-side route streams these into Render
+  // logs when the parse looks wrong (zero matches OR rollup warnings)
+  // so the regexes can be tuned against the actual pdf-parse output
+  // without another deploy cycle.
+  out.debug.textSample = text.slice(0, 1500);
+  out.debug.markersFound = { hasPl, hasBalance };
   return out;
 }
 
