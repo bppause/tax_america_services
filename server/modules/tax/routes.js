@@ -11964,6 +11964,21 @@ module.exports = function createTaxRouter(deps) {
     } catch (e) {
       return res.status(500).json({ error: 'parse_failed', message: e?.message || '' });
     }
+    // Zero matches → dump a sample of the extracted text to the Render
+    // log so we can tune regexes against what pdf-parse actually
+    // produced for this customer's QB output. Owner-only path, so PII
+    // exposure is bounded to admin logs.
+    if (parsed?.debug?.matched === 0) {
+      try {
+        warn('[bookkeeping-parser] zero matches', {
+          reportId: id, kind,
+          detectedType: parsed?.debug?.detectedType,
+          characters: parsed?.debug?.characters,
+          markersFound: parsed?.debug?.markersFound,
+          textSample: parsed?.debug?.textSample,
+        });
+      } catch (_e) {}
+    }
     try {
       await auditLog({
         entity: 'tax.financial_report', entityId: id,

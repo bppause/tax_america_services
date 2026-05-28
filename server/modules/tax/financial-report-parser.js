@@ -31,10 +31,11 @@ function spatialPageRender(pageData) {
     disableCombineTextItems: false,
   }).then(tc => {
     const lines = new Map();
-    for (const item of tc.items) {
-      if (!item.str) continue;
-      const y = Math.round(item.transform[5]);
-      const x = item.transform[4];
+    for (const item of tc.items || []) {
+      if (!item || !item.str) continue;
+      const transform = item.transform || [1, 0, 0, 1, 0, 0];
+      const y = Math.round(transform[5] || 0);
+      const x = transform[4] || 0;
       if (!lines.has(y)) lines.set(y, []);
       lines.get(y).push({ x, str: item.str });
     }
@@ -217,10 +218,11 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     return out;
   }
   const patterns = kind === 'balance' ? BALANCE_PATTERNS : PL_PATTERNS;
+  const unmatched = [];
   for (const p of patterns) {
     const flags = 'gi';
     const pairs = findPairs(text, p.label, flags);
-    if (!pairs.length) continue;
+    if (!pairs.length) { unmatched.push(p.target); continue; }
     if (p.multi) {
       for (const pair of pairs) {
         setPath(out, p.target, pair.amount, !!p.add);
@@ -231,6 +233,15 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
       setPath(out, p.target, pairs[0].amount, !!p.add);
       out.debug.matched++;
     }
+  }
+  // When everything misses, return a small text sample + the list of
+  // unmatched targets + which PL/Balance markers actually fired so the
+  // server-side log (and the parse-response payload) carries enough
+  // signal to fix the regexes without another deploy cycle.
+  if (out.debug.matched === 0) {
+    out.debug.textSample = text.slice(0, 1200);
+    out.debug.unmatchedTargets = unmatched.slice(0, 30);
+    out.debug.markersFound = { hasPl, hasBalance };
   }
   return out;
 }
