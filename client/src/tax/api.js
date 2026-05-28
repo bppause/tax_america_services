@@ -523,6 +523,9 @@ export const taxApi = {
   adminSendFinancialReport(auth, id, opts = {})           { return request('POST',   `/admin/financial-reports/${encodeURIComponent(id)}/send`, opts, auth, { admin: true }); },
   adminRotateReportAccessToken(auth, customerId)          { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/report-access-token/rotate`, {}, auth, { admin: true }); },
   adminPreviewReportAccess(auth, customerId)              { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/report-access-preview`, {}, auth, { admin: true }); },
+  adminOpenReportForTask(auth, taskId)                    { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/financial-report/open`, {}, auth, { admin: true }); },
+  adminFinancialReportUploadUrl(auth, reportId, kind)     { return request('POST',   `/admin/financial-reports/${encodeURIComponent(reportId)}/pdf-upload-url`, { kind }, auth, { admin: true }); },
+  adminFinancialReportParse(auth, reportId, kind)         { return request('POST',   `/admin/financial-reports/${encodeURIComponent(reportId)}/pdf-parse`, { kind }, auth, { admin: true }); },
 
   // Phase 4n.70: bookkeeping financial reports (public, token-gated).
   // No auth headers — server gates via signed token in the URL + an
