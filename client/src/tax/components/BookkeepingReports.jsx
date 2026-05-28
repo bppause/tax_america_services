@@ -857,19 +857,27 @@ function PdfDrop({ label, onPick, onReset, busy, t, companyName, mismatch, busin
       <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
 
       {lastFileName && (
-        <div style={{ padding: '8px 10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 12 }}>
-          <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all' }}>{lastFileName}</div>
+        <div style={{ padding: '8px 10px', background: mismatch ? '#fef9ec' : '#f8fafc', border: `1px solid ${mismatch ? '#d97706' : '#e2e8f0'}`, borderRadius: 6, fontSize: 12 }}>
+          <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all', marginBottom: companyName ? 6 : 0 }}>{lastFileName}</div>
           {companyName && (
-            <div style={{ marginTop: 2, fontWeight: 600, color: mismatch ? '#b45309' : '#334155' }}>{companyName}</div>
+            <div style={{ display: 'grid', gap: 2 }}>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.mismatch.pdf')}</span>
+                <span style={{ fontWeight: 700, color: mismatch ? '#b45309' : '#0f172a' }}>{companyName}</span>
+              </div>
+              {businessName && (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                  <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.mismatch.contact')}</span>
+                  <span style={{ fontWeight: 600, color: mismatch ? '#b45309' : '#475569' }}>{businessName}</span>
+                </div>
+              )}
+              {mismatch && (
+                <div style={{ marginTop: 4, color: '#b45309', fontWeight: 700, fontSize: 11 }}>
+                  ⚠ {t('owner.customer.bookkeeping.pdf.mismatch.title')}
+                </div>
+              )}
+            </div>
           )}
-        </div>
-      )}
-
-      {mismatch && (
-        <div style={{ padding: '8px 10px', background: '#fef3c7', border: '1px solid #d97706', borderRadius: 6, fontSize: 12, color: '#78350f' }}>
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>{t('owner.customer.bookkeeping.pdf.mismatch.title')}</div>
-          <div>{t('owner.customer.bookkeeping.pdf.mismatch.pdf')}: <strong>{companyName}</strong></div>
-          <div>{t('owner.customer.bookkeeping.pdf.mismatch.contact')}: <strong>{businessName}</strong></div>
         </div>
       )}
 
