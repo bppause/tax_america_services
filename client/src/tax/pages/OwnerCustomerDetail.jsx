@@ -70,6 +70,12 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [data, setData] = useState(null);
   const [types, setTypes] = useState([]);
   const [err, setErr] = useState('');
+  // Bumping this counter makes child sections re-fetch. ServicesSection
+  // bumps it whenever a tag is added/removed (which mints new tasks on
+  // the server), so the TasksSection sibling re-runs its list query
+  // instead of sitting on stale data.
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const bumpRefresh = () => setRefreshNonce(n => n + 1);
 
   const load = () => {
     if (!employee || !community) return;
@@ -147,15 +153,16 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <ServicesSection
         community={community} auth={auth} customerId={customerId}
-        locale={locale} t={t} />
+        locale={locale} t={t} onChanged={bumpRefresh} />
 
       <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
+                    refreshNonce={refreshNonce}
                     isAdmin={employee?.role === 'admin'}
                     locale={locale} t={t} />
 
       <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
 
-      <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} />
+      <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={refreshNonce} />
 
       <DocumentsSection
         data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
@@ -1361,7 +1368,7 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t }) {
 // Phase: per-customer task list. Inline-edit status, add new tasks, mark
 // complete. Filters down to this customer's tasks via customerId on the
 // /admin/tasks endpoint.
-function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t }) {
+function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t, refreshNonce }) {
   const [tasks, setTasks] = useState(null);
   const [statuses, setStatuses] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -1388,6 +1395,12 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [community, customerId]);
+  // Re-fetch tasks when the parent bumps refreshNonce (Services panel
+  // added or removed a tag, which mints/deletes auto-tasks server-side).
+  useEffect(() => {
+    if (refreshNonce && community) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshNonce]);
 
   const updateTask = async (id, patch) => {
     // Completing requires a closing note — prompt up-front so the
@@ -1636,7 +1649,7 @@ function InlineAddTask({ auth, community, customerId, statuses, employees, produ
 // outlined chips the owner can click to add. Same data flow as the
 // dropdown variant: each toggle fires the generator immediately so
 // the team has tasks queued before the screen settles.
-function ServicesSection({ community, auth, customerId, locale, t }) {
+function ServicesSection({ community, auth, customerId, locale, t, onChanged }) {
   const [services, setServices] = useState(null);
   const [products, setProducts] = useState([]);
   const [busyId, setBusyId] = useState(null);
@@ -1671,6 +1684,7 @@ function ServicesSection({ community, auth, customerId, locale, t }) {
         ? t('owner.customer.services.addedWithTasks', { count: r.tasksCreated, name })
         : t('owner.customer.services.addedNamed', { name }));
       load();
+      if (typeof onChanged === 'function') onChanged();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusyId(null); }
   };
@@ -1684,6 +1698,7 @@ function ServicesSection({ community, auth, customerId, locale, t }) {
         ? t('owner.customer.services.removedWithTasks', { count: r.tasksDeleted, name })
         : t('owner.customer.services.removedNamed', { name }));
       load();
+      if (typeof onChanged === 'function') onChanged();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusyId(null); }
   };

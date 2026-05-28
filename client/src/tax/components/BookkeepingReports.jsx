@@ -145,7 +145,7 @@ const STATUS_STYLE = {
   sent:      { bg: '#dcfce7', color: '#166534' },
 };
 
-export default function BookkeepingReportsSection({ auth, customerId, customer }) {
+export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce }) {
   const { t, locale } = useT();
   const [reports, setReports] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
@@ -165,7 +165,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
       })
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }));
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId, refreshNonce]);
 
   const startCreate = () => {
     setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' });
