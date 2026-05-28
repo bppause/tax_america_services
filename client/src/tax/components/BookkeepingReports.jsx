@@ -307,7 +307,17 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     setPdfMeta({ pl: null, balance: null });
     setBusy(true);
     taxApi.adminGetFinancialReport(auth, r.id)
-      .then(d => { setForm(reportToForm(d.report)); setEditingId(r.id); setCreating(false); setMsg({ kind: '', text: '' }); })
+      .then(d => {
+        setForm(reportToForm(d.report));
+        setEditingId(r.id);
+        setCreating(false);
+        setMsg({ kind: '', text: '' });
+        const rpt = d.report;
+        setPdfMeta({
+          pl:      rpt.pl_pdf_path      ? { fileName: t('owner.customer.bookkeeping.pdf.onFile'), companyName: null, mismatch: false } : null,
+          balance: rpt.balance_pdf_path ? { fileName: t('owner.customer.bookkeeping.pdf.onFile'), companyName: null, mismatch: false } : null,
+        });
+      })
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
       .finally(() => setBusy(false));
   };
@@ -735,13 +745,11 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
           borderBottom: collapsed ? 'none' : '1px solid #e2e8f0' }}
         onClick={() => setCollapsed(c => !c)}
       >
-        <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>
-          {title}
-        </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
-          <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{collapsed ? '▶' : '▼'}</span>
+          <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1, width: 14, textAlign: 'center' }}>{collapsed ? '▶' : '▼'}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>{title}</span>
         </div>
+        <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
       </div>
       {!collapsed && (
         <div style={{ padding: 12 }}>
@@ -858,13 +866,11 @@ function FormGroup({ title, children, action, collapsed, onToggle }) {
             borderBottom: collapsed ? 'none' : '1px solid #e2e8f0' }}
           onClick={onToggle}
         >
-          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569' }}>
-            {title}
-          </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {action}
-            <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{collapsed ? '▶' : '▼'}</span>
+            <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1, width: 14, textAlign: 'center' }}>{collapsed ? '▶' : '▼'}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#475569' }}>{title}</span>
           </div>
+          {action && <div onClick={e => e.stopPropagation()}>{action}</div>}
         </div>
         {!collapsed && <div style={{ padding: 12 }}>{children}</div>}
       </div>
