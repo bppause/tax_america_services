@@ -1709,6 +1709,172 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // ── Bookkeeping financial report (Phase 4n.70) ────────────────────────────
+  // Sent when the owner clicks "Enviar al cliente" on a published
+  // financial report. Body is a visual KPI summary (revenue, net
+  // income, gross margin) plus a big CTA button to the dashboard.
+  // Includes an estimation disclaimer per owner preference. Defaults
+  // to Spanish (owner's customer base); switches to English when
+  // cust.locale === 'en'.
+  const sendTaxBookkeepingReportEmail = async ({ community, customer, report, viewUrl, isResend }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
+    const to = String(customer?.preferred_communication_email || customer?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'customer_email_missing' };
+
+    const lang = customer?.locale === 'en' ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const firstName = firstNameOf(customer)
+      || (customer?.business_name ? '' : (customer?.name || '').split(/\s+/)[0])
+      || '';
+    const practiceName = community?.name || 'Tax America Services';
+
+    const pl = report?.pl_data || {};
+    const revenueChannels = (pl.revenue && typeof pl.revenue === 'object') ? pl.revenue : {};
+    const totalRevenue = Number(pl.total_income)
+      || Object.values(revenueChannels).reduce((s, v) => s + (Number(v) || 0), 0);
+    const netIncome = Number(pl.net_income) || 0;
+    const cogs = Number(pl.cogs) || 0;
+    const grossProfit = totalRevenue - cogs;
+    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+    const fmtMoney = (n) => {
+      const v = Math.round(Number(n) || 0);
+      if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(0)}K`;
+      return `$${v}`;
+    };
+    const fmtPct = (n) => `${(Math.round((Number(n) || 0) * 10) / 10).toFixed(1)}%`;
+
+    const T = lang === 'en' ? {
+      eyebrow: isResend ? 'Updated report' : 'New financial report',
+      greeting: firstName ? `Hi ${firstName},` : 'Hello,',
+      headline: `Your ${report?.period_label || ''} financial report is ready`.replace(/\s+/g,' ').trim(),
+      revenue: 'Revenue',
+      netIncome: 'Net income',
+      grossMargin: 'Gross margin',
+      cta: 'View full report',
+      blurb: 'Tap the button to open your interactive dashboard. You will be asked to confirm the email address this message was sent to.',
+      disclaimer: 'The information shown is estimated based on what you have provided us. Please verify against your own books before making important decisions.',
+      footer: `Prepared by ${practiceName}. Reply to this email with any questions.`,
+      subject: isResend
+        ? `${practiceName} — Updated financial report (${report?.period_label || ''})`
+        : `${practiceName} — Your financial report (${report?.period_label || ''})`,
+    } : {
+      eyebrow: isResend ? 'Informe actualizado' : 'Nuevo informe financiero',
+      greeting: firstName ? `Hola ${firstName},` : 'Hola,',
+      headline: `Su informe financiero ${report?.period_label || ''} está listo`.replace(/\s+/g,' ').trim(),
+      revenue: 'Ingresos',
+      netIncome: 'Utilidad neta',
+      grossMargin: 'Margen bruto',
+      cta: 'Ver informe completo',
+      blurb: 'Toque el botón para abrir su panel interactivo. Se le pedirá confirmar la dirección de correo a la que se envió este mensaje.',
+      disclaimer: 'La información mostrada es estimada basada en lo que usted nos ha proporcionado. Verifique con sus propios libros antes de tomar decisiones importantes.',
+      footer: `Preparado por ${practiceName}. Responda a este correo con cualquier pregunta.`,
+      subject: isResend
+        ? `${practiceName} — Informe financiero actualizado (${report?.period_label || ''})`
+        : `${practiceName} — Su informe financiero (${report?.period_label || ''})`,
+    };
+
+    const kpiCell = (label, value) => `
+      <td align="center" valign="top" style="padding:8px;">
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 10px;min-width:110px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:600">${escapeHtml(label)}</div>
+          <div style="font-size:20px;font-weight:700;color:#0f172a;margin-top:6px">${escapeHtml(value)}</div>
+        </div>
+      </td>`;
+
+    const html = `
+<!doctype html>
+<html lang="${langTag}">
+<body style="margin:0;padding:0;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f6f7f9;padding:24px 12px">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08)">
+        <tr><td style="background:linear-gradient(135deg,#134e4a 0%,#0f766e 100%);padding:22px 26px;color:#fff">
+          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:700;opacity:.85">${escapeHtml(T.eyebrow)}</div>
+          <div style="font-size:14px;margin-top:6px;opacity:.95">${escapeHtml(practiceName)}</div>
+        </td></tr>
+        <tr><td style="padding:24px 26px 8px">
+          <p style="margin:0 0 8px;font-size:14px;color:#475569">${escapeHtml(T.greeting)}</p>
+          <h1 style="margin:0;font-size:20px;font-weight:700;color:#0f172a;line-height:1.3">${escapeHtml(T.headline)}</h1>
+        </td></tr>
+        <tr><td style="padding:14px 18px 4px">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border-radius:10px">
+            <tr>
+              ${kpiCell(T.revenue, fmtMoney(totalRevenue))}
+              ${kpiCell(T.netIncome, fmtMoney(netIncome))}
+              ${kpiCell(T.grossMargin, fmtPct(grossMargin))}
+            </tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:18px 26px 8px;font-size:14px;color:#475569;line-height:1.55">
+          ${escapeHtml(T.blurb)}
+        </td></tr>
+        <tr><td align="center" style="padding:12px 26px 24px">
+          <a href="${escapeHtml(viewUrl)}" style="display:inline-block;background:#0f766e;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;font-size:15px">${escapeHtml(T.cta)} →</a>
+        </td></tr>
+        <tr><td style="padding:0 26px 24px">
+          <div style="background:#fef3c7;border-left:3px solid #b45309;border-radius:6px;padding:12px 14px;font-size:12.5px;color:#78350f;line-height:1.5">
+            <strong style="display:block;margin-bottom:2px">${lang === 'en' ? 'Important' : 'Importante'}</strong>
+            ${escapeHtml(T.disclaimer)}
+          </div>
+        </td></tr>
+        <tr><td style="padding:18px 26px 26px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;text-align:center">
+          ${escapeHtml(T.footer)}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+    const text = [
+      T.greeting,
+      '',
+      T.headline,
+      '',
+      `${T.revenue}: ${fmtMoney(totalRevenue)}`,
+      `${T.netIncome}: ${fmtMoney(netIncome)}`,
+      `${T.grossMargin}: ${fmtPct(grossMargin)}`,
+      '',
+      T.blurb,
+      viewUrl,
+      '',
+      T.disclaimer,
+      '',
+      T.footer,
+    ].join('\n');
+
+    const defaults = { subject: T.subject, text, html };
+    const vars = {
+      practice_name: practiceName,
+      customer_first_name: firstName,
+      period_label: report?.period_label || '',
+      revenue: fmtMoney(totalRevenue),
+      net_income: fmtMoney(netIncome),
+      gross_margin: fmtPct(grossMargin),
+      view_url: viewUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community?.id, key: 'bookkeeping_report',
+      lang, vars, defaults,
+    });
+    const result = await sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '',
+          outboundMessageId: result.messageId || '',
+          to, subject: finalCopy.subject, lang,
+          kind: 'tax.bookkeeping_report',
+          relatedId: report?.id || '',
+          customerId: customer?.id || null,
+        });
+      } catch (_e) {}
+    }
+    return result;
+  };
+
   return {
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
@@ -1722,6 +1888,7 @@ module.exports = function createTaxSenders(deps) {
     sendTaxStaffWelcomeEmail,
     sendTaxSignatureRequestEmail,
     sendTaxSignatureSignedEmail,
+    sendTaxBookkeepingReportEmail,
     previewTaxEmail,
     getTemplateDefaults,
   };
