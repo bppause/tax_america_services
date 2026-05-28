@@ -3,25 +3,20 @@
 // Phase 4n.72: bookkeeping PDF parser.
 //
 // Heuristic extraction of P&L + Balance Sheet line items from
-// QuickBooks-style PDF exports. The parser walks line-by-line,
-// matching known label patterns against the amount at the end of
-// the line, and maps each hit to one of the structured field keys
-// the bookkeeping form already uses. Owner reviews + corrects
-// everything before publish, so a partial-match is fine — anything
-// the parser misses just stays blank and the owner types it.
+// QuickBooks-style PDF exports. PDF text extraction often breaks
+// column-aligned tables across lines (label on one line, amount on
+// the next), so the parser walks the full text and pairs each label
+// pattern with the *next* amount that follows it, capped at a short
+// character gap. Owner reviews + corrects every number before
+// publishing, so partial matches are fine.
 //
 // Number format: handles both US ($1,234.56) and Spanish/European
 // (1.234,56 — what the Sabor Latino QB output uses) by sniffing
 // which separator is the last one in the string.
 
-// Require the implementation file directly to bypass pdf-parse's
-// index.js, which has a debug-mode branch that tries to read a test
-// fixture from disk at require time when module.parent is null.
 const pdfParse = require('pdf-parse/lib/pdf-parse.js');
 
 // Convert "173.568,15" → 173568.15 or "173,568.15" → 173568.15.
-// Negative numbers may use a leading "-" or trailing parentheses;
-// we accept both.
 function parseAmount(s) {
   if (!s) return null;
   let str = String(s).trim();
@@ -30,18 +25,14 @@ function parseAmount(s) {
   if (str.startsWith('-')) { negative = true; str = str.slice(1); }
   str = str.replace(/[^0-9.,]/g, '');
   if (!str) return null;
-  // The last separator (whichever it is) is the decimal point.
-  // Everything before it is thousands separators.
   const lastComma = str.lastIndexOf(',');
   const lastDot = str.lastIndexOf('.');
   let normalized;
   if (lastComma === -1 && lastDot === -1) {
     normalized = str;
   } else if (lastComma > lastDot) {
-    // comma is decimal
     normalized = str.replace(/\./g, '').replace(',', '.');
   } else {
-    // dot is decimal
     normalized = str.replace(/,/g, '');
   }
   const n = Number(normalized);
@@ -49,70 +40,63 @@ function parseAmount(s) {
   return negative ? -n : n;
 }
 
-// Find a numeric amount at the end of a line.
-const AMOUNT_RE = /([\-(]?[\d.,]+\)?)\s*$/;
-
-function amountAtEnd(line) {
-  const m = AMOUNT_RE.exec(line);
-  if (!m) return null;
-  return parseAmount(m[1]);
-}
-
-// Label patterns. First match wins per line. Specific patterns must
-// come before more-general ones.
+// Patterns: { label (regex source, no anchors), target, add?, multi? }.
+// First match per pattern wins for non-`multi` entries; `multi` entries
+// sum all occurrences (used for bank-deposit subtotals where QB exports
+// several "Deposit XXXX" / "Merch Bnkcd Deposit XXXX" lines).
 const PL_PATTERNS = [
-  // Revenue channels — match specific named lines.
-  { label: /^Sales\s*Doordash\b/i,                                  target: 'pl.revenue.doordash' },
-  { label: /^Sales\s*Uber\b/i,                                       target: 'pl.revenue.uber' },
-  { label: /^Sales\s*Grubhub\b/i,                                    target: 'pl.revenue.grubhub' },
-  { label: /^Sales\s*Menufy\b/i,                                     target: 'pl.revenue.menufy' },
-  { label: /^Sales\s*Cash\b/i,                                       target: 'pl.revenue.cash' },
-  // Bank deposits — multiple common patterns sum into one bucket.
-  { label: /^Merch\s*Bnkcd\s*Deposit\b/i,                            target: 'pl.revenue.bank_deposits', add: true },
-  { label: /^Deposit\s+\d/i,                                         target: 'pl.revenue.bank_deposits', add: true },
-  { label: /^Payoneer\b/i,                                           target: 'pl.revenue.bank_deposits', add: true },
-  { label: /^Other\s*Payments\b/i,                                   target: 'pl.revenue.other', add: true },
+  { label: 'Sales\\s*Doordash',                                   target: 'pl.revenue.doordash' },
+  { label: 'Sales\\s*Uber',                                       target: 'pl.revenue.uber' },
+  { label: 'Sales\\s*Grubhub',                                    target: 'pl.revenue.grubhub' },
+  { label: 'Sales\\s*Menufy',                                     target: 'pl.revenue.menufy' },
+  { label: 'Sales\\s*Cash[\\s\\w]{0,20}',                         target: 'pl.revenue.cash' },
+  { label: 'Merch\\s*Bnkcd\\s*Deposit\\s*\\d+(?:\\s*no\\s*Tax)?', target: 'pl.revenue.bank_deposits', add: true, multi: true },
+  { label: 'Deposit\\s+\\d{3,}',                                  target: 'pl.revenue.bank_deposits', add: true, multi: true },
+  { label: 'Payoneer',                                            target: 'pl.revenue.bank_deposits', add: true },
+  { label: 'Other\\s*Payments',                                   target: 'pl.revenue.other', add: true },
 
-  // Sales tax (separate from revenue).
-  { label: /^Total\s*Sales\s*Tax\s*Collected\b/i,                    target: 'pl.sales_tax_collected' },
-  { label: /^Sale\s*Tax\s*Remitted\b/i,                              target: 'pl.sales_tax_remitted' },
+  { label: 'Total\\s*Sales\\s*Tax\\s*Collected',                  target: 'pl.sales_tax_collected' },
+  { label: 'Sale\\s*Tax\\s*Remitted',                             target: 'pl.sales_tax_remitted' },
 
-  // COGS.
-  { label: /^Total\s*COGS\b/i,                                       target: 'pl.cogs' },
+  { label: 'Total\\s*COGS',                                       target: 'pl.cogs' },
 
-  // Expense totals — match "Total X" lines so we don't double-count
-  // the line items underneath.
-  { label: /^Total\s*Advertising(\s*and\s*Promotion)?\b/i,           target: 'pl.expenses.advertising' },
-  { label: /^Total\s*Auto\b/i,                                       target: 'pl.expenses.auto' },
-  { label: /^Total\s*Bank\s*Service\s*Charges\b/i,                   target: 'pl.expenses.other', add: true },
-  { label: /^Total\s*Business\s*Licenses(\s*and\s*Permits)?\b/i,     target: 'pl.expenses.other', add: true },
-  { label: /^Total\s*Computer\s*and\s*Software\b/i,                  target: 'pl.expenses.other', add: true },
-  { label: /^Depreciation\s*Expense\b/i,                             target: 'pl.expenses.depreciation' },
-  { label: /^Total\s*Insurance\s*Expense\b/i,                        target: 'pl.expenses.insurance' },
-  { label: /^Total\s*Interest\s*Expense\b/i,                         target: 'pl.expenses.interest' },
-  { label: /^Total\s*Merchant\s*Services\b/i,                        target: 'pl.expenses.merchant_services' },
-  { label: /^Total\s*Office\s*Expense\b/i,                           target: 'pl.expenses.office' },
-  { label: /^Total\s*Office\s*Supplies\b/i,                          target: 'pl.expenses.office_supplies' },
-  { label: /^Total\s*Payroll\s*Expenses\b/i,                         target: 'pl.expenses.payroll' },
-  { label: /^Total\s*Professional\s*Fees\b/i,                        target: 'pl.expenses.professional_fees' },
-  { label: /^Total\s*Rent\s*Expense\b/i,                             target: 'pl.expenses.rent' },
-  { label: /^Total\s*Repairs(\s*and\s*Maintenance)?\b/i,             target: 'pl.expenses.repairs' },
-  { label: /^Total\s*Tax\s*Paid\b/i,                                 target: 'pl.expenses.other', add: true },
-  { label: /^Total\s*Utilities\b/i,                                  target: 'pl.expenses.utilities' },
+  { label: 'Total\\s*Advertising(?:\\s*and\\s*Promotion)?',       target: 'pl.expenses.advertising' },
+  { label: 'Total\\s*Auto',                                       target: 'pl.expenses.auto' },
+  { label: 'Total\\s*Bank\\s*Service\\s*Charges',                 target: 'pl.expenses.other', add: true },
+  { label: 'Total\\s*Business\\s*Licenses(?:\\s*and\\s*Permits)?', target: 'pl.expenses.other', add: true },
+  { label: 'Total\\s*Computer\\s*and\\s*Software',                target: 'pl.expenses.other', add: true },
+  { label: 'Depreciation\\s*Expense',                             target: 'pl.expenses.depreciation' },
+  { label: 'Total\\s*Insurance\\s*Expense',                       target: 'pl.expenses.insurance' },
+  { label: 'Total\\s*Interest\\s*Expense',                        target: 'pl.expenses.interest' },
+  { label: 'Total\\s*Merchant\\s*Services',                       target: 'pl.expenses.merchant_services' },
+  { label: 'Total\\s*Office\\s*Expense',                          target: 'pl.expenses.office' },
+  { label: 'Total\\s*Office\\s*Supplies',                         target: 'pl.expenses.office_supplies' },
+  { label: 'Total\\s*Payroll\\s*Expenses',                        target: 'pl.expenses.payroll' },
+  { label: 'Total\\s*Professional\\s*Fees',                       target: 'pl.expenses.professional_fees' },
+  { label: 'Total\\s*Rent\\s*Expense',                            target: 'pl.expenses.rent' },
+  { label: 'Total\\s*Repairs(?:\\s*and\\s*Maintenance)?',         target: 'pl.expenses.repairs' },
+  { label: 'Total\\s*Tax\\s*Paid',                                target: 'pl.expenses.other', add: true },
+  { label: 'Total\\s*Utilities',                                  target: 'pl.expenses.utilities' },
 ];
 
 const BALANCE_PATTERNS = [
-  { label: /^Total\s*Checking\/?Savings\b/i,                         target: 'balance.cash' },
-  { label: /^Food\s*Inventory\b/i,                                   target: 'balance.inventory' },
-  { label: /^Total\s*Other\s*Current\s*Assets\b/i,                   target: 'balance.other_current_assets' },
-  { label: /^Accumulated\s*Depreciation\b/i,                         target: 'balance.accumulated_depreciation' },
-  { label: /^Total\s*Fixed\s*Assets\b/i,                             target: 'balance.fixed_assets_gross' },
-  { label: /^Total\s*Other\s*Assets\b/i,                             target: 'balance.other_assets' },
-  { label: /^Total\s*Current\s*Liabilities\b/i,                      target: 'balance.current_liabilities' },
-  { label: /^Total\s*Long\s*Term\s*Liabilities\b/i,                  target: 'balance.long_term_liabilities' },
-  { label: /^Retained\s*Earnings\b/i,                                target: 'balance.retained_earnings' },
-  { label: /^Total\s*Shareholder\s*Distributions\b/i,                target: 'balance.distributions' },
+  { label: 'Total\\s*Checking/?Savings',                          target: 'balance.cash' },
+  { label: 'Food\\s*Inventory',                                   target: 'balance.inventory' },
+  { label: 'Total\\s*Other\\s*Current\\s*Assets',                 target: 'balance.other_current_assets' },
+  { label: 'Accumulated\\s*Depreciation',                         target: 'balance.accumulated_depreciation' },
+  { label: 'Total\\s*Fixed\\s*Assets',                            target: 'balance.fixed_assets_gross' },
+  { label: 'Total\\s*Other\\s*Assets',                            target: 'balance.other_assets' },
+  { label: 'Total\\s*Current\\s*Liabilities',                     target: 'balance.current_liabilities' },
+  { label: 'Total\\s*Long\\s*Term\\s*Liabilities',                target: 'balance.long_term_liabilities' },
+  { label: 'Retained\\s*Earnings',                                target: 'balance.retained_earnings' },
+  { label: 'Total\\s*Shareholder\\s*Distributions',               target: 'balance.distributions' },
 ];
+
+// Markers that prove the document is a P&L vs. a Balance Sheet. We
+// surface a typeMismatch flag when the wrong file is dropped into a
+// slot so the owner gets a clear error instead of "Parsed 0 fields".
+const PL_MARKERS = /Profit\s*&\s*Loss|Net\s+(?:Ordinary\s+)?Income|Total\s+Income|Gross\s+Profit|Cost\s+of\s+Goods\s+Sold/i;
+const BALANCE_MARKERS = /Balance\s+Sheet|TOTAL\s+(?:ASSETS|LIABILITIES)|Retained\s+Earnings|Accumulated\s+Depreciation/i;
 
 function setPath(obj, path, value, add = false) {
   const parts = path.split('.');
@@ -129,31 +113,82 @@ function setPath(obj, path, value, add = false) {
   }
 }
 
-// Returns { pl, balance, debug }.
+// Find every (label, amount) pair where `amount` is the next number
+// appearing within `maxGap` chars after the label match. Cap the gap
+// to avoid pairing a label with an unrelated downstream number.
+function findPairs(text, labelSource, flags, maxGap = 80) {
+  const re = new RegExp(
+    `(${labelSource})[^\\d\\-(]{0,${maxGap}}?([\\-(]?\\$?[\\d.,]+\\)?)(?=[^\\d.,]|$)`,
+    flags,
+  );
+  const results = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const amount = parseAmount(m[2]);
+    if (amount !== null) results.push({ amount, index: m.index });
+    if (m.index === re.lastIndex) re.lastIndex++;
+  }
+  return results;
+}
+
+// Returns { pl, balance, debug }. typeMismatch=true means the file
+// looks like the other kind (e.g. balance sheet dropped into the P&L
+// slot) so the client can show a "wrong file" error.
 async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
-  const out = { pl: { revenue: {}, expenses: {} }, balance: {}, debug: { matched: 0, unmatched: 0, lines: 0 } };
-  if (!buffer || !buffer.length) return out;
+  const out = {
+    pl: { revenue: {}, expenses: {} },
+    balance: {},
+    debug: { matched: 0, characters: 0, detectedType: null, typeMismatch: false },
+  };
+  if (!buffer || !buffer.length) {
+    out.debug.error = 'empty_buffer';
+    return out;
+  }
   let text;
   try {
     const parsed = await pdfParse(buffer);
-    text = parsed?.text || '';
+    text = (parsed?.text || '').replace(/ /g, ' '); // normalize non-breaking spaces
   } catch (e) {
     out.debug.error = String(e?.message || e);
     return out;
   }
-  const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  out.debug.lines = lines.length;
+  out.debug.characters = text.length;
+  if (!text.trim()) {
+    out.debug.error = 'pdf_no_text_layer';
+    return out;
+  }
+  // Type detection — first decide what the document actually is, then
+  // compare against what slot the owner uploaded it into.
+  const hasPl = PL_MARKERS.test(text);
+  const hasBalance = BALANCE_MARKERS.test(text);
+  out.debug.detectedType =
+    hasPl && !hasBalance ? 'pl'
+    : hasBalance && !hasPl ? 'balance'
+    : hasPl && hasBalance ? 'mixed'
+    : 'unknown';
+  if (kind === 'pl' && out.debug.detectedType === 'balance') {
+    out.debug.typeMismatch = true;
+    return out;
+  }
+  if (kind === 'balance' && out.debug.detectedType === 'pl') {
+    out.debug.typeMismatch = true;
+    return out;
+  }
   const patterns = kind === 'balance' ? BALANCE_PATTERNS : PL_PATTERNS;
-  for (const line of lines) {
-    const amount = amountAtEnd(line);
-    if (amount === null) continue;
-    let hit = null;
-    for (const p of patterns) {
-      if (p.label.test(line)) { hit = p; break; }
+  for (const p of patterns) {
+    const flags = 'gi';
+    const pairs = findPairs(text, p.label, flags);
+    if (!pairs.length) continue;
+    if (p.multi) {
+      for (const pair of pairs) {
+        setPath(out, p.target, pair.amount, !!p.add);
+      }
+      out.debug.matched += pairs.length;
+    } else {
+      // Pick the first occurrence — totals tend to appear once.
+      setPath(out, p.target, pairs[0].amount, !!p.add);
+      out.debug.matched++;
     }
-    if (!hit) { out.debug.unmatched++; continue; }
-    setPath(out, hit.target, amount, !!hit.add);
-    out.debug.matched++;
   }
   return out;
 }
