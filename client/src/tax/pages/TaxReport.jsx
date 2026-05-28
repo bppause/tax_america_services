@@ -407,19 +407,60 @@ function TwoCol({ left, right }) {
   );
 }
 
+// Resolves both the new sectional shape and the legacy flat shape
+// into the same in-component view: revenue/expense breakdowns plus
+// canonical totals. New reports flow through `pl.sections` /
+// `pl.totals`; old reports flow through the original `pl.revenue` /
+// `pl.expenses` dicts.
 function totalsFromReport(r) {
   const pl = r.pl || {};
-  const revenueObj = pl.revenue || {};
-  const expensesObj = pl.expenses || {};
-  const revenueTotal = pl.total_income != null
-    ? (Number(pl.total_income) || 0) - (Number(pl.sales_tax_collected) || 0)
-    : Object.values(revenueObj).reduce((s, v) => s + (Number(v) || 0), 0);
-  const cogs = Number(pl.cogs) || 0;
-  const grossProfit = Number(pl.gross_profit) || (revenueTotal - cogs);
-  const opex = Object.values(expensesObj).reduce((s, v) => s + (Number(v) || 0), 0);
-  const netIncome = Number(pl.net_income) || (grossProfit - opex);
+  // Channel + category breakdowns — used by donut + bar charts.
+  const revenueChannels = []; // [{name, amount}]
+  const expenseCategories = []; // [{name, amount}]
+
+  if (pl.sections) {
+    for (const g of (pl.sections.income?.groups || [])) {
+      // Prefer per-item granularity when present, otherwise the group's own total.
+      const items = (g.items || []).filter(i => Number(i.amount) > 0 && !i.rollup);
+      if (items.length) {
+        for (const it of items) revenueChannels.push({ name: it.name, amount: Number(it.amount) });
+      } else if (Number(g.total) > 0) {
+        revenueChannels.push({ name: g.name, amount: Number(g.total) });
+      }
+    }
+    for (const g of (pl.sections.expenses?.groups || [])) {
+      const t = Number(g.total) || (g.items || []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      if (t > 0) expenseCategories.push({ name: g.name, amount: t });
+    }
+  } else {
+    // Legacy shape: flat dicts of channel/category → amount.
+    for (const [k, v] of Object.entries(pl.revenue || {})) {
+      if (Number(v) > 0) revenueChannels.push({ name: prettify(k), amount: Number(v), key: k });
+    }
+    for (const [k, v] of Object.entries(pl.expenses || {})) {
+      if (Number(v) > 0) expenseCategories.push({ name: prettify(k), amount: Number(v), key: k });
+    }
+  }
+
+  // Canonical totals — prefer the parser-recorded totals, fall back
+  // to derived sums when missing (for legacy reports).
+  const t = pl.totals || {};
+  const revenueTotal = t.total_income != null
+    ? Number(t.total_income)
+    : (pl.total_income != null
+        ? (Number(pl.total_income) || 0) - (Number(pl.sales_tax_collected) || 0)
+        : revenueChannels.reduce((s, x) => s + x.amount, 0));
+  const cogs = t.total_cogs != null ? Number(t.total_cogs) : (Number(pl.cogs) || 0);
+  const grossProfit = t.gross_profit != null ? Number(t.gross_profit) : (revenueTotal - cogs);
+  const opex = t.total_expense != null ? Number(t.total_expense) : expenseCategories.reduce((s, x) => s + x.amount, 0);
+  const netIncome = t.net_income != null ? Number(t.net_income) : (Number(pl.net_income) || (grossProfit - opex));
   const grossMargin = revenueTotal > 0 ? (grossProfit / revenueTotal) * 100 : 0;
-  return { revenueTotal, cogs, grossProfit, opex, netIncome, grossMargin, revenueObj, expensesObj };
+  return { revenueTotal, cogs, grossProfit, opex, netIncome, grossMargin, revenueChannels, expenseCategories };
+}
+
+function prettify(k) {
+  if (!k) return '';
+  return String(k).split(/[_\s]+/).map(w => w ? w[0].toUpperCase() + w.slice(1) : '').join(' ').trim();
 }
 
 function KpiStrip({ r, prior, t }) {
@@ -476,18 +517,27 @@ function Section({ title, children }) {
 }
 
 function RevenueMix({ r, t }) {
-  const { revenueObj, revenueTotal } = totalsFromReport(r);
-  const entries = Object.entries(revenueObj).filter(([, v]) => Number(v) > 0)
-    .sort((a, b) => b[1] - a[1]);
+  const { revenueChannels, revenueTotal } = totalsFromReport(r);
+  // Coalesce tiny long-tail entries into "Other" so the donut + list
+  // don't fragment into 30 slivers on customers with many channels.
+  const sorted = [...revenueChannels].sort((a, b) => b.amount - a.amount);
+  const TOP = 6;
+  const top = sorted.slice(0, TOP);
+  const tail = sorted.slice(TOP);
+  const entries = [...top];
+  if (tail.length) {
+    const tailSum = tail.reduce((s, e) => s + e.amount, 0);
+    if (tailSum > 0) entries.push({ name: t.otherChannels || 'Other', amount: tailSum });
+  }
   if (entries.length === 0) return <Section title={t.revenueMixTitle}><div style={{ color: '#94a3b8' }}>—</div></Section>;
   return (
     <Section title={t.revenueMixTitle}>
-      <Donut entries={entries} total={revenueTotal} />
+      <Donut entries={entries} total={revenueTotal || entries.reduce((s, e) => s + e.amount, 0)} />
       <div style={{ marginTop: 12 }}>
-        {entries.map(([k, v], i) => (
-          <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
-            <span><span style={{ display: 'inline-block', width: 10, height: 10, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], borderRadius: 2, marginRight: 8, verticalAlign: 'middle' }} />{t.channels[k] || k}</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(v)}</span>
+        {entries.map((e, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
+            <span><span style={{ display: 'inline-block', width: 10, height: 10, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], borderRadius: 2, marginRight: 8, verticalAlign: 'middle' }} />{(t.channels && t.channels[e.key]) || e.name}</span>
+            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(e.amount)}</span>
           </div>
         ))}
       </div>
@@ -498,7 +548,8 @@ function RevenueMix({ r, t }) {
 function Donut({ entries, total }) {
   const size = 200, r = 70, cx = size/2, cy = size/2;
   let acc = 0;
-  const segs = entries.map(([, v], i) => {
+  const segs = entries.map((e, i) => {
+    const v = e.amount;
     const start = acc / total * Math.PI * 2 - Math.PI / 2;
     acc += v;
     const end = acc / total * Math.PI * 2 - Math.PI / 2;
@@ -518,22 +569,22 @@ function Donut({ entries, total }) {
 }
 
 function ExpenseBars({ r, t }) {
-  const { expensesObj } = totalsFromReport(r);
-  const entries = Object.entries(expensesObj).filter(([, v]) => Number(v) > 0)
-    .sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const { expenseCategories } = totalsFromReport(r);
+  const entries = [...expenseCategories]
+    .sort((a, b) => b.amount - a.amount).slice(0, 8);
   if (entries.length === 0) return <Section title={t.expensesTitle}><div style={{ color: '#94a3b8' }}>—</div></Section>;
-  const max = entries[0][1];
+  const max = entries[0].amount;
   return (
     <Section title={t.expensesTitle}>
       <div style={{ display: 'grid', gap: 8 }}>
-        {entries.map(([k, v]) => (
-          <div key={k}>
+        {entries.map((e, i) => (
+          <div key={i}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-              <span style={{ fontWeight: 600 }}>{t.expenseLabels[k] || k}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>{fmtCurrencyFull(v)}</span>
+              <span style={{ fontWeight: 600 }}>{(t.expenseLabels && t.expenseLabels[e.key]) || e.name}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>{fmtCurrencyFull(e.amount)}</span>
             </div>
             <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${(v / max) * 100}%`, background: '#0f766e', borderRadius: 4 }} />
+              <div style={{ height: '100%', width: `${(e.amount / max) * 100}%`, background: '#0f766e', borderRadius: 4 }} />
             </div>
           </div>
         ))}

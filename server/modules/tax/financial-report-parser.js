@@ -1,30 +1,29 @@
 'use strict';
 
-// Phase 4n.72: bookkeeping PDF parser.
+// Phase 4n.74: bookkeeping PDF parser — dynamic section walker.
 //
-// Heuristic extraction of P&L + Balance Sheet line items from
-// QuickBooks-style PDF exports. PDF text extraction often breaks
-// column-aligned tables across lines (label on one line, amount on
-// the next), so the parser walks the full text and pairs each label
-// pattern with the *next* amount that follows it, capped at a short
-// character gap. Owner reviews + corrects every number before
-// publishing, so partial matches are fine.
+// Earlier iterations mapped specific QuickBooks labels to a fixed set
+// of revenue / expense fields. That collapsed when different
+// customers have different vendor names, channel names, and category
+// labels. This version walks the standard QB P&L skeleton instead:
 //
-// Number format: handles both US ($1,234.56) and Spanish/European
-// (1.234,56 — what the Sabor Latino QB output uses) by sniffing
-// which separator is the last one in the string.
+//   Income → [groups → items] → Total Income
+//   Cost of Goods Sold → [groups → items] → Total COGS
+//   Gross Profit
+//   Expense → [groups → items] → Total Expense
+//   Net Ordinary Income
+//   Other Income / Other Expense → [groups → items] → Net Other Income
+//   Net Income
+//
+// Section names and the canonical totals are universal across QB
+// exports. Everything inside is captured as the customer set it up:
+// sub-groups roll up to a single rollup item in their parent group;
+// rollups validate against the recorded subtotal; the report carries
+// its own group/item structure so the dashboard can render whatever
+// the customer actually has rather than guessing at a fixed schema.
 
 const pdfParse = require('pdf-parse/lib/pdf-parse.js');
 
-// Custom page renderer: group text items by Y-coordinate (rounded
-// to integer), then sort by X within each Y-line, then join with
-// single spaces. Default pdf-parse render simply concatenates items
-// at the same Y with no separator and can interleave columns out of
-// reading order — that's why QuickBooks exports like
-// "Total COGS                141.757,05" came out as either
-// "Total COGS141.757,05" (no space) or scrambled across the page.
-// This renderer reconstructs an honest left-to-right, top-to-bottom
-// view that matches what a human sees.
 function spatialPageRender(pageData) {
   return pageData.getTextContent({
     normalizeWhitespace: false,
@@ -39,8 +38,6 @@ function spatialPageRender(pageData) {
       if (!lines.has(y)) lines.set(y, []);
       lines.get(y).push({ x, str: item.str });
     }
-    // PDF coordinate origin is the lower-left corner — sort Y values
-    // descending so the top of the page comes first.
     const sortedYs = [...lines.keys()].sort((a, b) => b - a);
     const out = [];
     for (const y of sortedYs) {
@@ -50,10 +47,8 @@ function spatialPageRender(pageData) {
     return out.join('\n');
   });
 }
-
 const PDF_PARSE_OPTIONS = { pagerender: spatialPageRender };
 
-// Convert "173.568,15" → 173568.15 or "173,568.15" → 173568.15.
 function parseAmount(s) {
   if (!s) return null;
   let str = String(s).trim();
@@ -65,123 +60,312 @@ function parseAmount(s) {
   const lastComma = str.lastIndexOf(',');
   const lastDot = str.lastIndexOf('.');
   let normalized;
-  if (lastComma === -1 && lastDot === -1) {
-    normalized = str;
-  } else if (lastComma > lastDot) {
-    normalized = str.replace(/\./g, '').replace(',', '.');
-  } else {
-    normalized = str.replace(/,/g, '');
-  }
+  if (lastComma === -1 && lastDot === -1) normalized = str;
+  else if (lastComma > lastDot) normalized = str.replace(/\./g, '').replace(',', '.');
+  else normalized = str.replace(/,/g, '');
   const n = Number(normalized);
   if (!Number.isFinite(n)) return null;
   return negative ? -n : n;
 }
 
-// Patterns: { label (regex source, no anchors), target, add?, multi? }.
-// First match per pattern wins for non-`multi` entries; `multi` entries
-// sum all occurrences (used for bank-deposit subtotals where QB exports
-// several "Deposit XXXX" / "Merch Bnkcd Deposit XXXX" lines).
-const PL_PATTERNS = [
-  { label: 'Sales\\s*Doordash',                                   target: 'pl.revenue.doordash' },
-  { label: 'Sales\\s*Uber',                                       target: 'pl.revenue.uber' },
-  { label: 'Sales\\s*Grubhub',                                    target: 'pl.revenue.grubhub' },
-  { label: 'Sales\\s*Menufy',                                     target: 'pl.revenue.menufy' },
-  // "Sales Cash <name>" — let the 80-char gap step over the cashier
-  // name; the previous bracket class also ate the leading digits of
-  // the amount and clipped the value (21115 → 115).
-  { label: 'Sales\\s*Cash\\b',                                    target: 'pl.revenue.cash' },
-  { label: 'Merch\\s*Bnkcd\\s*Deposit\\s*\\d+(?:\\s*no\\s*Tax)?', target: 'pl.revenue.bank_deposits', add: true, multi: true },
-  // Negative lookbehind so this doesn't also match inside the
-  // "Merch Bnkcd Deposit" pattern above (which would double-count
-  // those rows).
-  { label: '(?<!Bnkcd\\s)\\bDeposit\\s+\\d{3,}',                  target: 'pl.revenue.bank_deposits', add: true, multi: true },
-  { label: 'Payoneer',                                            target: 'pl.revenue.bank_deposits', add: true },
-  { label: 'Other\\s*Payments',                                   target: 'pl.revenue.other', add: true },
+const AMOUNT_AT_END = /^(.*?)\s+([\-(]?\$?[\d.,]+\)?)\s*$/;
 
-  { label: 'Total\\s*Sales\\s*Tax\\s*Collected',                  target: 'pl.sales_tax_collected' },
-  { label: 'Sale\\s*Tax\\s*Remitted',                             target: 'pl.sales_tax_remitted' },
+// Matchers for the canonical structural anchors. The "Total <X>"
+// forms are matched separately from section headers because they
+// always carry amounts.
+const RE = {
+  topIncome:        /^(Ordinary\s+Income\/Expense|Income)$/i,
+  topCogs:          /^(Cost\s+of\s+Goods\s+Sold|COGS)$/i,
+  topExpense:       /^Expense$/i,
+  topOtherWrapper:  /^Other\s+Income\/Expense$/i,
+  topOtherIncome:   /^Other\s+Income$/i,
+  topOtherExpense:  /^Other\s+Expense$/i,
 
-  { label: 'Total\\s*COGS',                                       target: 'pl.cogs' },
+  totalIncome:           /^Total\s+Income$/i,
+  totalCogs:             /^Total\s+(COGS|Cost\s+of\s+Goods\s+Sold)$/i,
+  totalExpense:          /^Total\s+Expense$/i,
+  totalOtherIncome:      /^Total\s+Other\s+Income$/i,
+  totalOtherExpense:     /^Total\s+Other\s+Expense$/i,
+  grossProfit:           /^Gross\s+Profit$/i,
+  netOrdinaryIncome:     /^Net\s+Ordinary\s+Income$/i,
+  netOtherIncome:        /^Net\s+Other\s+Income$/i,
+  netIncome:             /^Net\s+Income$/i,
 
-  { label: 'Total\\s*Advertising(?:\\s*and\\s*Promotion)?',       target: 'pl.expenses.advertising' },
-  { label: 'Total\\s*Auto',                                       target: 'pl.expenses.auto' },
-  { label: 'Total\\s*Bank\\s*Service\\s*Charges',                 target: 'pl.expenses.other', add: true },
-  { label: 'Total\\s*Business\\s*Licenses(?:\\s*and\\s*Permits)?', target: 'pl.expenses.other', add: true },
-  { label: 'Total\\s*Computer\\s*and\\s*Software',                target: 'pl.expenses.other', add: true },
-  { label: 'Depreciation\\s*Expense',                             target: 'pl.expenses.depreciation' },
-  { label: 'Total\\s*Insurance\\s*Expense',                       target: 'pl.expenses.insurance' },
-  { label: 'Total\\s*Interest\\s*Expense',                        target: 'pl.expenses.interest' },
-  { label: 'Total\\s*Merchant\\s*Services',                       target: 'pl.expenses.merchant_services' },
-  { label: 'Total\\s*Office\\s*Expense',                          target: 'pl.expenses.office' },
-  { label: 'Total\\s*Office\\s*Supplies',                         target: 'pl.expenses.office_supplies' },
-  { label: 'Total\\s*Payroll\\s*Expenses',                        target: 'pl.expenses.payroll' },
-  { label: 'Total\\s*Professional\\s*Fees',                       target: 'pl.expenses.professional_fees' },
-  { label: 'Total\\s*Rent\\s*Expense',                            target: 'pl.expenses.rent' },
-  { label: 'Total\\s*Repairs(?:\\s*and\\s*Maintenance)?',         target: 'pl.expenses.repairs' },
-  { label: 'Total\\s*Tax\\s*Paid',                                target: 'pl.expenses.other', add: true },
-  { label: 'Total\\s*Utilities',                                  target: 'pl.expenses.utilities' },
-];
+  // Page chrome that should never count as a section / item.
+  pageHeader: /^(\d{1,2}:\d{2}\s*[AP]M|\d{1,2}\/\d{1,2}\/\d{2,4}|Accrual\s+Basis|Cash\s+Basis|Page\s+\d+|Profit\s*&?\s*Loss)$/i,
+};
 
-const BALANCE_PATTERNS = [
-  { label: 'Total\\s*Checking/?Savings',                          target: 'balance.cash' },
-  { label: 'Food\\s*Inventory',                                   target: 'balance.inventory' },
-  { label: 'Total\\s*Other\\s*Current\\s*Assets',                 target: 'balance.other_current_assets' },
-  { label: 'Accumulated\\s*Depreciation',                         target: 'balance.accumulated_depreciation' },
-  { label: 'Total\\s*Fixed\\s*Assets',                            target: 'balance.fixed_assets_gross' },
-  { label: 'Total\\s*Other\\s*Assets',                            target: 'balance.other_assets' },
-  { label: 'Total\\s*Current\\s*Liabilities',                     target: 'balance.current_liabilities' },
-  { label: 'Total\\s*Long\\s*Term\\s*Liabilities',                target: 'balance.long_term_liabilities' },
-  { label: 'Retained\\s*Earnings',                                target: 'balance.retained_earnings' },
-  { label: 'Total\\s*Shareholder\\s*Distributions',               target: 'balance.distributions' },
-];
+function newSection() { return { groups: [], total: null }; }
 
-// Markers that prove the document is a P&L vs. a Balance Sheet. We
-// surface a typeMismatch flag when the wrong file is dropped into a
-// slot so the owner gets a clear error instead of "Parsed 0 fields".
+// Walks the spatial render output and emits the structured P&L.
+// State machine carries `section`, `group`, and `subgroup` so 3-level
+// nesting (e.g., Expense → Payroll Expenses → Payroll Taxes → items)
+// gets flattened cleanly: the subgroup's items collapse into a single
+// rollup item on the parent group.
+function parseDynamic(text) {
+  const out = {
+    sections: {
+      income: newSection(),
+      cogs: newSection(),
+      expenses: newSection(),
+      other_income: newSection(),
+      other_expense: newSection(),
+    },
+    totals: {},
+    debug: { matched: 0, lines: 0, warnings: [] },
+  };
+
+  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  out.debug.lines = lines.length;
+
+  let section = null;       // 'income' | 'cogs' | 'expenses' | 'other_income' | 'other_expense'
+  let group = null;         // { name, total, items: [] }
+  let subgroup = null;      // { name, items: [] }
+
+  const flushSubgroup = () => {
+    if (subgroup && group && subgroup.items.length) {
+      const sum = subgroup.items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+      group.items.push({ name: subgroup.name, amount: sum, rollup: true });
+    }
+    subgroup = null;
+  };
+  const flushGroup = () => {
+    flushSubgroup();
+    if (group && section) {
+      if (group.items.length === 0 && group.total == null) {
+        // empty section header with no children — drop
+      } else {
+        // If the group closed without an explicit "Total <name>"
+        // line (orphan items under a section, or QB exports that
+        // skip the subtotal line for single-item groups), derive
+        // its total from the items so rollups balance against the
+        // section total.
+        if (group.total == null && group.items.length) {
+          group.total = group.items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+        }
+        out.sections[section].groups.push(group);
+        out.debug.matched++;
+      }
+    }
+    group = null;
+  };
+  const closeSection = () => {
+    flushGroup();
+    section = null;
+  };
+
+  for (const line of lines) {
+    if (RE.pageHeader.test(line)) continue;
+    // Per-page company-name header line: skip anything that's the
+    // company name (looks like words with no amount and no leading
+    // structural keyword). Cheap heuristic: skip lines that match
+    // page chrome from above; everything else is in scope.
+
+    const m = AMOUNT_AT_END.exec(line);
+    const hasAmount = !!m;
+    const label = (hasAmount ? m[1] : line).trim();
+    const amount = hasAmount ? parseAmount(m[2]) : null;
+
+    // ── Top-level totals + computed lines ─────────────────────────
+    if (hasAmount && RE.totalIncome.test(label)) {
+      flushGroup();
+      out.sections.income.total = amount;
+      out.totals.total_income = amount;
+      section = null;
+      continue;
+    }
+    if (hasAmount && RE.totalCogs.test(label)) {
+      flushGroup();
+      out.sections.cogs.total = amount;
+      out.totals.total_cogs = amount;
+      section = null;
+      continue;
+    }
+    if (hasAmount && RE.totalExpense.test(label)) {
+      flushGroup();
+      out.sections.expenses.total = amount;
+      out.totals.total_expense = amount;
+      section = null;
+      continue;
+    }
+    if (hasAmount && RE.totalOtherExpense.test(label)) {
+      flushGroup();
+      out.sections.other_expense.total = amount;
+      section = null;
+      continue;
+    }
+    if (hasAmount && RE.totalOtherIncome.test(label)) {
+      // Ambiguous: this can be the wrap-up of a top-level Other Income
+      // section OR a sub-group total ("Other Income" group within
+      // Income). Disambiguate by current state.
+      if (section === 'other_income') {
+        flushGroup();
+        out.sections.other_income.total = amount;
+        section = null;
+      } else if (group && /^other\s+income$/i.test(group.name)) {
+        group.total = amount;
+        flushGroup();
+      } else {
+        // Stash as a generic item if we can't place it.
+        if (group) group.items.push({ name: 'Other Income', amount });
+      }
+      continue;
+    }
+    if (hasAmount && RE.grossProfit.test(label))         { out.totals.gross_profit = amount; closeSection(); continue; }
+    if (hasAmount && RE.netOrdinaryIncome.test(label))   { out.totals.net_ordinary_income = amount; closeSection(); continue; }
+    if (hasAmount && RE.netOtherIncome.test(label))      { out.totals.net_other_income = amount; continue; }
+    if (hasAmount && RE.netIncome.test(label))           { out.totals.net_income = amount; closeSection(); continue; }
+
+    // ── Section / group headers (no amount) ───────────────────────
+    if (!hasAmount) {
+      // Unambiguous top-level headers — fire regardless of current
+      // state. "Income" appears only once at the top of the report;
+      // same for "Cost of Goods Sold" / "Expense". The wrapper
+      // "Ordinary Income/Expense" is silent (section stays where it
+      // was, but the income mode is implied by the "Income" header
+      // that follows).
+      if (RE.topIncome.test(label))   { flushGroup(); section = 'income'; continue; }
+      if (RE.topCogs.test(label))     { flushGroup(); section = 'cogs'; continue; }
+      if (RE.topExpense.test(label))  { flushGroup(); section = 'expenses'; continue; }
+      if (RE.topOtherWrapper.test(label)) { continue; }
+      // "Other Income" / "Other Expense" are ambiguous: both appear
+      // as group names *inside* the Income section in some QB
+      // exports, AND as the top-level sections in the
+      // Other Income/Expense block at the bottom. Disambiguate by
+      // current state: only treat as top-level when we're between
+      // sections (which happens after Net Ordinary Income).
+      if (section === null) {
+        if (RE.topOtherIncome.test(label))  { flushGroup(); section = 'other_income'; continue; }
+        if (RE.topOtherExpense.test(label)) { flushGroup(); section = 'other_expense'; continue; }
+        continue; // unknown header outside any section — skip
+      }
+      // Inside a section: header is a group or subgroup.
+      if (!group) {
+        group = { name: label, total: null, items: [] };
+      } else {
+        flushSubgroup();
+        subgroup = { name: label, items: [] };
+      }
+      continue;
+    }
+
+    // ── "Total X" lines — close the matching group or subgroup ────
+    if (/^Total\s+/i.test(label)) {
+      const tName = label.replace(/^Total\s+/i, '').trim().toLowerCase();
+      if (subgroup && tName === subgroup.name.toLowerCase()) {
+        // Subgroup total — replace accumulated subgroup items with a
+        // single rollup item on the parent group.
+        group.items.push({ name: subgroup.name, amount, rollup: true });
+        subgroup = null;
+        continue;
+      }
+      if (group && tName === group.name.toLowerCase()) {
+        group.total = amount;
+        flushGroup();
+        continue;
+      }
+      // Unrecognized "Total X" — record as an item so nothing is lost.
+      if (group) group.items.push({ name: label.replace(/^Total\s+/i, '').trim(), amount });
+      continue;
+    }
+
+    // ── Line item ─────────────────────────────────────────────────
+    if (subgroup)      subgroup.items.push({ name: label, amount });
+    else if (group)    group.items.push({ name: label, amount });
+    else if (section) {
+      // Orphan item under a section with no current group — synthesize one.
+      group = { name: '(uncategorized)', total: null, items: [{ name: label, amount }] };
+    }
+  }
+
+  // Final flush at EOF.
+  flushGroup();
+
+  // Derive any missing canonical totals from what we did capture.
+  const sumGroups = (sec) => (sec.groups || []).reduce((s, g) => s + (Number(g.total) || 0), 0);
+  if (out.sections.income.total == null && out.sections.income.groups.length) {
+    out.sections.income.total = sumGroups(out.sections.income);
+  }
+  if (out.totals.total_income == null && out.sections.income.total != null) {
+    out.totals.total_income = out.sections.income.total;
+  }
+  if (out.totals.total_cogs == null && out.sections.cogs.total != null) {
+    out.totals.total_cogs = out.sections.cogs.total;
+  }
+  if (out.totals.gross_profit == null && out.totals.total_income != null && out.totals.total_cogs != null) {
+    out.totals.gross_profit = out.totals.total_income - out.totals.total_cogs;
+  }
+  if (out.totals.total_expense == null && out.sections.expenses.total != null) {
+    out.totals.total_expense = out.sections.expenses.total;
+  }
+  if (out.totals.net_ordinary_income == null && out.totals.gross_profit != null && out.totals.total_expense != null) {
+    out.totals.net_ordinary_income = out.totals.gross_profit - out.totals.total_expense;
+  }
+  if (out.totals.net_other_income == null) {
+    const oi = Number(out.sections.other_income.total) || 0;
+    const oe = Number(out.sections.other_expense.total) || 0;
+    if (out.sections.other_income.total != null || out.sections.other_expense.total != null) {
+      out.totals.net_other_income = oi - oe;
+    }
+  }
+  if (out.totals.net_income == null && out.totals.net_ordinary_income != null) {
+    out.totals.net_income = out.totals.net_ordinary_income + (Number(out.totals.net_other_income) || 0);
+  }
+
+  // Sanity check: each section's group totals should sum to the
+  // recorded section total within $1. Surface a warning when they
+  // don't — owner sees it on save so they know a number didn't parse.
+  for (const [key, sec] of Object.entries(out.sections)) {
+    if (sec.total == null) continue;
+    const sum = sumGroups(sec);
+    if (Math.abs(sum - sec.total) > 1) {
+      out.debug.warnings.push(`Section ${key} total ${sec.total} doesn't match sum of groups ${sum.toFixed(2)}`);
+    }
+  }
+
+  return out;
+}
+
+// Document type markers (unchanged behavior).
 const PL_MARKERS = /Profit\s*&\s*Loss|Net\s+(?:Ordinary\s+)?Income|Total\s+Income|Gross\s+Profit|Cost\s+of\s+Goods\s+Sold/i;
 const BALANCE_MARKERS = /Balance\s+Sheet|TOTAL\s+(?:ASSETS|LIABILITIES)|Retained\s+Earnings|Accumulated\s+Depreciation/i;
 
-function setPath(obj, path, value, add = false) {
-  const parts = path.split('.');
-  let cur = obj;
-  for (let i = 0; i < parts.length - 1; i++) {
-    if (!cur[parts[i]] || typeof cur[parts[i]] !== 'object') cur[parts[i]] = {};
-    cur = cur[parts[i]];
+// Balance sheet patterns — kept as label-based mapping since the
+// balance sheet has a much smaller, more stable set of canonical
+// lines than the P&L expense catalog. (Dynamic walking for balance
+// is a follow-up if it becomes a real need.)
+const BALANCE_PATTERNS = [
+  { label: /Total\s*Checking\/?Savings/i,                          target: 'cash' },
+  { label: /Food\s*Inventory/i,                                    target: 'inventory' },
+  { label: /Total\s*Other\s*Current\s*Assets/i,                    target: 'other_current_assets' },
+  { label: /Accumulated\s*Depreciation/i,                          target: 'accumulated_depreciation' },
+  { label: /Total\s*Fixed\s*Assets/i,                              target: 'fixed_assets_gross' },
+  { label: /Total\s*Other\s*Assets/i,                              target: 'other_assets' },
+  { label: /Total\s*Current\s*Liabilities/i,                       target: 'current_liabilities' },
+  { label: /Total\s*Long\s*Term\s*Liabilities/i,                   target: 'long_term_liabilities' },
+  { label: /Retained\s*Earnings/i,                                 target: 'retained_earnings' },
+  { label: /Total\s*Shareholder\s*Distributions/i,                 target: 'distributions' },
+];
+
+function parseBalance(text) {
+  const out = {};
+  let matched = 0;
+  for (const p of BALANCE_PATTERNS) {
+    const re = new RegExp(p.label.source + `[^\\d\\-(]{0,80}?([\\-(]?\\$?[\\d.,]+\\)?)(?=[^\\d.,]|$)`, 'gi');
+    const m = re.exec(text);
+    if (m) {
+      const amount = parseAmount(m[1]);
+      if (amount !== null) { out[p.target] = amount; matched++; }
+    }
   }
-  const last = parts[parts.length - 1];
-  if (add) {
-    cur[last] = (Number(cur[last]) || 0) + value;
-  } else {
-    cur[last] = value;
-  }
+  return { fields: out, matched };
 }
 
-// Find every (label, amount) pair where `amount` is the next number
-// appearing within `maxGap` chars after the label match. Cap the gap
-// to avoid pairing a label with an unrelated downstream number.
-function findPairs(text, labelSource, flags, maxGap = 80) {
-  const re = new RegExp(
-    `(${labelSource})[^\\d\\-(]{0,${maxGap}}?([\\-(]?\\$?[\\d.,]+\\)?)(?=[^\\d.,]|$)`,
-    flags,
-  );
-  const results = [];
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const amount = parseAmount(m[2]);
-    if (amount !== null) results.push({ amount, index: m.index });
-    if (m.index === re.lastIndex) re.lastIndex++;
-  }
-  return results;
-}
-
-// Returns { pl, balance, debug }. typeMismatch=true means the file
-// looks like the other kind (e.g. balance sheet dropped into the P&L
-// slot) so the client can show a "wrong file" error.
 async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
   const out = {
-    pl: { revenue: {}, expenses: {} },
-    balance: {},
-    debug: { matched: 0, characters: 0, detectedType: null, typeMismatch: false },
+    pl: null,
+    balance: null,
+    debug: { matched: 0, characters: 0, detectedType: null, typeMismatch: false, warnings: [] },
   };
   if (!buffer || !buffer.length) {
     out.debug.error = 'empty_buffer';
@@ -190,7 +374,7 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
   let text;
   try {
     const parsed = await pdfParse(buffer, PDF_PARSE_OPTIONS);
-    text = (parsed?.text || '').replace(/ /g, ' '); // normalize non-breaking spaces
+    text = (parsed?.text || '').replace(/ /g, ' ');
   } catch (e) {
     out.debug.error = String(e?.message || e);
     return out;
@@ -200,8 +384,6 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     out.debug.error = 'pdf_no_text_layer';
     return out;
   }
-  // Type detection — first decide what the document actually is, then
-  // compare against what slot the owner uploaded it into.
   const hasPl = PL_MARKERS.test(text);
   const hasBalance = BALANCE_MARKERS.test(text);
   out.debug.detectedType =
@@ -210,40 +392,30 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     : hasPl && hasBalance ? 'mixed'
     : 'unknown';
   if (kind === 'pl' && out.debug.detectedType === 'balance') {
-    out.debug.typeMismatch = true;
-    return out;
+    out.debug.typeMismatch = true; return out;
   }
   if (kind === 'balance' && out.debug.detectedType === 'pl') {
-    out.debug.typeMismatch = true;
-    return out;
+    out.debug.typeMismatch = true; return out;
   }
-  const patterns = kind === 'balance' ? BALANCE_PATTERNS : PL_PATTERNS;
-  const unmatched = [];
-  for (const p of patterns) {
-    const flags = 'gi';
-    const pairs = findPairs(text, p.label, flags);
-    if (!pairs.length) { unmatched.push(p.target); continue; }
-    if (p.multi) {
-      for (const pair of pairs) {
-        setPath(out, p.target, pair.amount, !!p.add);
-      }
-      out.debug.matched += pairs.length;
-    } else {
-      // Pick the first occurrence — totals tend to appear once.
-      setPath(out, p.target, pairs[0].amount, !!p.add);
-      out.debug.matched++;
-    }
+
+  if (kind === 'balance') {
+    const r = parseBalance(text);
+    out.balance = r.fields;
+    out.debug.matched = r.matched;
+  } else {
+    out.pl = parseDynamic(text);
+    // Roll the section walker's match + warning data up to top-level
+    // debug so the server log + client banner can read it without
+    // peeking into pl.debug.
+    out.debug.matched = out.pl.debug.matched;
+    out.debug.warnings = out.pl.debug.warnings || [];
   }
-  // When everything misses, return a small text sample + the list of
-  // unmatched targets + which PL/Balance markers actually fired so the
-  // server-side log (and the parse-response payload) carries enough
-  // signal to fix the regexes without another deploy cycle.
+
   if (out.debug.matched === 0) {
     out.debug.textSample = text.slice(0, 1200);
-    out.debug.unmatchedTargets = unmatched.slice(0, 30);
     out.debug.markersFound = { hasPl, hasBalance };
   }
   return out;
 }
 
-module.exports = { parsePdf, parseAmount };
+module.exports = { parsePdf, parseAmount, parseDynamic };
