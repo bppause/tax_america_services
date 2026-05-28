@@ -36,6 +36,56 @@ module.exports = function createTaxSenders(deps) {
     catch { return ''; }
   };
 
+  // Phase 4n.73: shared layout for customer-facing emails. Wraps the
+  // body in a branded header (logo linked to the public landing page)
+  // and a footer carrying the practice's contact info (address, phone,
+  // contact email, WhatsApp, website link). Currently used by the
+  // bookkeeping report send; the other customer-facing senders pre-date
+  // it and still use their own ad-hoc HTML — retrofit one at a time.
+  function brandedEmailLayout({ community, lang, innerHtml }) {
+    const base = appBase();
+    const slug = community?.id || '';
+    const websiteUrl = base ? `${base}/tax/${encodeURIComponent(slug)}` : (slug ? `/tax/${encodeURIComponent(slug)}` : '#');
+    // logo_url is typically a relative path like /tax/...png; prefix
+    // with base so it resolves inside the email client.
+    let logoUrl = String(community?.logo_url || '').trim();
+    if (logoUrl && !/^https?:\/\//i.test(logoUrl)) logoUrl = `${base}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`;
+    const name = (lang === 'en' && community?.name_en) ? community.name_en : (community?.name || 'Tax America Services');
+    const addressLine = [
+      community?.address_line1,
+      community?.address_line2,
+      [community?.city, community?.state, community?.postal_code].filter(Boolean).join(', '),
+    ].filter(Boolean).join(' · ');
+    const phone = community?.phone || '';
+    const whatsapp = community?.whatsapp || '';
+    const contactEmail = community?.contact_email || '';
+    const websiteLabel = websiteUrl.replace(/^https?:\/\//, '');
+    const headerInner = logoUrl
+      ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(name)}" style="max-height:54px;max-width:260px;display:inline-block;border:0;outline:0;text-decoration:none">`
+      : `<div style="font-size:18px;font-weight:700;color:#134e4a">${escapeHtml(name)}</div>`;
+    return `<!doctype html>
+<html lang="${lang === 'en' ? 'en' : 'es-CO'}">
+<body style="margin:0;padding:0;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f6f7f9;padding:24px 12px">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08)">
+        <tr><td align="center" style="background:#fff;padding:20px 26px;border-bottom:1px solid #e2e8f0">
+          <a href="${escapeHtml(websiteUrl)}" style="text-decoration:none;color:inherit">${headerInner}</a>
+        </td></tr>
+        ${innerHtml}
+        <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px 26px;font-size:12px;color:#64748b;text-align:center;line-height:1.65">
+          <div style="font-weight:700;color:#0f172a;margin-bottom:4px">${escapeHtml(name)}</div>
+          ${addressLine ? `<div>${escapeHtml(addressLine)}</div>` : ''}
+          ${(phone || whatsapp) ? `<div>${escapeHtml([phone && `Tel: ${phone}`, whatsapp && `WhatsApp: ${whatsapp}`].filter(Boolean).join(' · '))}</div>` : ''}
+          ${contactEmail ? `<div style="margin-top:4px"><a href="mailto:${escapeHtml(contactEmail)}" style="color:#0f766e;text-decoration:none">${escapeHtml(contactEmail)}</a></div>` : ''}
+          <div style="margin-top:10px"><a href="${escapeHtml(websiteUrl)}" style="color:#0f766e;text-decoration:none;font-weight:600">${escapeHtml(websiteLabel)}</a></div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+  }
+
   // Phase 4i: owner-editable subject + intro paragraph per (template_key, lang).
   // Senders compute their defaults as before; if an override row exists and
   // is enabled, the subject / intro_text / intro_html are replaced with the
@@ -1782,16 +1832,9 @@ module.exports = function createTaxSenders(deps) {
         </div>
       </td>`;
 
-    const html = `
-<!doctype html>
-<html lang="${langTag}">
-<body style="margin:0;padding:0;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a">
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f6f7f9;padding:24px 12px">
-    <tr><td align="center">
-      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08)">
-        <tr><td style="background:linear-gradient(135deg,#134e4a 0%,#0f766e 100%);padding:22px 26px;color:#fff">
-          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:700;opacity:.85">${escapeHtml(T.eyebrow)}</div>
-          <div style="font-size:14px;margin-top:6px;opacity:.95">${escapeHtml(practiceName)}</div>
+    const innerBody = `
+        <tr><td style="background:linear-gradient(135deg,#134e4a 0%,#0f766e 100%);padding:18px 26px;color:#fff">
+          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:700;opacity:.9">${escapeHtml(T.eyebrow)}</div>
         </td></tr>
         <tr><td style="padding:24px 26px 8px">
           <p style="margin:0 0 8px;font-size:14px;color:#475569">${escapeHtml(T.greeting)}</p>
@@ -1817,14 +1860,9 @@ module.exports = function createTaxSenders(deps) {
             <strong style="display:block;margin-bottom:2px">${lang === 'en' ? 'Important' : 'Importante'}</strong>
             ${escapeHtml(T.disclaimer)}
           </div>
-        </td></tr>
-        <tr><td style="padding:18px 26px 26px;border-top:1px solid #e2e8f0;font-size:12px;color:#94a3b8;text-align:center">
-          ${escapeHtml(T.footer)}
-        </td></tr>
-      </table>
-    </td></tr>
-  </table>
-</body></html>`;
+        </td></tr>`;
+
+    const html = brandedEmailLayout({ community, lang, innerHtml: innerBody });
 
     const text = [
       T.greeting,
