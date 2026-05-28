@@ -76,7 +76,7 @@ function normalizePlData(pl) {
     // New shape — fill in any missing section so the editor has all five.
     const sections = {};
     for (const k of SECTION_KEYS) sections[k] = pl.sections[k] ? cloneSection(pl.sections[k]) : emptySection();
-    return { sections, totals: { ...(pl.totals || {}) } };
+    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined };
   }
   // Legacy shape — synthesize sections from the flat fields.
   const out = emptyPlData();
@@ -313,9 +313,20 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         setCreating(false);
         setMsg({ kind: '', text: '' });
         const rpt = d.report;
+        const biz = customer?.business_name || customer?.name || null;
+        const plCn = rpt.pl_data?._companyName || null;
+        const balCn = rpt.balance_data?._companyName || null;
         setPdfMeta({
-          pl:      rpt.pl_pdf_path      ? { fileName: t('owner.customer.bookkeeping.pdf.onFile'), companyName: null, mismatch: false } : null,
-          balance: rpt.balance_pdf_path ? { fileName: t('owner.customer.bookkeeping.pdf.onFile'), companyName: null, mismatch: false } : null,
+          pl: rpt.pl_pdf_path ? {
+            fileName: t('owner.customer.bookkeeping.pdf.onFile'),
+            companyName: plCn,
+            mismatch: !!(plCn && biz && !companyNamesMatch(plCn, biz)),
+          } : null,
+          balance: rpt.balance_pdf_path ? {
+            fileName: t('owner.customer.bookkeeping.pdf.onFile'),
+            companyName: balCn,
+            mismatch: !!(balCn && biz && !companyNamesMatch(balCn, biz)),
+          } : null,
         });
       })
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
@@ -447,15 +458,21 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       }
       if (dbg.error === 'pdf_no_text_layer') { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.noTextLayer') }); return; }
       if (dbg.error) { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.parseError', { error: dbg.error }) }); return; }
+      const companyName = parseResult.parsed?.companyName || null;
+      const businessName = customer?.business_name || customer?.name || null;
+      const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
       setForm(prev => {
         const cleared = kind === 'pl'
           ? { ...prev, pl_data: emptyPlData() }
           : { ...prev, balance_data: Object.fromEntries(BALANCE_KEYS.map(k => [k, ''])) };
-        return mergeParsedIntoForm(cleared, parseResult.parsed, kind);
+        const merged = mergeParsedIntoForm(cleared, parseResult.parsed, kind);
+        // Persist company name in the JSONB so it survives a page reload / re-edit.
+        if (companyName) {
+          if (kind === 'pl') merged.pl_data._companyName = companyName;
+          else merged.balance_data._companyName = companyName;
+        }
+        return merged;
       });
-      const companyName = parseResult.parsed?.companyName || null;
-      const businessName = customer?.business_name || customer?.name || null;
-      const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
       setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch } }));
       if (dbg.detectedType === 'unknown' && (dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.notRecognized', { kind }) });

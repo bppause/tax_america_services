@@ -432,26 +432,52 @@ function parseBalance(text) {
 // pattern is found we strip the timestamp prefix; otherwise we take the first
 // non-header line that contains letters.
 function extractCompanyName(text) {
-  const lines = String(text || '').split(/\r?\n/).slice(0, 25);
+  const lines = String(text || '').split(/\r?\n/).slice(0, 40);
+  const REPORT_HDR = /Accrual\s+Basis|Cash\s+Basis|Profit\s*[&\/]\s*Loss|Balance\s+Sheet|Page\s+\d+|Estado\s+de\s+Resultados|Balance\s+General|P[eé]rdidas\s+y\s+Ganancias/i;
+  const DATE_RANGE = /^(?:[A-Z][a-z]+\s+through\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]{2,8}\s*[-–]\s*[A-Z][a-z]{2,8}\s*\d{2,4}|\d{4})$/;
+  // Short all-caps tokens are QB column/table headers (TOTAL, AMOUNT, etc.), not company names.
+  const QB_COL_HDR = /^(TOTAL|AMOUNT|BALANCE|NET|GROSS|SUBTOTAL|INCOME|EXPENSE|EXPENSES|PROFIT|LOSS|REVENUE|COST|ASSETS|LIABILITIES|EQUITY|CASH)$/;
+
+  function isJunk(l) {
+    if (!l || l.length < 4) return true;
+    if (/^\d+$/.test(l)) return true;
+    if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l)) return true;
+    if (REPORT_HDR.test(l)) return true;
+    if (DATE_RANGE.test(l)) return true;
+    if (QB_COL_HDR.test(l.trim())) return true;
+    return false;
+  }
+
+  // Pass 1: QuickBooks "HH:MM AM  CompanyName" on the same spatial line.
   for (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     const m = trimmed.match(/^\d{1,2}:\d{2}\s*[AP]M\s+(.+)$/i);
     if (m) {
-      const candidate = m[1].trim();
+      // Strip trailing QB column header that may have been merged onto the same line.
+      const candidate = m[1].trim().replace(/\s+(TOTAL|AMOUNT|BALANCE|NET|GROSS|SUBTOTAL)\s*$/i, '').trim();
       if (!/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(candidate) && /[A-Za-z]/.test(candidate) && candidate.length > 3) {
         return candidate;
       }
     }
   }
-  for (const line of lines) {
-    const l = line.trim();
-    if (!l || l.length < 4) continue;
-    if (/\d{1,2}:\d{2}\s*[AP]M/i.test(l)) continue;
-    if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(l)) continue;
-    if (/Accrual\s+Basis|Cash\s+Basis|Profit\s*&\s*Loss|Balance\s+Sheet|Page\s+\d+/i.test(l)) continue;
-    if (/^(?:[A-Z][a-z]+\s+through\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]{2,8}\s*[-–]\s*[A-Z][a-z]{2,8}\s*\d{2,4}|\d{4})$/.test(l)) continue;
-    if (/^\d+$/.test(l)) continue;
+
+  // Pass 2: first meaningful non-header line.
+  // When a standalone timestamp line is found, also peek at the next 1-2 lines
+  // because QB sometimes puts the company name on the line immediately below the print time.
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (!l) continue;
+    if (/\d{1,2}:\d{2}\s*[AP]M/i.test(l)) {
+      // Standalone timestamp — company name may follow on the next line(s).
+      for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
+        const next = lines[j].trim();
+        if (!next) continue;
+        if (!isJunk(next) && /[A-Za-z]/.test(next)) return next;
+      }
+      continue;
+    }
+    if (isJunk(l)) continue;
     if (/[A-Za-z]/.test(l)) return l;
   }
   return null;
