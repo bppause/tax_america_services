@@ -11579,6 +11579,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(400).json({ error: 'period_label, period_start, period_end required.' });
     }
     const id = 'frpt_' + uuidv4().slice(0, 12);
+    const taskId = trim(body.task_id || '', 200) || null;
     const row = {
       id, community_id: cust.community_id, customer_id: customerId,
       period_label: periodLabel,
@@ -11589,6 +11590,7 @@ module.exports = function createTaxRouter(deps) {
       status: 'draft',
       prepared_by_email: actor.email,
       notes: trim(body.notes, MAX_TEXT_LEN),
+      task_id: taskId,
     };
     const { error } = await supabase.from('tax_financial_reports').insert(row);
     if (error) return sendSupabaseError(res, error);
@@ -11662,7 +11664,7 @@ module.exports = function createTaxRouter(deps) {
     if (!actor) return;
     const id = trim(req.params.id, 200);
     const { data: cur } = await supabase.from('tax_financial_reports')
-      .select('id, status, customer_id, community_id').eq('id', id).maybeSingle();
+      .select('id, status, customer_id, community_id, task_id').eq('id', id).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Not found.' });
     if (cur.status !== 'draft') {
       return res.status(400).json({ error: 'already_published', message: 'Report is already published.' });
@@ -11674,13 +11676,89 @@ module.exports = function createTaxRouter(deps) {
     if (error) return sendSupabaseError(res, error);
     // Ensure the customer has an access token provisioned (idempotent).
     try { await ensureAccessToken(cur.community_id, cur.customer_id); } catch (_e) {}
+    // Auto-complete the source task if this report was opened from one.
+    // Owner can still hit "Send" separately; the task is satisfied at
+    // the moment of publish so it stops appearing on the open-tasks
+    // board, even if the send is delayed.
+    if (cur.task_id) {
+      try {
+        await supabase.from('tax_tasks').update({
+          status_key: 'completed',
+          completed_at: now,
+          completed_by_email: actor.email || null,
+          updated_at: now,
+        }).eq('id', cur.task_id).is('completed_at', null);
+      } catch (_e) {}
+    }
     try {
       await auditLog({
         entity: 'tax.financial_report', entityId: id,
         action: 'publish', actorEmail: actor.email,
+        after: { task_id: cur.task_id || null },
       });
     } catch (_e) {}
     res.json({ ok: true });
+  });
+
+  // ── Admin: find or create a report from a task ───────────────────────────
+  //
+  // Clicking a "Publish H1/H2 Bookkeeping report" task opens this
+  // endpoint, which returns an existing linked report when one
+  // exists, or mints a new draft with period derived from the task's
+  // due_date + title (looks for "H1" or "H2" in the title). The
+  // client then opens the editor for that report id.
+  router.post('/admin/tasks/:taskId/financial-report/open', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const taskId = trim(req.params.taskId, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, title, due_date, completed_at')
+      .eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!task.customer_id) return res.status(400).json({ error: 'Task is not customer-scoped.' });
+
+    const { data: existing } = await supabase.from('tax_financial_reports')
+      .select('id').eq('task_id', taskId).maybeSingle();
+    if (existing) return res.json({ ok: true, reportId: existing.id, created: false });
+
+    // Derive period from due_date + title. H1 task due Jul 31 of year
+    // Y covers Jan 1..Jun 30 of year Y; H2 due Jan 31 of year Y
+    // covers Jul 1..Dec 31 of year Y-1.
+    const due = task.due_date ? new Date(task.due_date) : new Date();
+    const dueYear = due.getUTCFullYear();
+    const title = String(task.title || '');
+    const isH1 = /\bH1\b/i.test(title) || (due.getUTCMonth() === 6 /* July */);
+    let periodLabel, periodStart, periodEnd;
+    if (isH1) {
+      periodLabel = `H1 ${dueYear}`;
+      periodStart = `${dueYear}-01-01`;
+      periodEnd = `${dueYear}-06-30`;
+    } else {
+      const py = dueYear - 1;
+      periodLabel = `H2 ${py}`;
+      periodStart = `${py}-07-01`;
+      periodEnd = `${py}-12-31`;
+    }
+
+    const id = 'frpt_' + uuidv4().slice(0, 12);
+    const { error } = await supabase.from('tax_financial_reports').insert({
+      id, community_id: task.community_id, customer_id: task.customer_id,
+      period_label: periodLabel, period_start: periodStart, period_end: periodEnd,
+      cadence: 'semi_annual',
+      pl_data: {}, balance_data: {},
+      status: 'draft', task_id: taskId,
+      prepared_by_email: actor.email,
+      notes: '',
+    });
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'create_from_task', actorEmail: actor.email,
+        after: { task_id: taskId, period_label: periodLabel },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, reportId: id, created: true });
   });
 
   // ── Admin: send / resend email ───────────────────────────────────────────
@@ -11819,6 +11897,87 @@ module.exports = function createTaxRouter(deps) {
       cookieName: REPORT_COOKIE_NAME,
       cookieValue,
       cookieMaxAgeMs: REPORT_COOKIE_MAX_AGE_MS,
+    });
+  });
+
+  // ── Admin: PDF upload (signed URL) + attach + parse ──────────────────────
+  //
+  // Three-step flow matches the existing documents pattern:
+  //   1) POST /admin/financial-reports/:id/pdf-upload-url {kind}
+  //      → returns signed Supabase Storage URL + target path
+  //   2) Client PUTs the PDF directly to the signed URL
+  //   3) POST /admin/financial-reports/:id/pdf-parse {kind}
+  //      → server downloads the PDF, runs the parser, records the
+  //        path on the report row, returns the parsed values to
+  //        prefill the form
+  router.post('/admin/financial-reports/:id/pdf-upload-url', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const kind = (req.body && req.body.kind === 'balance') ? 'balance' : 'pl';
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('id, community_id, customer_id').eq('id', id).maybeSingle();
+    if (!rpt) return res.status(404).json({ error: 'Not found.' });
+    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}.pdf`;
+    const { data: signed, error } = await supabase.storage
+      .from('tax-bookkeeping-pdfs')
+      .createSignedUploadUrl(path, { upsert: true });
+    if (error || !signed?.signedUrl) {
+      return res.status(500).json({ error: 'sign_failed', message: error?.message || '' });
+    }
+    res.json({ uploadUrl: signed.signedUrl, path, token: signed.token });
+  });
+
+  router.post('/admin/financial-reports/:id/pdf-parse', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const kind = (req.body && req.body.kind === 'balance') ? 'balance' : 'pl';
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('id, community_id, customer_id, pl_pdf_path, balance_pdf_path, pl_data, balance_data')
+      .eq('id', id).maybeSingle();
+    if (!rpt) return res.status(404).json({ error: 'Not found.' });
+    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}.pdf`;
+    // Stamp the path on the report row first so the customer dashboard
+    // can offer the PDF download even before the parse finishes.
+    const pathCol = kind === 'balance' ? 'balance_pdf_path' : 'pl_pdf_path';
+    await supabase.from('tax_financial_reports')
+      .update({ [pathCol]: path, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    // Download the just-uploaded PDF and parse it.
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from('tax-bookkeeping-pdfs').download(path);
+    if (dlErr || !blob) {
+      return res.status(500).json({ error: 'download_failed', message: dlErr?.message || '' });
+    }
+    let buffer;
+    try {
+      const arr = await blob.arrayBuffer();
+      buffer = Buffer.from(arr);
+    } catch (e) {
+      return res.status(500).json({ error: 'read_failed', message: e?.message || '' });
+    }
+    let parsed;
+    try {
+      const { parsePdf } = require('./financial-report-parser');
+      parsed = await parsePdf(buffer, kind);
+    } catch (e) {
+      return res.status(500).json({ error: 'parse_failed', message: e?.message || '' });
+    }
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'pdf_upload_parsed', actorEmail: actor.email,
+        after: { kind, matched: parsed?.debug?.matched, unmatched: parsed?.debug?.unmatched },
+      });
+    } catch (_e) {}
+    res.json({
+      ok: true,
+      kind,
+      pdfPath: path,
+      parsed: kind === 'balance'
+        ? { balance: parsed.balance, debug: parsed.debug }
+        : { pl: parsed.pl, debug: parsed.debug },
     });
   });
 

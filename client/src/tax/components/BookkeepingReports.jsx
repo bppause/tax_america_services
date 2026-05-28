@@ -106,6 +106,32 @@ function fmtMoney(n) {
   return v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
+// Map server-side parsed payload back into the form's flat field
+// names. Parser returns { pl: { revenue:{}, expenses:{}, cogs,
+// sales_tax_collected, sales_tax_remitted } } for the P&L kind, and
+// { balance: { cash, inventory, ... } } for the balance kind.
+function mergeParsedIntoForm(prev, parsed, kind) {
+  const out = { ...prev };
+  const fmt = (n) => (n == null ? '' : String(n));
+  if (kind === 'balance' && parsed?.balance) {
+    for (const [k, v] of Object.entries(parsed.balance)) {
+      if (v != null) out[`bal_${k}`] = fmt(v);
+    }
+    return out;
+  }
+  const pl = parsed?.pl || {};
+  for (const [k, v] of Object.entries(pl.revenue || {})) {
+    if (v != null) out[`rev_${k}`] = fmt(v);
+  }
+  for (const [k, v] of Object.entries(pl.expenses || {})) {
+    if (v != null) out[`exp_${k}`] = fmt(v);
+  }
+  if (pl.cogs != null) out.cogs = fmt(pl.cogs);
+  if (pl.sales_tax_collected != null) out.sales_tax_collected = fmt(pl.sales_tax_collected);
+  if (pl.sales_tax_remitted != null) out.sales_tax_remitted = fmt(pl.sales_tax_remitted);
+  return out;
+}
+
 function fmtDate(iso, locale) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
@@ -153,6 +179,36 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
   };
   const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); };
 
+  // When a task button (in the Tasks section above) wants this section
+  // to open a specific report in edit mode, it sets a URL hash like
+  // #bookkeeping-edit=REPORT_ID. We poll the hash on mount + on
+  // hashchange and call startEdit. Hash is cleared after we consume
+  // it so a refresh doesn't re-trigger.
+  useEffect(() => {
+    function handleHash() {
+      const m = (window.location.hash || '').match(/bookkeeping-edit=([^&]+)/);
+      if (!m) return;
+      const id = decodeURIComponent(m[1]);
+      // Wait for the report list to load (or trigger load).
+      if (!reports) return;
+      const row = reports.find(r => r.id === id);
+      if (row) {
+        startEdit(row);
+        // Clear the hash so a remount/refresh doesn't re-open.
+        try { history.replaceState(null, '', window.location.pathname + window.location.search); } catch (_e) {}
+        // Scroll into view.
+        setTimeout(() => {
+          const el = document.querySelector('section.tax-card h3');
+          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 50);
+      }
+    }
+    handleHash();
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reports]);
+
   const save = async () => {
     if (!form.period_label || !form.period_start || !form.period_end) {
       setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.requiredFields') });
@@ -179,6 +235,43 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
     try { await taxApi.adminPublishFinancialReport(auth, r.id); load(); }
     catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.publishFailed') }); }
     finally { setBusy(false); }
+  };
+
+  // Upload + parse PDF for the currently-edited report. Calls the
+  // signed-URL endpoint, PUTs the file directly to Supabase Storage,
+  // then asks the server to parse and returns the structured fields.
+  // The parsed values are merged into the form state so the owner
+  // sees them pre-filled and can correct anything that didn't match.
+  const uploadAndParsePdf = async (kind, file) => {
+    if (!editingId) {
+      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.saveDraftFirst') });
+      return;
+    }
+    if (!file) return;
+    setBusy(true); setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.uploading', { kind }) });
+    try {
+      const sig = await taxApi.adminFinancialReportUploadUrl(auth, editingId, kind);
+      const putResp = await fetch(sig.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' },
+        body: file,
+      });
+      if (!putResp.ok) throw new Error(`Upload failed (${putResp.status}).`);
+      setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsing') });
+      const parseResult = await taxApi.adminFinancialReportParse(auth, editingId, kind);
+      // Merge parsed values into form. Parser returns either
+      // { pl: { revenue:{}, expenses:{}, cogs, ... } } or { balance: {…} }.
+      setForm(prev => mergeParsedIntoForm(prev, parseResult.parsed, kind));
+      const dbg = parseResult.parsed?.debug || {};
+      setMsg({
+        kind: 'ok',
+        text: t('owner.customer.bookkeeping.msg.parsed', {
+          kind, matched: dbg.matched || 0, total: (dbg.matched || 0) + (dbg.unmatched || 0),
+        }),
+      });
+    } catch (e) {
+      setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.uploadFailed') });
+    } finally { setBusy(false); }
   };
 
   const send = async (r, isResend) => {
@@ -240,6 +333,11 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
           {t('owner.customer.bookkeeping.serviceInactive')}
         </div>
       )}
+      {bookkeepingActive && !creating && !editingId && (
+        <div style={{ background: '#f1f5f9', borderRadius: 6, padding: '8px 12px', fontSize: 12, color: '#475569', marginBottom: 10 }}>
+          {t('owner.customer.bookkeeping.taskFlowHint')}
+        </div>
+      )}
 
       {msg.text && (
         <div className={`tax-msg ${msg.kind === 'err' ? 'tax-msg--error' : msg.kind === 'warn' ? '' : 'tax-msg--success'}`}
@@ -249,7 +347,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
       )}
 
       {(creating || editingId) && (
-        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} editing={!!editingId} />
+        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} editing={!!editingId} onUploadPdf={uploadAndParsePdf} />
       )}
 
       {!creating && !editingId && (
@@ -343,7 +441,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
   );
 }
 
-function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing }) {
+function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf }) {
   const set = (k, v) => setForm({ ...form, [k]: v });
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa' }}>
@@ -370,6 +468,21 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing }) {
           </select>
         </Field>
       </div>
+
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.pdfs')}>
+        {editing ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}
+                     onPick={f => onUploadPdf && onUploadPdf('pl', f)} busy={busy} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')}
+                     onPick={f => onUploadPdf && onUploadPdf('balance', f)} busy={busy} />
+          </div>
+        ) : (
+          <div style={{ padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569' }}>
+            {t('owner.customer.bookkeeping.pdf.saveFirstHint')}
+          </div>
+        )}
+      </FormGroup>
 
       <FormGroup title={t('owner.customer.bookkeeping.form.group.revenue')}>
         <NumericGrid>
@@ -492,6 +605,22 @@ function Total({ label, value, bold }) {
     <div>
       <div style={{ fontSize: 11, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</div>
       <div style={{ fontWeight: bold ? 700 : 500, fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(value)}</div>
+    </div>
+  );
+}
+
+function PdfDrop({ label, onPick, busy }) {
+  const inputId = `pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`;
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
+      <input id={inputId} type="file" accept="application/pdf,.pdf" disabled={busy}
+             onChange={e => {
+               const f = e.target.files && e.target.files[0];
+               if (f) onPick(f);
+               e.target.value = '';
+             }}
+             style={{ padding: '8px', border: '1px dashed var(--tax-border)', borderRadius: 6, background: '#fff', fontSize: 13 }} />
     </div>
   );
 }

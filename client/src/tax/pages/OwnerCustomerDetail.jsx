@@ -1460,6 +1460,22 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
                           </div>
                         </a>
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          {/^Publish\s+H[12]\b.*Bookkeeping report|Publicar\s+informe\s+contable\s+H[12]\b/i.test(task.title || '') && !task.completed_at && (
+                            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      try {
+                                        const d = await taxApi.adminOpenReportForTask(auth, task.id);
+                                        if (d.reportId) {
+                                          window.location.hash = `bookkeeping-edit=${encodeURIComponent(d.reportId)}`;
+                                          // Trigger hashchange manually in case the hash was already set.
+                                          window.dispatchEvent(new HashChangeEvent('hashchange'));
+                                        }
+                                      } catch (err) { alert(err?.message || 'Could not open report editor.'); }
+                                    }}>
+                              {t('owner.customer.bookkeeping.taskAction.open')}
+                            </button>
+                          )}
                           <select value={task.status_key}
                                   onChange={e => updateTask(task.id, { statusKey: e.target.value })}
                                   onClick={e => e.stopPropagation()}
