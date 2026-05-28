@@ -173,6 +173,7 @@ const taxDigestCron = require('./modules/tax/digest')({
 
 const taxRouter = taxModule.createRouter({
   supabase, requireSupabaseEnv, sendSupabaseError,
+  isSupabaseConfigured: Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY),
   auditLog,
   sendTaxLeadEmail,
   sendTaxTaskAssignedEmail,

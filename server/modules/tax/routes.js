@@ -50,6 +50,7 @@ const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 module.exports = function createTaxRouter(deps) {
   const {
     supabase, requireSupabaseEnv, sendSupabaseError,
+    isSupabaseConfigured,
     auditLog,
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
