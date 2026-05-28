@@ -4,59 +4,34 @@
 // + balance-sheet subtotals manually — PDF auto-parse is deferred to
 // a follow-up. Publish and Send are explicit, separate actions.
 //
-// The form is intentionally Spanish-labeled (matches the customer's
-// preferred language); switching the admin UI to bilingual labels
-// is a follow-up if/when we onboard non-Spanish-speaking practices.
+// All labels run through useT() so the owner/employee sees the UI in
+// whichever language they've picked. The customer-facing dashboard
+// (TaxReport.jsx) is independently bilingual — that one defaults to
+// the customer's locale and shouldn't follow the owner's preference.
 
 import { useEffect, useState } from 'react';
+import { useT } from '../i18n';
 import { taxApi } from '../api';
 
-const FIELD_GROUPS = {
-  revenue: [
-    ['bank_deposits',   'Depósitos bancarios'],
-    ['cash',            'Ventas en efectivo'],
-    ['doordash',        'DoorDash'],
-    ['uber',            'Uber Eats'],
-    ['grubhub',         'Grubhub'],
-    ['menufy',          'Menufy'],
-    ['other',           'Otros canales'],
-  ],
-  expenses: [
-    ['payroll',           'Nómina'],
-    ['rent',              'Renta'],
-    ['utilities',         'Servicios públicos'],
-    ['repairs',           'Reparaciones y mantenimiento'],
-    ['depreciation',      'Depreciación'],
-    ['interest',          'Intereses'],
-    ['professional_fees', 'Honorarios profesionales'],
-    ['merchant_services', 'Servicios de procesamiento'],
-    ['insurance',         'Seguros'],
-    ['auto',              'Auto / Combustible'],
-    ['office',            'Gastos de oficina'],
-    ['office_supplies',   'Suministros de oficina'],
-    ['advertising',       'Publicidad'],
-    ['other',             'Otros gastos'],
-  ],
-  balance: [
-    ['cash',                    'Efectivo en bancos'],
-    ['inventory',               'Inventario'],
-    ['other_current_assets',    'Otros activos corrientes'],
-    ['fixed_assets_gross',      'Activos fijos (bruto)'],
-    ['accumulated_depreciation','Depreciación acumulada (negativo)'],
-    ['other_assets',            'Otros activos'],
-    ['current_liabilities',     'Pasivos corrientes'],
-    ['long_term_liabilities',   'Pasivos a largo plazo'],
-    ['retained_earnings',       'Ganancias retenidas'],
-    ['distributions',           'Distribuciones (negativo)'],
-  ],
-};
+// Keys only — labels come from the i18n bundles at render time.
+const REVENUE_KEYS = ['bank_deposits', 'cash', 'doordash', 'uber', 'grubhub', 'menufy', 'other'];
+const EXPENSE_KEYS = [
+  'payroll', 'rent', 'utilities', 'repairs', 'depreciation', 'interest',
+  'professional_fees', 'merchant_services', 'insurance', 'auto', 'office',
+  'office_supplies', 'advertising', 'other',
+];
+const BALANCE_KEYS = [
+  'cash', 'inventory', 'other_current_assets', 'fixed_assets_gross',
+  'accumulated_depreciation', 'other_assets', 'current_liabilities',
+  'long_term_liabilities', 'retained_earnings', 'distributions',
+];
 
 function emptyForm() {
   const blank = { period_label: '', period_start: '', period_end: '', cadence: 'semi_annual',
                   sales_tax_collected: '', sales_tax_remitted: '', cogs: '', notes: '' };
-  for (const [k] of FIELD_GROUPS.revenue) blank[`rev_${k}`] = '';
-  for (const [k] of FIELD_GROUPS.expenses) blank[`exp_${k}`] = '';
-  for (const [k] of FIELD_GROUPS.balance) blank[`bal_${k}`] = '';
+  for (const k of REVENUE_KEYS) blank[`rev_${k}`] = '';
+  for (const k of EXPENSE_KEYS) blank[`exp_${k}`] = '';
+  for (const k of BALANCE_KEYS) blank[`bal_${k}`] = '';
   return blank;
 }
 
@@ -71,9 +46,9 @@ function reportToForm(r) {
   const rev = pl.revenue || {};
   const exp = pl.expenses || {};
   const bal = r.balance_data || {};
-  for (const [k] of FIELD_GROUPS.revenue)  f[`rev_${k}`] = rev[k] != null ? String(rev[k]) : '';
-  for (const [k] of FIELD_GROUPS.expenses) f[`exp_${k}`] = exp[k] != null ? String(exp[k]) : '';
-  for (const [k] of FIELD_GROUPS.balance)  f[`bal_${k}`] = bal[k] != null ? String(bal[k]) : '';
+  for (const k of REVENUE_KEYS)  f[`rev_${k}`] = rev[k] != null ? String(rev[k]) : '';
+  for (const k of EXPENSE_KEYS)  f[`exp_${k}`] = exp[k] != null ? String(exp[k]) : '';
+  for (const k of BALANCE_KEYS)  f[`bal_${k}`] = bal[k] != null ? String(bal[k]) : '';
   f.cogs = pl.cogs != null ? String(pl.cogs) : '';
   f.sales_tax_collected = pl.sales_tax_collected != null ? String(pl.sales_tax_collected) : '';
   f.sales_tax_remitted  = pl.sales_tax_remitted  != null ? String(pl.sales_tax_remitted)  : '';
@@ -88,13 +63,13 @@ function formToPayload(f) {
   };
   const revenue = {};
   let revenueTotal = 0;
-  for (const [k] of FIELD_GROUPS.revenue) {
+  for (const k of REVENUE_KEYS) {
     const v = num(f[`rev_${k}`]);
     revenue[k] = v; revenueTotal += v;
   }
   const expenses = {};
   let expensesTotal = 0;
-  for (const [k] of FIELD_GROUPS.expenses) {
+  for (const k of EXPENSE_KEYS) {
     const v = num(f[`exp_${k}`]);
     expenses[k] = v; expensesTotal += v;
   }
@@ -106,7 +81,7 @@ function formToPayload(f) {
   const netOrdinaryIncome = grossProfit - expensesTotal;
   const netIncome = netOrdinaryIncome - salesTaxRemitted + salesTaxCollected;
   const balance = {};
-  for (const [k] of FIELD_GROUPS.balance) balance[k] = num(f[`bal_${k}`]);
+  for (const k of BALANCE_KEYS) balance[k] = num(f[`bal_${k}`]);
   return {
     period_label: f.period_label.trim(),
     period_start: f.period_start,
@@ -131,19 +106,21 @@ function fmtMoney(n) {
   return v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
-function fmtDate(iso) {
+function fmtDate(iso, locale) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(locale === 'en' ? 'en-US' : 'es-ES',
+    { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-const STATUS_BADGE = {
-  draft:     { bg: '#f1f5f9', color: '#334155', label: 'Borrador' },
-  published: { bg: '#fef3c7', color: '#92400e', label: 'Listo para enviar' },
-  sent:      { bg: '#dcfce7', color: '#166534', label: 'Enviado' },
+const STATUS_STYLE = {
+  draft:     { bg: '#f1f5f9', color: '#334155' },
+  published: { bg: '#fef3c7', color: '#92400e' },
+  sent:      { bg: '#dcfce7', color: '#166534' },
 };
 
 export default function BookkeepingReportsSection({ auth, customerId, customer }) {
+  const { t, locale } = useT();
   const [reports, setReports] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
   const [editingId, setEditingId] = useState('');
@@ -155,7 +132,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
       .then(d => { setReports(d.reports || []); setAccessToken(d.accessToken || null); })
-      .catch(e => setMsg({ kind: 'err', text: e?.message || 'No se pudo cargar.' }));
+      .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }));
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId]);
 
@@ -166,14 +143,14 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
     setBusy(true);
     taxApi.adminGetFinancialReport(auth, r.id)
       .then(d => { setForm(reportToForm(d.report)); setEditingId(r.id); setCreating(false); setMsg({ kind: '', text: '' }); })
-      .catch(e => setMsg({ kind: 'err', text: e?.message || 'No se pudo cargar.' }))
+      .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
       .finally(() => setBusy(false));
   };
   const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); };
 
   const save = async () => {
     if (!form.period_label || !form.period_start || !form.period_end) {
-      setMsg({ kind: 'err', text: 'Período, fecha inicial y fecha final son requeridos.' });
+      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.requiredFields') });
       return;
     }
     setBusy(true); setMsg({ kind: '', text: '' });
@@ -184,34 +161,34 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
       } else {
         await taxApi.adminCreateFinancialReport(auth, customerId, payload);
       }
-      setMsg({ kind: 'ok', text: 'Guardado.' });
+      setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.saved') });
       cancel(); load();
     } catch (e) {
-      setMsg({ kind: 'err', text: e?.message || 'No se pudo guardar.' });
+      setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.saveFailed') });
     } finally { setBusy(false); }
   };
 
   const publish = async (r) => {
-    if (!confirm(`Publicar el informe ${r.period_label}? Esto no envía correo todavía — solo lo prepara para revisión.`)) return;
+    if (!confirm(t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label }))) return;
     setBusy(true);
     try { await taxApi.adminPublishFinancialReport(auth, r.id); load(); }
-    catch (e) { setMsg({ kind: 'err', text: e?.message || 'No se pudo publicar.' }); }
+    catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.publishFailed') }); }
     finally { setBusy(false); }
   };
 
   const send = async (r, isResend) => {
-    const action = isResend ? 'Reenviar' : 'Enviar';
-    if (!confirm(`${action} el informe ${r.period_label} al cliente?`)) return;
+    const confirmKey = isResend ? 'owner.customer.bookkeeping.confirm.resend' : 'owner.customer.bookkeeping.confirm.send';
+    if (!confirm(t(confirmKey, { period: r.period_label }))) return;
     setBusy(true);
     try {
       const d = await taxApi.adminSendFinancialReport(auth, r.id);
       if (d.sent) {
-        setMsg({ kind: 'ok', text: `${action} exitoso.` });
+        setMsg({ kind: 'ok', text: t(isResend ? 'owner.customer.bookkeeping.msg.sendOk.resend' : 'owner.customer.bookkeeping.msg.sendOk.send') });
       } else {
-        setMsg({ kind: 'warn', text: `Correo no enviado (${d.reason || 'desconocido'}). URL: ${d.viewUrl}` });
+        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.sendSkipped', { reason: d.reason || '?', url: d.viewUrl || '' }) });
       }
       load();
-    } catch (e) { setMsg({ kind: 'err', text: e?.message || 'No se pudo enviar.' }); }
+    } catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.sendFailed') }); }
     finally { setBusy(false); }
   };
 
@@ -219,33 +196,29 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
     setBusy(true);
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
-      // Set the signed cookie so the gate skips, then navigate.
-      // Cookie is httpOnly when set by the server, but here we set it
-      // client-side as a regular cookie — same value, same name. The
-      // public route accepts either form (it only reads the value).
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
       window.open(d.viewUrl + '#report=' + encodeURIComponent(r.id), '_blank', 'noopener');
-    } catch (e) { setMsg({ kind: 'err', text: e?.message || 'No se pudo abrir vista previa.' }); }
+    } catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') }); }
     finally { setBusy(false); }
   };
 
   const remove = async (r) => {
-    if (!confirm(`Eliminar permanentemente el informe ${r.period_label}?`)) return;
+    if (!confirm(t('owner.customer.bookkeeping.confirm.delete', { period: r.period_label }))) return;
     setBusy(true);
     try { await taxApi.adminDeleteFinancialReport(auth, r.id); load(); }
-    catch (e) { setMsg({ kind: 'err', text: e?.message || 'No se pudo eliminar.' }); }
+    catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.deleteFailed') }); }
     finally { setBusy(false); }
   };
 
-  if (!reports) return <section className="tax-card" style={{ marginTop: 24 }}><p>Cargando informes…</p></section>;
+  if (!reports) return <section className="tax-card" style={{ marginTop: 24 }}><p>{t('owner.customer.bookkeeping.loading')}</p></section>;
 
   return (
     <section className="tax-card" style={{ marginTop: 24 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
-        <h3 style={{ margin: 0 }}>Informes de contabilidad (P&amp;L + Balance)</h3>
+        <h3 style={{ margin: 0 }}>{t('owner.customer.bookkeeping.heading')}</h3>
         {!creating && !editingId && (
           <button type="button" className="tax-btn tax-btn--primary" onClick={startCreate} disabled={busy}>
-            + Nuevo informe
+            {t('owner.customer.bookkeeping.newBtn')}
           </button>
         )}
       </div>
@@ -258,19 +231,19 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
       )}
 
       {(creating || editingId) && (
-        <ReportForm form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} editing={!!editingId} />
+        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy} editing={!!editingId} />
       )}
 
       {!creating && !editingId && (
         <>
           {reports.length === 0 ? (
             <p style={{ color: 'var(--tax-muted)', fontSize: 14, margin: '8px 0 0' }}>
-              Aún no hay informes para este cliente. Haga clic en <strong>+ Nuevo informe</strong> para crear el primero.
+              {t('owner.customer.bookkeeping.empty')}
             </p>
           ) : (
             <div style={{ marginTop: 8 }}>
               {reports.map(r => (
-                <ReportRow key={r.id} r={r}
+                <ReportRow key={r.id} r={r} t={t} locale={locale}
                   onEdit={() => startEdit(r)}
                   onPublish={() => publish(r)}
                   onSend={() => send(r, false)}
@@ -284,9 +257,9 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
           )}
           {accessToken && (
             <div style={{ marginTop: 12, fontSize: 12, color: 'var(--tax-muted)' }}>
-              Enlace del cliente provisionado el {fmtDate(accessToken.created_at)}.
-              {accessToken.last_used_at && <> Último acceso: {fmtDate(accessToken.last_used_at)}.</>}
-              {accessToken.revoked_at && <> <strong style={{ color: '#b91c1c' }}>Revocado.</strong></>}
+              {t('owner.customer.bookkeeping.linkProvisioned', { date: fmtDate(accessToken.created_at, locale) })}
+              {accessToken.last_used_at && <> {t('owner.customer.bookkeeping.lastAccess', { date: fmtDate(accessToken.last_used_at, locale) })}</>}
+              {accessToken.revoked_at && <> <strong style={{ color: '#b91c1c' }}>{t('owner.customer.bookkeeping.revoked')}</strong></>}
             </div>
           )}
         </>
@@ -295,9 +268,9 @@ export default function BookkeepingReportsSection({ auth, customerId, customer }
   );
 }
 
-function ReportRow({ r, onEdit, onPublish, onSend, onResend, onPreview, onDelete, busy }) {
-  const badge = STATUS_BADGE[r.status] || STATUS_BADGE.draft;
-  const pl = r.pl_data || {};
+function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPreview, onDelete, busy }) {
+  const style = STATUS_STYLE[r.status] || STATUS_STYLE.draft;
+  const statusLabel = t(`owner.customer.bookkeeping.status.${r.status}`);
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
@@ -310,150 +283,162 @@ function ReportRow({ r, onEdit, onPublish, onSend, onResend, onPreview, onDelete
           <span style={{
             display: 'inline-block', padding: '2px 8px', borderRadius: 999,
             fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
-            background: badge.bg, color: badge.color,
-          }}>{badge.label}</span>
+            background: style.bg, color: style.color,
+          }}>{statusLabel}</span>
           {r.revision > 1 && (
-            <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Rev. {r.revision}</span>
+            <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>{t('owner.customer.bookkeeping.row.revision', { n: r.revision })}</span>
           )}
         </div>
         <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>
-          {fmtDate(r.period_start)} – {fmtDate(r.period_end)}
-          {r.published_at && <> · Publicado {fmtDate(r.published_at)}</>}
-          {r.first_sent_at && <> · Enviado {fmtDate(r.first_sent_at)}{r.send_count > 1 ? ` (×${r.send_count})` : ''}</>}
+          {fmtDate(r.period_start, locale)} – {fmtDate(r.period_end, locale)}
+          {r.published_at && <> · {t('owner.customer.bookkeeping.row.published', { date: fmtDate(r.published_at, locale) })}</>}
+          {r.first_sent_at && (
+            <> · {r.send_count > 1
+              ? t('owner.customer.bookkeeping.row.sentMulti', { date: fmtDate(r.first_sent_at, locale), n: r.send_count })
+              : t('owner.customer.bookkeeping.row.sentOnce', { date: fmtDate(r.first_sent_at, locale) })}</>
+          )}
         </div>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {r.status === 'draft' && (
-          <button type="button" className="tax-btn tax-btn--primary" onClick={onPublish} disabled={busy}>Publicar</button>
+          <button type="button" className="tax-btn tax-btn--primary" onClick={onPublish} disabled={busy}>{t('owner.customer.bookkeeping.action.publish')}</button>
         )}
         {r.status === 'published' && (
           <>
-            <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>Vista previa</button>
-            <button type="button" className="tax-btn tax-btn--primary" onClick={onSend} disabled={busy}>Enviar</button>
+            <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>{t('owner.customer.bookkeeping.action.preview')}</button>
+            <button type="button" className="tax-btn tax-btn--primary" onClick={onSend} disabled={busy}>{t('owner.customer.bookkeeping.action.send')}</button>
           </>
         )}
         {r.status === 'sent' && (
           <>
-            <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>Vista previa</button>
-            <button type="button" className="tax-btn" onClick={onResend} disabled={busy}>Reenviar</button>
+            <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>{t('owner.customer.bookkeeping.action.preview')}</button>
+            <button type="button" className="tax-btn" onClick={onResend} disabled={busy}>{t('owner.customer.bookkeeping.action.resend')}</button>
           </>
         )}
-        <button type="button" className="tax-btn tax-btn--ghost" onClick={onEdit} disabled={busy}>Editar</button>
+        <button type="button" className="tax-btn tax-btn--ghost" onClick={onEdit} disabled={busy}>{t('owner.customer.bookkeeping.action.edit')}</button>
         {r.status !== 'sent' && (
           <button type="button" className="tax-btn tax-btn--ghost" onClick={onDelete}
-                  disabled={busy} style={{ color: '#b91c1c' }}>Eliminar</button>
+                  disabled={busy} style={{ color: '#b91c1c' }}>{t('owner.customer.bookkeeping.action.delete')}</button>
         )}
       </div>
     </div>
   );
 }
 
-function ReportForm({ form, setForm, onSave, onCancel, busy, editing }) {
+function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing }) {
   const set = (k, v) => setForm({ ...form, [k]: v });
-  const InputCell = ({ k, label, prefix = 'rev_' }) => (
-    <div style={{ display: 'grid', gap: 4 }}>
-      <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
-      <input type="number" inputMode="decimal" step="0.01"
-             value={form[`${prefix}${k}`]}
-             onChange={e => set(`${prefix}${k}`, e.target.value)}
-             placeholder="0.00"
-             style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13, fontVariantNumeric: 'tabular-nums' }} />
-    </div>
-  );
-
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa' }}>
-      <h4 style={{ margin: '0 0 12px' }}>{editing ? 'Editar informe' : 'Nuevo informe'}</h4>
+      <h4 style={{ margin: '0 0 12px' }}>{t(editing ? 'owner.customer.bookkeeping.form.heading.edit' : 'owner.customer.bookkeeping.form.heading.create')}</h4>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 16 }}>
-        <div style={{ display: 'grid', gap: 4 }}>
-          <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>Período (ej. H1 2025)</label>
+        <Field label={t('owner.customer.bookkeeping.form.period')}>
           <input type="text" value={form.period_label} onChange={e => set('period_label', e.target.value)}
-                 placeholder="H1 2025"
-                 style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-        </div>
-        <div style={{ display: 'grid', gap: 4 }}>
-          <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>Fecha inicial</label>
-          <input type="date" value={form.period_start} onChange={e => set('period_start', e.target.value)}
-                 style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-        </div>
-        <div style={{ display: 'grid', gap: 4 }}>
-          <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>Fecha final</label>
-          <input type="date" value={form.period_end} onChange={e => set('period_end', e.target.value)}
-                 style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-        </div>
-        <div style={{ display: 'grid', gap: 4 }}>
-          <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>Cadencia</label>
-          <select value={form.cadence} onChange={e => set('cadence', e.target.value)}
-                  style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }}>
-            <option value="semi_annual">Semestral</option>
-            <option value="annual">Anual</option>
-            <option value="quarterly">Trimestral</option>
-            <option value="custom">Personalizado</option>
+                 placeholder={t('owner.customer.bookkeeping.form.periodPlaceholder')}
+                 style={inputStyle} />
+        </Field>
+        <Field label={t('owner.customer.bookkeeping.form.start')}>
+          <input type="date" value={form.period_start} onChange={e => set('period_start', e.target.value)} style={inputStyle} />
+        </Field>
+        <Field label={t('owner.customer.bookkeeping.form.end')}>
+          <input type="date" value={form.period_end} onChange={e => set('period_end', e.target.value)} style={inputStyle} />
+        </Field>
+        <Field label={t('owner.customer.bookkeeping.form.cadence')}>
+          <select value={form.cadence} onChange={e => set('cadence', e.target.value)} style={inputStyle}>
+            <option value="semi_annual">{t('owner.customer.bookkeeping.form.cadence.semi_annual')}</option>
+            <option value="annual">{t('owner.customer.bookkeeping.form.cadence.annual')}</option>
+            <option value="quarterly">{t('owner.customer.bookkeeping.form.cadence.quarterly')}</option>
+            <option value="custom">{t('owner.customer.bookkeeping.form.cadence.custom')}</option>
           </select>
-        </div>
+        </Field>
       </div>
 
-      <FormGroup title="Ingresos por canal">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          {FIELD_GROUPS.revenue.map(([k, label]) => <InputCell key={k} k={k} label={label} prefix="rev_" />)}
-        </div>
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.revenue')}>
+        <NumericGrid>
+          {REVENUE_KEYS.map(k => (
+            <Field key={k} label={t(`owner.customer.bookkeeping.channel.${k}`)}>
+              <NumericInput value={form[`rev_${k}`]} onChange={v => set(`rev_${k}`, v)} />
+            </Field>
+          ))}
+        </NumericGrid>
       </FormGroup>
 
-      <FormGroup title="Costo de bienes vendidos (COGS) e impuesto a las ventas">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          <div style={{ display: 'grid', gap: 4 }}>
-            <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>COGS total</label>
-            <input type="number" inputMode="decimal" step="0.01"
-                   value={form.cogs} onChange={e => set('cogs', e.target.value)} placeholder="0.00"
-                   style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-          </div>
-          <div style={{ display: 'grid', gap: 4 }}>
-            <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>Impuesto a las ventas recaudado</label>
-            <input type="number" inputMode="decimal" step="0.01"
-                   value={form.sales_tax_collected} onChange={e => set('sales_tax_collected', e.target.value)} placeholder="0.00"
-                   style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-          </div>
-          <div style={{ display: 'grid', gap: 4 }}>
-            <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>Impuesto a las ventas remitido</label>
-            <input type="number" inputMode="decimal" step="0.01"
-                   value={form.sales_tax_remitted} onChange={e => set('sales_tax_remitted', e.target.value)} placeholder="0.00"
-                   style={{ padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-          </div>
-        </div>
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.cogs')}>
+        <NumericGrid>
+          <Field label={t('owner.customer.bookkeeping.form.field.cogs')}>
+            <NumericInput value={form.cogs} onChange={v => set('cogs', v)} />
+          </Field>
+          <Field label={t('owner.customer.bookkeeping.form.field.salesTaxCollected')}>
+            <NumericInput value={form.sales_tax_collected} onChange={v => set('sales_tax_collected', v)} />
+          </Field>
+          <Field label={t('owner.customer.bookkeeping.form.field.salesTaxRemitted')}>
+            <NumericInput value={form.sales_tax_remitted} onChange={v => set('sales_tax_remitted', v)} />
+          </Field>
+        </NumericGrid>
       </FormGroup>
 
-      <FormGroup title="Gastos operativos">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          {FIELD_GROUPS.expenses.map(([k, label]) => <InputCell key={k} k={k} label={label} prefix="exp_" />)}
-        </div>
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.expenses')}>
+        <NumericGrid>
+          {EXPENSE_KEYS.map(k => (
+            <Field key={k} label={t(`owner.customer.bookkeeping.expense.${k}`)}>
+              <NumericInput value={form[`exp_${k}`]} onChange={v => set(`exp_${k}`, v)} />
+            </Field>
+          ))}
+        </NumericGrid>
       </FormGroup>
 
-      <FormGroup title="Balance general (al final del período)">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-          {FIELD_GROUPS.balance.map(([k, label]) => <InputCell key={k} k={k} label={label} prefix="bal_" />)}
-        </div>
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.balance')}>
+        <NumericGrid>
+          {BALANCE_KEYS.map(k => (
+            <Field key={k} label={t(`owner.customer.bookkeeping.balance.${k}`)}>
+              <NumericInput value={form[`bal_${k}`]} onChange={v => set(`bal_${k}`, v)} />
+            </Field>
+          ))}
+        </NumericGrid>
       </FormGroup>
 
-      <FormGroup title="Notas internas (opcional)">
+      <FormGroup title={t('owner.customer.bookkeeping.form.group.notes')}>
         <textarea value={form.notes} onChange={e => set('notes', e.target.value)}
-                  rows={2} placeholder="Notas que solo verá el equipo."
+                  rows={2} placeholder={t('owner.customer.bookkeeping.form.field.notes.placeholder')}
                   style={{ width: '100%', padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
       </FormGroup>
 
-      <Totals form={form} />
+      <Totals form={form} t={t} />
 
       <div style={{ marginTop: 14, padding: '10px 12px', background: '#fef3c7', borderLeft: '3px solid #b45309', borderRadius: 6, fontSize: 13, color: '#78350f' }}>
-        <strong>Verifique antes de publicar.</strong> Los números que ingrese aquí son los que verá su cliente en el panel y en el correo. Confirme que coinciden con los PDFs originales.
+        {t('owner.customer.bookkeeping.form.verifyBanner')}
       </div>
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-        <button type="button" className="tax-btn tax-btn--ghost" onClick={onCancel} disabled={busy}>Cancelar</button>
+        <button type="button" className="tax-btn tax-btn--ghost" onClick={onCancel} disabled={busy}>{t('owner.customer.bookkeeping.action.cancel')}</button>
         <button type="button" className="tax-btn tax-btn--primary" onClick={onSave} disabled={busy}>
-          {busy ? 'Guardando…' : (editing ? 'Guardar cambios' : 'Guardar borrador')}
+          {busy
+            ? t('owner.customer.bookkeeping.action.saving')
+            : t(editing ? 'owner.customer.bookkeeping.action.saveChanges' : 'owner.customer.bookkeeping.action.saveDraft')}
         </button>
       </div>
     </div>
+  );
+}
+
+const inputStyle = { padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 };
+
+function Field({ label, children }) {
+  return (
+    <div style={{ display: 'grid', gap: 4 }}>
+      <label style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
+function NumericGrid({ children }) {
+  return <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>{children}</div>;
+}
+function NumericInput({ value, onChange }) {
+  return (
+    <input type="number" inputMode="decimal" step="0.01"
+           value={value} onChange={e => onChange(e.target.value)} placeholder="0.00"
+           style={{ ...inputStyle, fontVariantNumeric: 'tabular-nums' }} />
   );
 }
 
@@ -468,17 +453,18 @@ function FormGroup({ title, children }) {
   );
 }
 
-function Totals({ form }) {
+function Totals({ form, t }) {
   const payload = formToPayload(form);
   const pl = payload.pl_data;
+  const opex = Object.values(pl.expenses).reduce((s, v) => s + v, 0);
   return (
     <div style={{ marginTop: 14, padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-        <Total label="Ingresos" value={pl.total_income - pl.sales_tax_collected} />
-        <Total label="COGS" value={pl.cogs} />
-        <Total label="Utilidad bruta" value={pl.gross_profit} />
-        <Total label="Gastos op." value={Object.values(pl.expenses).reduce((s, v) => s + v, 0)} />
-        <Total label="Utilidad neta" value={pl.net_income} bold />
+        <Total label={t('owner.customer.bookkeeping.form.totals.revenue')}     value={pl.total_income - pl.sales_tax_collected} />
+        <Total label={t('owner.customer.bookkeeping.form.totals.cogs')}        value={pl.cogs} />
+        <Total label={t('owner.customer.bookkeeping.form.totals.grossProfit')} value={pl.gross_profit} />
+        <Total label={t('owner.customer.bookkeeping.form.totals.opex')}        value={opex} />
+        <Total label={t('owner.customer.bookkeeping.form.totals.netIncome')}   value={pl.net_income} bold />
       </div>
     </div>
   );
