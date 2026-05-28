@@ -91,8 +91,16 @@ const RE = {
   netOtherIncome:        /^Net\s+Other\s+Income$/i,
   netIncome:             /^Net\s+Income$/i,
 
-  // Page chrome that should never count as a section / item.
-  pageHeader: /^(\d{1,2}:\d{2}\s*[AP]M|\d{1,2}\/\d{1,2}\/\d{2,4}|Accrual\s+Basis|Cash\s+Basis|Page\s+\d+|Profit\s*&?\s*Loss)$/i,
+  // Page chrome that should never count as a section / item. QB
+  // exports repeat this header on every page; the time + date stamp
+  // can also collide with the company name on a single text-stream
+  // line, so we drop anything CONTAINING these markers, not just
+  // lines that start with them.
+  pageHeaderContains: /\d{1,2}:\d{2}\s*[AP]M|\d{1,2}\/\d{1,2}\/\d{2,4}|Accrual\s+Basis|Cash\s+Basis|Profit\s*&\s*Loss|Page\s+\d+\s*$/i,
+  // The period-label header at the top of each page (e.g.
+  // "January through December 2025" or "Jan - Dec 25"). Drop
+  // standalone date-range labels; never an item.
+  periodLabel: /^(?:[A-Z][a-z]+\s+through\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]{2,8}\s*[-–]\s*[A-Z][a-z]{2,8}\s*\d{2,4}|\d{4})$/,
 };
 
 function newSection() { return { groups: [], total: null }; }
@@ -155,11 +163,8 @@ function parseDynamic(text) {
   };
 
   for (const line of lines) {
-    if (RE.pageHeader.test(line)) continue;
-    // Per-page company-name header line: skip anything that's the
-    // company name (looks like words with no amount and no leading
-    // structural keyword). Cheap heuristic: skip lines that match
-    // page chrome from above; everything else is in scope.
+    if (RE.pageHeaderContains.test(line)) continue;
+    if (RE.periodLabel.test(line)) continue;
 
     const m = AMOUNT_AT_END.exec(line);
     const hasAmount = !!m;
@@ -411,10 +416,13 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     out.debug.warnings = out.pl.debug.warnings || [];
   }
 
-  if (out.debug.matched === 0) {
-    out.debug.textSample = text.slice(0, 1200);
-    out.debug.markersFound = { hasPl, hasBalance };
-  }
+  // Always carry the first 1500 chars of extracted text + the marker
+  // hits in debug. The server-side route streams these into Render
+  // logs when the parse looks wrong (zero matches OR rollup warnings)
+  // so the regexes can be tuned against the actual pdf-parse output
+  // without another deploy cycle.
+  out.debug.textSample = text.slice(0, 1500);
+  out.debug.markersFound = { hasPl, hasBalance };
   return out;
 }
 

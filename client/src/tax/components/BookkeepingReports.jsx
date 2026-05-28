@@ -753,12 +753,28 @@ function Total({ label, value, bold }) {
 
 function PdfDrop({ label, onPick, busy }) {
   const inputId = `pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`;
+  // Track the most recent filename so the input doesn't reset to
+  // "No file chosen" after an upload — that read as a bug to several
+  // users mid-test (they thought the upload didn't take). We DO clear
+  // the input's `.value` once parsing finishes so they can re-upload
+  // the same file if the parse goes wrong; the chosen-filename text
+  // below stays so they know which file is associated with the slot.
+  const [pickedName, setPickedName] = useState('');
   return (
     <div style={{ display: 'grid', gap: 4 }}>
       <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
       <input id={inputId} type="file" accept="application/pdf,.pdf" disabled={busy}
-             onChange={e => { const f = e.target.files && e.target.files[0]; if (f) onPick(f); e.target.value = ''; }}
+             onChange={e => {
+               const f = e.target.files && e.target.files[0];
+               if (f) { setPickedName(f.name); onPick(f); }
+               e.target.value = '';
+             }}
              style={{ padding: '8px', border: '1px dashed var(--tax-border)', borderRadius: 6, background: '#fff', fontSize: 13 }} />
+      {pickedName && (
+        <div style={{ fontSize: 11, color: '#0f766e' }} title={pickedName}>
+          ✓ {pickedName.length > 38 ? pickedName.slice(0, 35) + '…' : pickedName}
+        </div>
+      )}
     </div>
   );
 }

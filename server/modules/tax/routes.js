@@ -11970,13 +11970,20 @@ module.exports = function createTaxRouter(deps) {
     // log so we can tune regexes against what pdf-parse actually
     // produced for this customer's QB output. Owner-only path, so PII
     // exposure is bounded to admin logs.
-    if (parsed?.debug?.matched === 0) {
+    // Stream the extracted text + diagnostic stats to Render whenever
+    // the parse looks suspicious — zero matches, or rollups didn't
+    // balance. Lets the operator open Logs and post the textSample
+    // back here so a regex can be tuned against the real pdf-parse
+    // output for this specific file.
+    const hasWarnings = (parsed?.debug?.warnings || []).length > 0;
+    if (parsed?.debug?.matched === 0 || hasWarnings) {
       try {
-        warn('[bookkeeping-parser] zero matches', {
+        warn('[bookkeeping-parser]', parsed?.debug?.matched === 0 ? 'zero matches' : 'rollup warnings', {
           reportId: id, kind,
           detectedType: parsed?.debug?.detectedType,
           characters: parsed?.debug?.characters,
           markersFound: parsed?.debug?.markersFound,
+          warnings: parsed?.debug?.warnings,
           textSample: parsed?.debug?.textSample,
         });
       } catch (_e) {}
