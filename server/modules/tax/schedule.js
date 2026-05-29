@@ -211,12 +211,17 @@ function annual(rule, refIso, refYear, limit, lang) {
     }
   }
   if (!p) return [];
+  // taxYearOffset: how many years to subtract from the due year to get the
+  // label year. Default -1 (prior-year coverage, e.g. 1040 due Apr 2026
+  // covers Tax Year 2025). Use 0 for same-year coverage — e.g. the H1
+  // bookkeeping report due Jul 31, 2026 covers Jan–Jun 2026 (Tax Year 2026).
+  const taxYearOffset = rule.taxYearOffset !== undefined ? Number(rule.taxYearOffset) : -1;
   const out = [];
   for (let year = refYear; year < refYear + 4 && out.length < limit; year++) {
     const day = Math.min(p.day, lastDayOfMonth(year, p.month));
     const due = ymd(year, p.month, day);
     if (due >= refIso) {
-      const taxYear = year - 1;
+      const taxYear = year + taxYearOffset;
       out.push({
         dueDate: due,
         periodStart: ymd(taxYear, 1, 1),

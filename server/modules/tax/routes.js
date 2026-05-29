@@ -1189,11 +1189,10 @@ module.exports = function createTaxRouter(deps) {
       seenScheduleIds.add(sched.id);
 
       const periods = generateSchedulePeriods(sched.anchor_rule, todayIso, 24, {
-        lang: cust.locale === 'en' ? 'en' : 'es',
+        lang: 'en',
       });
       const scheduleName =
-        sched.name_i18n?.[cust.locale === 'en' ? 'en' : 'es']
-        || sched.name_i18n?.en || sched.name_i18n?.es || sched.slug;
+        sched.name_i18n?.en || sched.name_i18n?.es || sched.slug;
 
       const isAutoTask = sched.source === 'auto_task';
       const isProductCadence = sched.source === 'product_cadence';
@@ -1486,10 +1485,9 @@ module.exports = function createTaxRouter(deps) {
     for (const at of autoTasks || []) {
       if (!at.cadence_kind || at.cadence_kind === 'none') continue;
       const periods = generateSchedulePeriods(at.anchor_rule, todayIso, 24, {
-        lang: cust.locale === 'en' ? 'en' : 'es',
+        lang: 'en',
       });
-      const titleBase = at.title_i18n?.[cust.locale === 'en' ? 'en' : 'es']
-                     || at.title_i18n?.en || at.title_i18n?.es || 'Auto task';
+      const titleBase = at.title_i18n?.en || at.title_i18n?.es || 'Auto task';
       const rows = [];
       for (const p of periods) {
         if (!p.dueDate) continue;

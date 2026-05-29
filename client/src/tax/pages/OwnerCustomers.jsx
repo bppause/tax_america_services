@@ -504,7 +504,9 @@ export default function OwnerCustomers() {
           {addMsg.text && (
             <div className={`tax-msg tax-msg--${addMsg.kind === 'error' ? 'error' : 'success'}`}>{addMsg.text}</div>
           )}
-          <button type="submit" className="tax-btn tax-btn--primary" disabled={busyAdd}>
+          <button type="submit" className="tax-btn tax-btn--primary"
+                  disabled={busyAdd || form.relationshipTypeIds.length === 0}
+                  title={form.relationshipTypeIds.length === 0 ? t('owner.customers.errServiceRequired') : undefined}>
             {busyAdd ? t('lead.submitting') : t('owner.customers.createBtn')}
           </button>
         </form>
