@@ -2026,6 +2026,7 @@
   "owner.customer.bookkeeping.msg.saveDraftFirst": "Save the report draft first.",
   "owner.customer.bookkeeping.msg.fillPeriodFirst": "Fill in the period label, start date, and end date before uploading a file.",
   "owner.customer.bookkeeping.msg.autoSaving": "Saving draft…",
+  "owner.customer.bookkeeping.pdf.detectedType": "Detected type",
   "owner.customer.bookkeeping.pdf.mismatch.title": "Company name mismatch — double-check this is the right file",
   "owner.customer.bookkeeping.pdf.mismatch.pdf": "In PDF",
   "owner.customer.bookkeeping.pdf.mismatch.contact": "Contact name",

@@ -494,7 +494,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         }
         return merged;
       });
-      setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch } }));
+      setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch, detectedType: dbg.detectedType || null } }));
       if (dbg.detectedType === 'unknown' && (dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.notRecognized', { kind }) });
       } else if ((dbg.matched || 0) === 0) {
@@ -702,8 +702,8 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pdfs')}>
         {editing ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} fileName={pdfMeta?.pl?.fileName} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} contactName={contactName} />
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} fileName={pdfMeta?.balance?.fileName} companyName={pdfMeta?.balance?.companyName} mismatch={pdfMeta?.balance?.mismatch} contactName={contactName} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      slotKind="pl"      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} fileName={pdfMeta?.pl?.fileName} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} contactName={contactName} detectedType={pdfMeta?.pl?.detectedType} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} slotKind="balance" onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} fileName={pdfMeta?.balance?.fileName} companyName={pdfMeta?.balance?.companyName} mismatch={pdfMeta?.balance?.mismatch} contactName={contactName} detectedType={pdfMeta?.balance?.detectedType} />
           </div>
         ) : (
           <div style={{ padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13, color: '#475569' }}>
@@ -987,9 +987,17 @@ function Total({ label, value, bold }) {
   );
 }
 
-function PdfDrop({ label, onPick, onReset, busy, t, fileName, companyName, mismatch, contactName }) {
+function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyName, mismatch, contactName, detectedType }) {
   const inputId = useRef(`pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`).current;
   const showCard = fileName || contactName;
+  // Detected type label + whether it matches the slot.
+  const typeLabel = detectedType === 'pl' ? t('owner.customer.bookkeeping.pdf.pl')
+    : detectedType === 'balance' ? t('owner.customer.bookkeeping.pdf.balance')
+    : null;
+  const typeMatch = detectedType && slotKind && (
+    (slotKind === 'pl' && detectedType === 'pl') ||
+    (slotKind === 'balance' && detectedType === 'balance')
+  );
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
@@ -997,9 +1005,17 @@ function PdfDrop({ label, onPick, onReset, busy, t, fileName, companyName, misma
       {showCard && (
         <div style={{ padding: '8px 10px', background: mismatch ? '#fef9ec' : '#f8fafc', border: `1px solid ${mismatch ? '#d97706' : '#e2e8f0'}`, borderRadius: 6, fontSize: 12 }}>
           {fileName && (
-            <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all', marginBottom: 6 }}>{fileName}</div>
+            <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all', marginBottom: 4 }}>{fileName}</div>
           )}
           <div style={{ display: 'grid', gap: 2 }}>
+            {typeLabel && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginBottom: 2 }}>
+                <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.detectedType')}</span>
+                <span style={{ fontWeight: 600, color: typeMatch ? '#15803d' : '#b45309' }}>
+                  {typeMatch ? '✓' : '⚠'} {typeLabel}
+                </span>
+              </div>
+            )}
             {companyName && (
               <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                 <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>{t('owner.customer.bookkeeping.pdf.mismatch.pdf')}</span>

@@ -2025,6 +2025,7 @@
   "owner.customer.bookkeeping.msg.saveDraftFirst": "Guarde el borrador del informe primero.",
   "owner.customer.bookkeeping.msg.fillPeriodFirst": "Complete el período, fecha de inicio y fecha de fin antes de subir un archivo.",
   "owner.customer.bookkeeping.msg.autoSaving": "Guardando borrador…",
+  "owner.customer.bookkeeping.pdf.detectedType": "Tipo detectado",
   "owner.customer.bookkeeping.pdf.mismatch.title": "El nombre de la empresa no coincide — verifique que es el archivo correcto",
   "owner.customer.bookkeeping.pdf.mismatch.pdf": "En el PDF",
   "owner.customer.bookkeeping.pdf.mismatch.contact": "Nombre del contacto",

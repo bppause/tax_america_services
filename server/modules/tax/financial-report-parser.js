@@ -1,5 +1,7 @@
 'use strict';
 
+const { log, warn } = require('../../logger');
+
 // Phase 4n.74: bookkeeping PDF parser — dynamic section walker.
 //
 // Earlier iterations mapped specific QuickBooks labels to a fixed set
@@ -431,11 +433,20 @@ function parseBalance(text) {
 // row as the timestamp (e.g. "9:23 AM  Sabor Latino Restaurant"). When that
 // pattern is found we strip the timestamp prefix; otherwise we take the first
 // non-header line that contains letters.
+function cleanCompanyName(s) {
+  if (!s) return s;
+  // Strip trailing column-period headers that may have merged onto the same spatial line.
+  // e.g. "DBA Sabor Latino & Deli INC  Jan - Dec 25"  →  "DBA Sabor Latino & Deli INC"
+  s = s.replace(/\s+(TOTAL|AMOUNT|BALANCE|NET|GROSS|SUBTOTAL)\s*$/i, '').trim();
+  s = s.replace(/\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[\s\-–]+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s*\d{2,4}\s*$/i, '').trim();
+  s = s.replace(/\s+As\s+of\s+.+$/i, '').trim();
+  return s || null;
+}
+
 function extractCompanyName(text) {
   const lines = String(text || '').split(/\r?\n/).slice(0, 40);
   const REPORT_HDR = /Accrual\s+Basis|Cash\s+Basis|Profit\s*[&\/]\s*Loss|Balance\s+Sheet|Page\s+\d+|Estado\s+de\s+Resultados|Balance\s+General|P[eé]rdidas\s+y\s+Ganancias/i;
   const DATE_RANGE = /^(?:[A-Z][a-z]+\s+through\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]{2,8}\s*[-–]\s*[A-Z][a-z]{2,8}\s*\d{2,4}|\d{4})$/;
-  // Short all-caps tokens are QB column/table headers (TOTAL, AMOUNT, etc.), not company names.
   const QB_COL_HDR = /^(TOTAL|AMOUNT|BALANCE|NET|GROSS|SUBTOTAL|INCOME|EXPENSE|EXPENSES|PROFIT|LOSS|REVENUE|COST|ASSETS|LIABILITIES|EQUITY|CASH)$/;
 
   function isJunk(l) {
@@ -454,9 +465,8 @@ function extractCompanyName(text) {
     if (!trimmed) continue;
     const m = trimmed.match(/^\d{1,2}:\d{2}\s*[AP]M\s+(.+)$/i);
     if (m) {
-      // Strip trailing QB column header that may have been merged onto the same line.
-      const candidate = m[1].trim().replace(/\s+(TOTAL|AMOUNT|BALANCE|NET|GROSS|SUBTOTAL)\s*$/i, '').trim();
-      if (!/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(candidate) && /[A-Za-z]/.test(candidate) && candidate.length > 3) {
+      const candidate = cleanCompanyName(m[1].trim());
+      if (candidate && !/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(candidate) && /[A-Za-z]/.test(candidate) && candidate.length > 3) {
         return candidate;
       }
     }
@@ -473,12 +483,12 @@ function extractCompanyName(text) {
       for (let j = i + 1; j < Math.min(i + 3, lines.length); j++) {
         const next = lines[j].trim();
         if (!next) continue;
-        if (!isJunk(next) && /[A-Za-z]/.test(next)) return next;
+        if (!isJunk(next) && /[A-Za-z]/.test(next)) return cleanCompanyName(next);
       }
       continue;
     }
     if (isJunk(l)) continue;
-    if (/[A-Za-z]/.test(l)) return l;
+    if (/[A-Za-z]/.test(l)) return cleanCompanyName(l);
   }
   return null;
 }
@@ -507,6 +517,8 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
     return out;
   }
   out.companyName = extractCompanyName(text);
+  log('[pdf-parser] kind=%s companyName=%s first300=%s',
+    kind, JSON.stringify(out.companyName), JSON.stringify(text.slice(0, 300)));
   const hasPl = PL_MARKERS.test(text);
   const hasBalance = BALANCE_MARKERS.test(text);
   out.debug.detectedType =
