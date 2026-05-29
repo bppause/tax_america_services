@@ -93,7 +93,11 @@ function parseAmount(s) {
   return negative ? -n : n;
 }
 
+// Space-delimited (PDF text stream) and tab-delimited (xlsx export) forms.
+// The tab form is tried first to avoid ambiguity when account names
+// contain numbers (e.g. "Deposit 8222" vs actual amount "173568.15").
 const AMOUNT_AT_END = /^(.*?)\s+([\-(]?\$?[\d.,]+\)?)\s*$/;
+const AMOUNT_AT_END_TAB = /^(.*?)\t([\-(]?\$?[\d.,]+\)?)$/;
 
 // Matchers for the canonical structural anchors. The "Total <X>"
 // forms are matched separately from section headers because they
@@ -191,7 +195,7 @@ function parseDynamic(text) {
     if (RE.pageHeaderContains.test(line)) continue;
     if (RE.periodLabel.test(line)) continue;
 
-    const m = AMOUNT_AT_END.exec(line);
+    const m = AMOUNT_AT_END_TAB.exec(line) || AMOUNT_AT_END.exec(line);
     const hasAmount = !!m;
     const label = (hasAmount ? m[1] : line).trim();
     const amount = hasAmount ? parseAmount(m[2]) : null;

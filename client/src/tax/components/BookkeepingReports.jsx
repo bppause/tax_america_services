@@ -471,10 +471,14 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         load();
       }
       setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.uploading', { kind }) });
-      const sig = await taxApi.adminFinancialReportUploadUrl(auth, reportId, kind);
+      const fileType = file.name.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'pdf';
+      const mimeType = fileType === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/pdf';
+      const sig = await taxApi.adminFinancialReportUploadUrl(auth, reportId, kind, fileType);
       const putResp = await fetch(sig.uploadUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/pdf', 'x-upsert': 'true' },
+        headers: { 'Content-Type': mimeType, 'x-upsert': 'true' },
         body: file,
       });
       if (!putResp.ok) throw new Error(`Upload failed (${putResp.status}).`);
@@ -1056,7 +1060,7 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
       )}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input id={inputId} type="file" accept="application/pdf,.pdf" disabled={busy}
+        <input id={inputId} type="file" accept="application/pdf,.pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy}
                onChange={e => {
                  const f = e.target.files && e.target.files[0];
                  if (f) onPick(f);

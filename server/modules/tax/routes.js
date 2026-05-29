@@ -11923,6 +11923,7 @@ module.exports = function createTaxRouter(deps) {
     if (!actor) return;
     const id = trim(req.params.id, 200);
     const kind = (req.body && req.body.kind === 'balance') ? 'balance' : 'pl';
+    const fileType = (req.body && req.body.fileType === 'xlsx') ? 'xlsx' : 'pdf';
     const { data: rpt } = await supabase.from('tax_financial_reports')
       .select('id, community_id, customer_id, status').eq('id', id).maybeSingle();
     if (!rpt) return res.status(404).json({ error: 'Not found.' });
@@ -11931,7 +11932,7 @@ module.exports = function createTaxRouter(deps) {
     // cached in Supabase's CDN window, causing the parse step to read
     // stale data. The nonce makes every upload unique.
     const nonce = Date.now().toString(36);
-    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}_${nonce}.pdf`;
+    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}_${nonce}.${fileType}`;
     const pathCol = kind === 'balance' ? 'balance_pdf_path' : 'pl_pdf_path';
     const uploadPatch = { [pathCol]: path, updated_at: new Date().toISOString() };
     // Uploading a new PDF on a published or sent report resets to draft
@@ -11977,8 +11978,13 @@ module.exports = function createTaxRouter(deps) {
     }
     let parsed;
     try {
-      const { parsePdf } = require('./financial-report-parser');
-      parsed = await parsePdf(buffer, kind);
+      if (storedPath && storedPath.endsWith('.xlsx')) {
+        const { parseXlsx } = require('./financial-report-xlsx-parser');
+        parsed = await parseXlsx(buffer, kind);
+      } else {
+        const { parsePdf } = require('./financial-report-parser');
+        parsed = await parsePdf(buffer, kind);
+      }
     } catch (e) {
       return res.status(500).json({ error: 'parse_failed', message: e?.message || '' });
     }
