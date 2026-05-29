@@ -2988,7 +2988,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, local
                               borderRadius: 6, border: '1px solid var(--tax-border)',
                               borderLeft: `4px solid ${c.bar}`,
                             }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{tt.title}</div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{tt.title_i18n?.[locale] || tt.title_i18n?.[locale === 'en' ? 'es' : 'en'] || tt.title}</div>
                       {custName && (
                         <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
                           {custName}
