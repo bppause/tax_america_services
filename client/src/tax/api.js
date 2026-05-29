@@ -456,6 +456,7 @@ export const taxApi = {
   },
   adminCreateTask(auth, payload)              { return request('POST',   '/admin/tasks', payload, auth); },
   adminUpdateTask(auth, id, payload)          { return request('PATCH',  `/admin/tasks/${encodeURIComponent(id)}`, payload, auth); },
+  adminTranslateText(auth, payload)           { return request('POST',   '/admin/translate', payload, auth); },
   adminBulkUpdateTasks(auth, payload)         { return request('PATCH',  '/admin/tasks/bulk', payload, auth); },
   adminDeleteTask(auth, id)                   { return request('DELETE', `/admin/tasks/${encodeURIComponent(id)}`, undefined, auth); },
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },

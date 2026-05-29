@@ -859,6 +859,7 @@
   "owner.tasks.completeNotesPrompt": "Add a brief closing note before marking this task complete (what was done, dates filed, references, etc.):",
   "owner.tasks.completeNotesRequired": "A closing note is required to complete a task.",
   "owner.tasks.errTitle": "Task title is required.",
+  "owner.tasks.translating": "Translating…",
   "owner.tasks.showNotes": "Show notes",
   "owner.tasks.hideNotes": "Hide notes",
   "owner.tasks.filter.allStatuses": "All statuses",

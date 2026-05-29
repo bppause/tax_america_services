@@ -1072,6 +1072,7 @@ function TaskFormModal({
   const isEdit = mode === 'edit';
   const [titleEn, setTitleEn] = useState(isEdit ? (task.title_i18n?.en || task.title || '') : '');
   const [titleEs, setTitleEs] = useState(isEdit ? (task.title_i18n?.es || '') : '');
+  const [translating, setTranslating] = useState(false);
   const [customerId, setCustomerId] = useState(isEdit ? (task.customer_id || '') : '');
   const [productId, setProductId] = useState(isEdit ? (task.product_id || '') : '');
   const [productAutoFilledFor, setProductAutoFilledFor] = useState('');
@@ -1103,6 +1104,27 @@ function TaskFormModal({
       .catch(() => setSuggestions([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
+
+  // On edit-open, if one language title is missing translate from the other.
+  useEffect(() => {
+    if (!isEdit) return;
+    const enVal = task.title_i18n?.en || task.title || '';
+    const esVal = task.title_i18n?.es || '';
+    if (enVal && !esVal) {
+      setTranslating(true);
+      taxApi.adminTranslateText(auth, { text: enVal, fromLang: 'en', toLang: 'es' })
+        .then(r => { if (r.translated) setTitleEs(r.translated); })
+        .catch(() => {})
+        .finally(() => setTranslating(false));
+    } else if (esVal && !enVal) {
+      setTranslating(true);
+      taxApi.adminTranslateText(auth, { text: esVal, fromLang: 'es', toLang: 'en' })
+        .then(r => { if (r.translated) setTitleEn(r.translated); })
+        .catch(() => {})
+        .finally(() => setTranslating(false));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -1188,7 +1210,8 @@ function TaskFormModal({
             <input type="text"
                    value={locale === 'en' ? titleEn : titleEs}
                    onChange={e => locale === 'en' ? setTitleEn(e.target.value) : setTitleEs(e.target.value)}
-                   maxLength={300} list="task-suggestions" required autoFocus />
+                   maxLength={300} list="task-suggestions" required autoFocus
+                   placeholder={translating ? t('owner.tasks.translating') : undefined} />
             <datalist id="task-suggestions">
               {suggestions.map((s, i) => (
                 <option key={i} value={locale === 'en' ? (s.en || s.es || '') : (s.es || s.en || '')} />

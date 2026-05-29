@@ -6542,6 +6542,15 @@ module.exports = function createTaxRouter(deps) {
     res.json({ periods });
   });
 
+  // POST /admin/translate — translate a short string between 'en' and 'es'.
+  router.post('/admin/translate', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const { text, fromLang, toLang } = req.body || {};
+    if (!text || !fromLang || !toLang) return res.status(400).json({ error: 'text, fromLang, toLang required.' });
+    const translated = await translateText(String(text).slice(0, 500), fromLang, toLang);
+    res.json({ translated });
+  });
+
   // POST /admin/tasks — create.
   router.post('/admin/tasks', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;

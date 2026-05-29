@@ -858,6 +858,7 @@
   "owner.tasks.completeNotesPrompt": "Agrega una nota breve de cierre antes de marcar esta tarea como completa (qué se hizo, fechas presentadas, referencias, etc.):",
   "owner.tasks.completeNotesRequired": "Se requiere una nota de cierre para completar una tarea.",
   "owner.tasks.errTitle": "El título de la tarea es obligatorio.",
+  "owner.tasks.translating": "Traduciendo…",
   "owner.tasks.showNotes": "Ver notas",
   "owner.tasks.hideNotes": "Ocultar notas",
   "owner.tasks.filter.allStatuses": "Todos los estados",
