@@ -1117,16 +1117,27 @@ function TaskFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
 
-  // On edit-open, fill any blank language slot with the other language's value.
+  const [translating, setTranslating] = useState(false);
+
+  // On edit-open, translate any missing language title.
   useEffect(() => {
     if (!isEdit) return;
     const enStored = task.title_i18n?.en || '';
     const esStored = task.title_i18n?.es || '';
     if (!esStored) {
       const src = enStored || task.title || '';
-      if (src) setTitleEs(src);
+      if (!src) return;
+      setTranslating(true);
+      taxApi.adminTranslateText(auth, { text: src, fromLang: 'en', toLang: 'es' })
+        .then(r => { if (r.translated && r.translated !== src) setTitleEs(r.translated); })
+        .catch(() => {})
+        .finally(() => setTranslating(false));
     } else if (!enStored) {
-      setTitleEn(esStored);
+      setTranslating(true);
+      taxApi.adminTranslateText(auth, { text: esStored, fromLang: 'es', toLang: 'en' })
+        .then(r => { if (r.translated && r.translated !== esStored) setTitleEn(r.translated); })
+        .catch(() => {})
+        .finally(() => setTranslating(false));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1218,7 +1229,7 @@ function TaskFormModal({
                    value={locale === 'en' ? titleEn : titleEs}
                    onChange={e => locale === 'en' ? setTitleEn(e.target.value) : setTitleEs(e.target.value)}
                    maxLength={300} list="task-suggestions" required autoFocus
-                   />
+                   placeholder={translating ? t('owner.tasks.translating') : undefined} />
             <datalist id="task-suggestions">
               {suggestions.map((s, i) => (
                 <option key={i} value={locale === 'en' ? (s.en || s.es || '') : (s.es || s.en || '')} />
