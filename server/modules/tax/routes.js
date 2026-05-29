@@ -12016,8 +12016,8 @@ module.exports = function createTaxRouter(deps) {
       kind,
       pdfPath: path,
       parsed: kind === 'balance'
-        ? { balance: parsed.balance, debug: parsed.debug }
-        : { pl: parsed.pl, debug: parsed.debug },
+        ? { balance: parsed.balance, debug: parsed.debug, companyName: parsed.companyName }
+        : { pl: parsed.pl, debug: parsed.debug, companyName: parsed.companyName },
     });
   });
 
