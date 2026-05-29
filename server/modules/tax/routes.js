@@ -36,7 +36,7 @@ const {
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
 const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
 const { generateFaqsForService, inferRelationshipCategory } = require('./faq-autogen');
-const { translateText } = require('../../core/translate');
+const { translateText, buildTitleI18n } = require('../../core/translate');
 
 const TAX_BUSINESS_TYPE = 'tax';
 const MAX_TEXT_LEN = 4000;
@@ -6573,13 +6573,16 @@ module.exports = function createTaxRouter(deps) {
     (async () => {
       for (const task of toFill) {
         const i = task.title_i18n || {};
-        let es = (i.es || task.title || '').trim();
-        let en = (i.en || '').trim();
-        if (es && !en) { const r = await translateText(es, 'es', 'en'); en = (r && r !== es) ? r : ''; }
-        else if (en && !es) { const r = await translateText(en, 'en', 'es'); es = (r && r !== en) ? r : ''; }
-        if (en && es) {
+        const es = (i.es || '').trim();
+        const en = (i.en || '').trim();
+        // Use whichever language exists as the authoritative source.
+        // Old tasks had English titles stored in task.title.
+        const [activeLang, activeSrc] = es ? ['es', es] : ['en', en || task.title || ''];
+        if (!activeSrc) continue;
+        const built = await buildTitleI18n(activeLang, activeSrc);
+        if (built.en && built.es) {
           await supabase.from('tax_tasks')
-            .update({ title_i18n: { en, es } })
+            .update({ title_i18n: built })
             .eq('id', task.id);
         }
       }
@@ -6607,20 +6610,13 @@ module.exports = function createTaxRouter(deps) {
     const assignedTo  = trim(body.assignedEmployeeId || '', 200) || null;
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
-    const titleI18nRaw = body.titleI18n || {};
-    let titleEs = trim(titleI18nRaw.es || '', 300) || title;
-    let titleEn = trim(titleI18nRaw.en || '', 300);
-    if (!titleEn && titleEs) {
-      const r = await translateText(titleEs, 'es', 'en');
-      titleEn = (r && r !== titleEs) ? r : '';
-    }
-    if (!titleEs && titleEn) {
-      const r = await translateText(titleEn, 'en', 'es');
-      titleEs = (r && r !== titleEn) ? r : '';
-    }
+    // activeLocale tells us which language the user typed in — translate
+    // from that to keep both EN and ES stored and in sync.
+    const activeLocale = body.activeLocale === 'en' ? 'en' : 'es';
+    const activeTitle  = trim((body.titleI18n || {})[activeLocale] || '', 300) || title;
+    const titleI18n    = await buildTitleI18n(activeLocale, activeTitle);
 
     const id = 'task_' + uuidv4().slice(0, 16);
-    const titleI18n = { es: titleEs, ...(titleEn ? { en: titleEn } : {}) };
     const row = {
       id,
       community_id: communitySlug,
@@ -6674,17 +6670,11 @@ module.exports = function createTaxRouter(deps) {
     const update = { updated_at: new Date().toISOString() };
     if (body.title !== undefined) {
       update.title = trim(body.title, 300);
-      if (body.titleI18n && typeof body.titleI18n === 'object') {
-        let es = trim(body.titleI18n.es || '', 300) || update.title;
-        let en = trim(body.titleI18n.en || '', 300);
-        if (!en && es) { const r = await translateText(es, 'es', 'en'); en = (r && r !== es) ? r : ''; }
-        if (!es && en) { const r = await translateText(en, 'en', 'es'); es = (r && r !== en) ? r : ''; }
-        update.title_i18n = { es, ...(en ? { en } : {}) };
-      } else {
-        const r = await translateText(update.title, 'es', 'en');
-        const en = (r && r !== update.title) ? r : '';
-        update.title_i18n = { es: update.title, ...(en ? { en } : {}) };
-      }
+      // Translate from the locale the user was editing to keep both languages
+      // in sync. activeLocale must be sent by the client on every title update.
+      const activeLocale = body.activeLocale === 'en' ? 'en' : 'es';
+      const activeTitle  = trim((body.titleI18n || {})[activeLocale] || '', 300) || update.title;
+      update.title_i18n  = await buildTitleI18n(activeLocale, activeTitle);
     }
     if (body.statusKey !== undefined)          update.status_key = trim(body.statusKey, 60);
     if (body.priority !== undefined && ['urgent','high','normal','low'].includes(body.priority)) {

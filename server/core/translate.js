@@ -42,4 +42,19 @@ async function translateText(text, fromLang, toLang) {
   }
 }
 
-module.exports = { translateText };
+// Build a bilingual { en, es } title object from one authoritative value.
+// Always translates from the active locale to the other so both stay in sync.
+// When the API key is missing or translation fails, the other-locale slot is
+// left empty rather than storing the source text verbatim.
+async function buildTitleI18n(activeLocale, activeTitle) {
+  const src  = (activeTitle || '').trim();
+  const other = activeLocale === 'en' ? 'es' : 'en';
+  const r = await translateText(src, activeLocale, other);
+  const otherTitle = (r && r !== src) ? r : '';
+  return {
+    [activeLocale]: src,
+    ...(otherTitle ? { [other]: otherTitle } : {}),
+  };
+}
+
+module.exports = { translateText, buildTitleI18n };

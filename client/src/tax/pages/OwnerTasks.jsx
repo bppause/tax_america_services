@@ -1186,9 +1186,11 @@ function TaskFormModal({
     if (!activeTitle) { setErr(t('owner.tasks.errTitle')); return; }
     setBusy(true); setErr('');
     try {
+      const activeTitle = locale === 'en' ? titleEn.trim() : titleEs.trim();
       const payload = {
-        title: titleEs.trim() || titleEn.trim(),
-        titleI18n: { ...(titleEs.trim() ? { es: titleEs.trim() } : {}), ...(titleEn.trim() ? { en: titleEn.trim() } : {}) },
+        title: activeTitle,
+        titleI18n: { [locale]: activeTitle }, // server translates to the other language
+        activeLocale: locale,
         customerId: customerId || null,
         productId: productId || null,
         statusKey, priority,
