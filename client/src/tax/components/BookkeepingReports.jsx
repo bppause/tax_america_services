@@ -257,6 +257,12 @@ function fmtMoney(n) {
   return v.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 }
 
+function fmtInputNum(n) {
+  const v = parseFloat(String(n == null ? '' : n).replace(/,/g, ''));
+  if (!isFinite(v)) return '';
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function fmtDate(iso, locale) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
@@ -288,6 +294,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: '', text: '' });
   const [pdfMeta, setPdfMeta] = useState({ pl: null, balance: null }); // { fileName, companyName, mismatch }
+  const [taskId, setTaskId] = useState(null);
   const sectionRef = useRef(null);
 
   const load = () => {
@@ -315,7 +322,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const startCreate = () => {
-    setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null });
+    setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
   };
   const startEdit = (r) => {
     setPdfMeta({ pl: null, balance: null });
@@ -327,6 +334,9 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         setCreating(false);
         setMsg({ kind: '', text: '' });
         const rpt = d.report;
+        const tid = rpt.task_id || null;
+        setTaskId(tid);
+        if (tid) taxApi.adminUpdateTask(auth, tid, { statusKey: 'in_progress' }).catch(() => {});
         const biz = customer?.business_name || customer?.name || null;
         const plCn = rpt.pl_data?._companyName || null;
         const balCn = rpt.balance_data?._companyName || null;
@@ -346,7 +356,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
       .finally(() => setBusy(false));
   };
-  const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); };
+  const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null); };
 
   const triedHashIds = useRef(new Set());
   useEffect(() => {
@@ -430,6 +440,8 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     try {
       const d = await taxApi.adminSendFinancialReport(auth, r.id);
       if (d.sent) {
+        const tid = r.task_id || taskId || null;
+        if (tid) taxApi.adminUpdateTask(auth, tid, { statusKey: 'completed' }).catch(() => {});
         setMsg({ kind: 'ok', text: t(isResend ? 'owner.customer.bookkeeping.msg.sendOk.resend' : 'owner.customer.bookkeeping.msg.sendOk.send') });
       } else {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.sendSkipped', { reason: d.reason || '?', url: d.viewUrl || '' }) });
@@ -843,7 +855,7 @@ function GroupEditor({ t, group, onChange, onDelete }) {
                onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
         <MoneyInput value={group.total ?? ''}
                     onChange={v => onChange({ ...group, total: v })}
-                    placeholder={itemSum.toFixed(2)}
+                    placeholder={fmtInputNum(itemSum) || '0.00'}
                     title={t('owner.customer.bookkeeping.group.totalHint')}
                     width={110}
                     borderColor={mismatch ? '#f59e0b' : undefined}
@@ -914,6 +926,9 @@ function NumericGrid({ children }) {
 // Wraps a numeric input with a left-aligned $ adornment.
 // `inputStyle` props go on the inner <input>; width/borderColor are on the wrapper.
 function MoneyInput({ value, onChange, placeholder, width, borderColor, extraInputStyle, disabled, title }) {
+  const [focused, setFocused] = useState(false);
+  const raw = (value === '' || value == null) ? '' : String(value).replace(/,/g, '');
+  const displayValue = focused ? raw : fmtInputNum(raw) || raw;
   return (
     <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center',
                   width: width || '100%', flexShrink: 0,
@@ -921,8 +936,11 @@ function MoneyInput({ value, onChange, placeholder, width, borderColor, extraInp
                   background: disabled ? '#f8fafc' : '#fff' }}>
       <span style={{ position: 'absolute', left: 8, color: '#94a3b8', fontSize: 13,
                      pointerEvents: 'none', userSelect: 'none', fontVariantNumeric: 'tabular-nums' }}>$</span>
-      <input type="number" inputMode="decimal" step="0.01" disabled={disabled} title={title}
-             value={value} onChange={e => onChange(e.target.value)}
+      <input type="text" inputMode="decimal" disabled={disabled} title={title}
+             value={displayValue}
+             onFocus={() => setFocused(true)}
+             onBlur={() => setFocused(false)}
+             onChange={e => onChange(e.target.value.replace(/,/g, ''))}
              placeholder={placeholder || '0.00'}
              style={{ width: '100%', padding: '6px 8px 6px 20px', border: 'none', borderRadius: 6,
                       fontSize: 13, background: 'transparent', outline: 'none',

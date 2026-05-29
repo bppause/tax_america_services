@@ -11534,7 +11534,7 @@ module.exports = function createTaxRouter(deps) {
     if (!customerId) return res.status(400).json({ error: 'customerId required.' });
     const [reportsRes, tokenRes, eligible] = await Promise.all([
       supabase.from('tax_financial_reports')
-        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, created_at, updated_at')
+        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, task_id, created_at, updated_at')
         .eq('customer_id', customerId)
         .order('period_end', { ascending: false }),
       supabase.from('tax_report_access_tokens')
