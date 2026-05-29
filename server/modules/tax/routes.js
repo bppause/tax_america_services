@@ -11986,7 +11986,8 @@ module.exports = function createTaxRouter(deps) {
         parsed = await parsePdf(buffer, kind);
       }
     } catch (e) {
-      return res.status(500).json({ error: 'parse_failed', message: e?.message || '' });
+      warn('[bookkeeping-parse-error]', { reportId: id, kind, path, error: e?.message });
+      return res.status(500).json({ error: e?.message || 'parse_failed', message: e?.message || '' });
     }
     // Zero matches → dump a sample of the extracted text to the Render
     // log so we can tune regexes against what pdf-parse actually

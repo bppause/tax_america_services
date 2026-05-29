@@ -470,7 +470,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         setCreating(false);
         load();
       }
-      setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.uploading', { kind }) });
+      setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.uploading', { filename: file.name }) });
       const fileType = file.name.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'pdf';
       const mimeType = fileType === 'xlsx'
         ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -1022,7 +1022,10 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
   );
   return (
     <div style={{ display: 'grid', gap: 6 }}>
-      <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+        <label htmlFor={inputId} style={{ fontSize: 12, color: 'var(--tax-muted)', fontWeight: 600 }}>{label}</label>
+        <span style={{ fontSize: 11, color: '#94a3b8' }}>{t('owner.customer.bookkeeping.pdf.acceptHint')}</span>
+      </div>
 
       {showCard && (
         <div style={{ padding: '8px 10px', background: mismatch ? '#fef9ec' : '#f8fafc', border: `1px solid ${mismatch ? '#d97706' : '#e2e8f0'}`, borderRadius: 6, fontSize: 12 }}>
@@ -1060,7 +1063,7 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
       )}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input id={inputId} type="file" accept="application/pdf,.pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy}
+        <input id={inputId} type="file" accept=".pdf,.xlsx" disabled={busy}
                onChange={e => {
                  const f = e.target.files && e.target.files[0];
                  if (f) onPick(f);
