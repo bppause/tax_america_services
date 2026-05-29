@@ -958,7 +958,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
-            {task.title_i18n?.[locale] || task.title_i18n?.[locale === 'en' ? 'es' : 'en'] || task.title}
+            {task.title_i18n?.[locale] || task.title || task.title_i18n?.[locale === 'en' ? 'es' : 'en']}
             {task.priority !== 'normal' && (
               <span style={{
                 marginLeft: 8, padding: '1px 8px', borderRadius: 999,
@@ -1118,21 +1118,30 @@ function TaskFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
 
-  // On edit-open, if one language title is missing translate from the other.
+  // On edit-open, translate any missing language title.
+  // Uses title_i18n directly (not task.title fallback) so we don't mistake
+  // a canonical title in the wrong language for a real translation.
+  // Falls back to task.title as the source when title_i18n is completely empty
+  // (old tasks that predate the bilingual feature — title was always English then).
   useEffect(() => {
     if (!isEdit) return;
-    const enVal = task.title_i18n?.en || task.title || '';
-    const esVal = task.title_i18n?.es || '';
-    if (enVal && !esVal) {
+    const enStored = task.title_i18n?.en || '';
+    const esStored = task.title_i18n?.es || '';
+    const noI18n   = !enStored && !esStored;
+
+    if (!esStored) {
+      // Source: prefer stored EN, fall back to task.title (old tasks had English titles).
+      const src = enStored || task.title || '';
+      if (!src) return;
       setTranslating(true);
-      taxApi.adminTranslateText(auth, { text: enVal, fromLang: 'en', toLang: 'es' })
-        .then(r => { if (r.translated) setTitleEs(r.translated); })
+      taxApi.adminTranslateText(auth, { text: src, fromLang: 'en', toLang: 'es' })
+        .then(r => { if (r.translated && r.translated !== src) setTitleEs(r.translated); })
         .catch(() => {})
         .finally(() => setTranslating(false));
-    } else if (esVal && !enVal) {
+    } else if (!enStored) {
       setTranslating(true);
-      taxApi.adminTranslateText(auth, { text: esVal, fromLang: 'es', toLang: 'en' })
-        .then(r => { if (r.translated) setTitleEn(r.translated); })
+      taxApi.adminTranslateText(auth, { text: esStored, fromLang: 'es', toLang: 'en' })
+        .then(r => { if (r.translated && r.translated !== esStored) setTitleEn(r.translated); })
         .catch(() => {})
         .finally(() => setTranslating(false));
     }

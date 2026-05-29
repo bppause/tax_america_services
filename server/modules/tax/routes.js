@@ -6575,8 +6575,8 @@ module.exports = function createTaxRouter(deps) {
         const i = task.title_i18n || {};
         let es = (i.es || task.title || '').trim();
         let en = (i.en || '').trim();
-        if (es && !en) en = await translateText(es, 'es', 'en');
-        else if (en && !es) es = await translateText(en, 'en', 'es');
+        if (es && !en) { const r = await translateText(es, 'es', 'en'); en = (r && r !== es) ? r : ''; }
+        else if (en && !es) { const r = await translateText(en, 'en', 'es'); es = (r && r !== en) ? r : ''; }
         if (en && es) {
           await supabase.from('tax_tasks')
             .update({ title_i18n: { en, es } })
@@ -6610,11 +6610,17 @@ module.exports = function createTaxRouter(deps) {
     const titleI18nRaw = body.titleI18n || {};
     let titleEs = trim(titleI18nRaw.es || '', 300) || title;
     let titleEn = trim(titleI18nRaw.en || '', 300);
-    if (!titleEn) titleEn = await translateText(titleEs, 'es', 'en');
-    if (!titleEs) titleEs = await translateText(titleEn, 'en', 'es');
+    if (!titleEn && titleEs) {
+      const r = await translateText(titleEs, 'es', 'en');
+      titleEn = (r && r !== titleEs) ? r : '';
+    }
+    if (!titleEs && titleEn) {
+      const r = await translateText(titleEn, 'en', 'es');
+      titleEs = (r && r !== titleEn) ? r : '';
+    }
 
     const id = 'task_' + uuidv4().slice(0, 16);
-    const titleI18n = { es: titleEs, en: titleEn };
+    const titleI18n = { es: titleEs, ...(titleEn ? { en: titleEn } : {}) };
     const row = {
       id,
       community_id: communitySlug,
@@ -6671,12 +6677,13 @@ module.exports = function createTaxRouter(deps) {
       if (body.titleI18n && typeof body.titleI18n === 'object') {
         let es = trim(body.titleI18n.es || '', 300) || update.title;
         let en = trim(body.titleI18n.en || '', 300);
-        if (!en) en = await translateText(es, 'es', 'en');
-        if (!es) es = await translateText(en, 'en', 'es');
-        update.title_i18n = { es, en };
+        if (!en && es) { const r = await translateText(es, 'es', 'en'); en = (r && r !== es) ? r : ''; }
+        if (!es && en) { const r = await translateText(en, 'en', 'es'); es = (r && r !== en) ? r : ''; }
+        update.title_i18n = { es, ...(en ? { en } : {}) };
       } else {
-        const translated = await translateText(update.title, 'es', 'en');
-        update.title_i18n = { es: update.title, en: translated };
+        const r = await translateText(update.title, 'es', 'en');
+        const en = (r && r !== update.title) ? r : '';
+        update.title_i18n = { es: update.title, ...(en ? { en } : {}) };
       }
     }
     if (body.statusKey !== undefined)          update.status_key = trim(body.statusKey, 60);
