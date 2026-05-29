@@ -127,7 +127,7 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
            pointerEvents: 'none',
          }}>
       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, whiteSpace: 'normal', color: 'var(--tax-text)' }}>
-        {task.title}
+        {task.title_i18n?.[locale] || task.title || task.title_i18n?.[locale === 'en' ? 'es' : 'en']}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr',
                     columnGap: 8, rowGap: 4, fontSize: 12, color: 'var(--tax-text)' }}>

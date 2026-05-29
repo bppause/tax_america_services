@@ -1460,7 +1460,7 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
                              minWidth: 0, flex: 1, textDecoration: 'none',
                              color: 'inherit', cursor: 'pointer',
                            }}>
-                          <div style={{ fontWeight: 600 }}>{task.title}</div>
+                          <div style={{ fontWeight: 600 }}>{task.title_i18n?.[locale] || task.title || task.title_i18n?.[locale === 'en' ? 'es' : 'en']}</div>
                           <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)', display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                             {product && <span>{pickI18n(product.name_i18n, locale).value || product.slug}</span>}
                             {assignee && <span>· {(assignee.name || assignee.email)}</span>}
@@ -1473,7 +1473,7 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
                           </div>
                         </a>
                         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          {/^Publish\s+H[12]\b.*Bookkeeping report|Publicar\s+informe\s+contable\s+H[12]\b/i.test(task.title || '') && !task.completed_at && (
+                          {/^Publish\s+H[12]\b.*Bookkeeping report|Publicar\s+informe\s+contable\s+H[12]\b/i.test(task.title_i18n?.en || task.title_i18n?.es || task.title || '') && !task.completed_at && (
                             <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
                                     onClick={async (e) => {
                                       e.stopPropagation();
@@ -1551,6 +1551,8 @@ function InlineAddTask({ auth, community, customerId, statuses, employees, produ
       await taxApi.adminCreateTask(auth, {
         communitySlug: community.id,
         title: title.trim(),
+        titleI18n: { [locale]: title.trim() },
+        activeLocale: locale,
         customerId,
         productId: productId || null,
         statusKey: statuses[0]?.key || 'not_started',
