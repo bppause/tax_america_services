@@ -1138,12 +1138,12 @@ function TaskFormModal({
 
   const onSave = async (e) => {
     e?.preventDefault?.();
-    if (!titleEn.trim()) { setErr(t('owner.tasks.errTitle')); return; }
+    if (!titleEs.trim()) { setErr(t('owner.tasks.errTitleEs')); return; }
     setBusy(true); setErr('');
     try {
       const payload = {
-        title: titleEn.trim(),
-        titleI18n: { en: titleEn.trim(), ...(titleEs.trim() ? { es: titleEs.trim() } : {}) },
+        title: titleEs.trim(),
+        titleI18n: { es: titleEs.trim(), ...(titleEn.trim() ? { en: titleEn.trim() } : {}) },
         customerId: customerId || null,
         productId: productId || null,
         statusKey, priority,
@@ -1183,23 +1183,23 @@ function TaskFormModal({
         )}
         <form onSubmit={onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
-            <label>{t('owner.tasks.field.titleEn')}</label>
-            <input type="text" value={titleEn} onChange={e => setTitleEn(e.target.value)}
-                   maxLength={300} list="task-suggestions-en" required autoFocus />
-            <datalist id="task-suggestions-en">
+            <label>{t('owner.tasks.field.titleEs')}</label>
+            <input type="text" value={titleEs} onChange={e => setTitleEs(e.target.value)}
+                   maxLength={300} list="task-suggestions-es" required autoFocus />
+            <datalist id="task-suggestions-es">
               {suggestions.map((s, i) => (
-                <option key={i} value={s.en || s.es || ''} />
+                <option key={i} value={s.es || s.en || ''} />
               ))}
             </datalist>
           </div>
           <div>
-            <label>{t('owner.tasks.field.titleEs')}</label>
-            <input type="text" value={titleEs} onChange={e => setTitleEs(e.target.value)}
-                   maxLength={300} list="task-suggestions-es"
-                   placeholder={t('owner.tasks.field.titleEsHint')} />
-            <datalist id="task-suggestions-es">
+            <label>{t('owner.tasks.field.titleEn')}</label>
+            <input type="text" value={titleEn} onChange={e => setTitleEn(e.target.value)}
+                   maxLength={300} list="task-suggestions-en"
+                   placeholder={t('owner.tasks.field.titleEnHint')} />
+            <datalist id="task-suggestions-en">
               {suggestions.map((s, i) => (
-                <option key={i} value={s.es || s.en || ''} />
+                <option key={i} value={s.en || s.es || ''} />
               ))}
             </datalist>
           </div>

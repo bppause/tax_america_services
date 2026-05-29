@@ -6563,12 +6563,12 @@ module.exports = function createTaxRouter(deps) {
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
     const titleI18nRaw = body.titleI18n || {};
-    const titleEn = trim(titleI18nRaw.en || '', 300) || title;
-    const titleEs = trim(titleI18nRaw.es || '', 300);
+    const titleEs = trim(titleI18nRaw.es || '', 300) || title;
+    const titleEn = trim(titleI18nRaw.en || '', 300);
 
     const id = 'task_' + uuidv4().slice(0, 16);
-    const titleI18n = { en: titleEn };
-    if (titleEs) titleI18n.es = titleEs;
+    const titleI18n = { es: titleEs };
+    if (titleEn) titleI18n.en = titleEn;
     const row = {
       id,
       community_id: communitySlug,
@@ -6623,11 +6623,11 @@ module.exports = function createTaxRouter(deps) {
     if (body.title !== undefined) {
       update.title = trim(body.title, 300);
       if (body.titleI18n && typeof body.titleI18n === 'object') {
-        const en = trim(body.titleI18n.en || '', 300) || update.title;
-        const es = trim(body.titleI18n.es || '', 300);
-        update.title_i18n = es ? { en, es } : { en };
+        const es = trim(body.titleI18n.es || '', 300) || update.title;
+        const en = trim(body.titleI18n.en || '', 300);
+        update.title_i18n = en ? { es, en } : { es };
       } else {
-        update.title_i18n = { en: update.title };
+        update.title_i18n = { es: update.title };
       }
     }
     if (body.statusKey !== undefined)          update.status_key = trim(body.statusKey, 60);
