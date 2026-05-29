@@ -36,6 +36,7 @@ const {
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
 const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
 const { generateFaqsForService, inferRelationshipCategory } = require('./faq-autogen');
+const { translateText } = require('../../core/translate');
 
 const TAX_BUSINESS_TYPE = 'tax';
 const MAX_TEXT_LEN = 4000;
@@ -6563,12 +6564,13 @@ module.exports = function createTaxRouter(deps) {
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
     const titleI18nRaw = body.titleI18n || {};
-    const titleEs = trim(titleI18nRaw.es || '', 300) || title;
-    const titleEn = trim(titleI18nRaw.en || '', 300);
+    let titleEs = trim(titleI18nRaw.es || '', 300) || title;
+    let titleEn = trim(titleI18nRaw.en || '', 300);
+    if (!titleEn) titleEn = await translateText(titleEs, 'es', 'en');
+    if (!titleEs) titleEs = await translateText(titleEn, 'en', 'es');
 
     const id = 'task_' + uuidv4().slice(0, 16);
-    const titleI18n = { es: titleEs };
-    if (titleEn) titleI18n.en = titleEn;
+    const titleI18n = { es: titleEs, en: titleEn };
     const row = {
       id,
       community_id: communitySlug,
@@ -6623,11 +6625,14 @@ module.exports = function createTaxRouter(deps) {
     if (body.title !== undefined) {
       update.title = trim(body.title, 300);
       if (body.titleI18n && typeof body.titleI18n === 'object') {
-        const es = trim(body.titleI18n.es || '', 300) || update.title;
-        const en = trim(body.titleI18n.en || '', 300);
-        update.title_i18n = en ? { es, en } : { es };
+        let es = trim(body.titleI18n.es || '', 300) || update.title;
+        let en = trim(body.titleI18n.en || '', 300);
+        if (!en) en = await translateText(es, 'es', 'en');
+        if (!es) es = await translateText(en, 'en', 'es');
+        update.title_i18n = { es, en };
       } else {
-        update.title_i18n = { es: update.title };
+        const translated = await translateText(update.title, 'es', 'en');
+        update.title_i18n = { es: update.title, en: translated };
       }
     }
     if (body.statusKey !== undefined)          update.status_key = trim(body.statusKey, 60);
