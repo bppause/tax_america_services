@@ -490,11 +490,11 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         const got = dbg.detectedType === 'pl' ? t('owner.customer.bookkeeping.pdf.pl')
           : dbg.detectedType === 'balance' ? t('owner.customer.bookkeeping.pdf.balance')
           : t('owner.customer.bookkeeping.pdf.unknown');
-        setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.wrongType', { expected, got }) });
+        setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.wrongType', { expected, got }), debug: dbg });
         return;
       }
-      if (dbg.error === 'pdf_no_text_layer') { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.noTextLayer') }); return; }
-      if (dbg.error) { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.parseError', { error: dbg.error }) }); return; }
+      if (dbg.error === 'pdf_no_text_layer') { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.noTextLayer'), debug: dbg }); return; }
+      if (dbg.error) { setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.parseError', { error: dbg.error }), debug: dbg }); return; }
       const companyName = parseResult.parsed?.companyName || null;
       const businessName = customer?.business_name || customer?.name || null;
       const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
@@ -512,11 +512,11 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       });
       setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch, detectedType: dbg.detectedType || null } }));
       if (dbg.detectedType === 'unknown' && (dbg.matched || 0) === 0) {
-        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.notRecognized', { kind }) });
+        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.notRecognized', { kind }), warnings: dbg.warnings, debug: dbg });
       } else if ((dbg.matched || 0) === 0) {
-        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }) });
+        setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.parsedZero', { kind }), warnings: dbg.warnings, debug: dbg });
       } else {
-        setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsed', { kind, matched: dbg.matched }) });
+        setMsg({ kind: 'ok', text: t('owner.customer.bookkeeping.msg.parsed', { kind, matched: dbg.matched }), warnings: dbg.warnings, debug: dbg });
       }
     } catch (e) {
       setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.uploadFailed') });
@@ -570,6 +570,31 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         <div className={`tax-msg ${msg.kind === 'err' ? 'tax-msg--error' : msg.kind === 'warn' ? '' : 'tax-msg--success'}`}
              style={msg.kind === 'warn' ? { background: '#fef3c7', borderLeft: '3px solid #b45309', color: '#78350f', padding: '8px 12px' } : {}}>
           {msg.text}
+          {msg.warnings?.length > 0 && (
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 12 }}>
+              {msg.warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          )}
+          {msg.debug && (msg.debug.characters != null || msg.debug.matched != null || msg.debug.unmatched != null || msg.debug.textSample) && (
+            <details style={{ marginTop: 8, fontSize: 11 }}>
+              <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Debug info</summary>
+              <div style={{ marginTop: 4, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                {msg.debug.characters != null && <div>Characters read: {msg.debug.characters}</div>}
+                {msg.debug.matched != null && <div>Fields matched: {msg.debug.matched}</div>}
+                {msg.debug.unmatched != null && <div>Fields unmatched: {msg.debug.unmatched}</div>}
+                {msg.debug.markersFound != null && <div>Markers found: {msg.debug.markersFound}</div>}
+                {msg.debug.detectedType && <div>Detected type: {msg.debug.detectedType}</div>}
+                {msg.debug.textSample && (
+                  <div style={{ marginTop: 4 }}>
+                    <div style={{ fontWeight: 600 }}>Text sample:</div>
+                    <div style={{ background: 'rgba(0,0,0,0.06)', padding: '4px 6px', borderRadius: 4, marginTop: 2, maxHeight: 120, overflow: 'auto' }}>
+                      {msg.debug.textSample}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
         </div>
       )}
 
