@@ -675,9 +675,9 @@ function SaveButtons({ t, onSave, onCancel, busy, editing, sm }) {
 function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus }) {
   const [plCollapsed, setPlCollapsed] = useState(false);
   const [balCollapsed, setBalCollapsed] = useState(false);
-  const set = (k, v) => setForm({ ...form, [k]: v });
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
   const setSection = (key, sec) => {
-    setForm({ ...form, pl_data: { ...form.pl_data, sections: { ...form.pl_data.sections, [key]: sec } } });
+    setForm(prev => ({ ...prev, pl_data: { ...prev.pl_data, sections: { ...prev.pl_data.sections, [key]: sec } } }));
   };
   const totals = computeTotals(form.pl_data);
 
@@ -759,7 +759,7 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
         <NumericGrid>
           {BALANCE_KEYS.map(k => (
             <Field key={k} label={t(`owner.customer.bookkeeping.balance.${k}`)}>
-              <NumericInput value={form.balance_data[k]} onChange={v => setForm({ ...form, balance_data: { ...form.balance_data, [k]: v } })} />
+              <NumericInput value={form.balance_data[k]} onChange={v => setForm(prev => ({ ...prev, balance_data: { ...prev.balance_data, [k]: v } }))} />
             </Field>
           ))}
         </NumericGrid>
@@ -1063,7 +1063,7 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
       )}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input id={inputId} type="file" accept=".pdf,.xlsx" disabled={busy}
+        <input id={inputId} type="file" accept=".xlsx" disabled={busy}
                onChange={e => {
                  const f = e.target.files && e.target.files[0];
                  if (f) onPick(f);
