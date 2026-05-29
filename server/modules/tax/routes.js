@@ -6551,6 +6551,41 @@ module.exports = function createTaxRouter(deps) {
     res.json({ translated });
   });
 
+  // POST /admin/tasks/fill-missing-translations
+  // Finds tasks with a missing EN or ES title, translates them, patches the DB.
+  // Responds immediately then finishes work in the background so the client
+  // isn't blocked. Safe to call repeatedly — no-ops on already-complete rows.
+  router.post('/admin/tasks/fill-missing-translations', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const { data: tasks, error } = await supabase
+      .from('tax_tasks')
+      .select('id, title, title_i18n')
+      .eq('community_id', emp.community_id)
+      .is('archived_at', null)
+      .limit(100);
+    if (error) return sendSupabaseError(res, error);
+    const toFill = (tasks || []).filter(t => {
+      const i = t.title_i18n || {};
+      return !i.en || !i.es;
+    });
+    res.json({ queued: toFill.length });
+    // Work happens after the response is sent.
+    (async () => {
+      for (const task of toFill) {
+        const i = task.title_i18n || {};
+        let es = (i.es || task.title || '').trim();
+        let en = (i.en || '').trim();
+        if (es && !en) en = await translateText(es, 'es', 'en');
+        else if (en && !es) es = await translateText(en, 'en', 'es');
+        if (en && es) {
+          await supabase.from('tax_tasks')
+            .update({ title_i18n: { en, es } })
+            .eq('id', task.id);
+        }
+      }
+    })().catch(() => {});
+  });
+
   // POST /admin/tasks — create.
   router.post('/admin/tasks', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;

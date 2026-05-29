@@ -238,6 +238,19 @@ export default function OwnerTasks() {
     }
   }, [tasks]);
 
+  // Background fill: when tasks load and any are missing the current locale's
+  // title, call the fill endpoint so subsequent views show the right language.
+  // Fire-and-forget — on success, reload the task list to pick up the new titles.
+  useEffect(() => {
+    if (!Array.isArray(tasks) || !tasks.length || !auth) return;
+    const hasMissing = tasks.some(t => !(t.title_i18n?.[locale]));
+    if (!hasMissing) return;
+    taxApi.adminFillMissingTranslations(auth)
+      .then(d => { if (d.queued > 0) load(); })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks]);
+
   // Workload-heatmap drill-through: ?assignedTo=<empId>&dueDate=YYYY-MM-DD.
   // Applied once on mount. The params are stripped after they land so
   // a refresh doesn't keep re-applying them after the operator changes
@@ -945,7 +958,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
-            {(task.title_i18n?.[locale]) || task.title}
+            {task.title_i18n?.[locale] || task.title_i18n?.[locale === 'en' ? 'es' : 'en'] || task.title}
             {task.priority !== 'normal' && (
               <span style={{
                 marginLeft: 8, padding: '1px 8px', borderRadius: 999,
