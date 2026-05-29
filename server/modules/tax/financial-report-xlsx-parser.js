@@ -8,7 +8,7 @@
 // misreading numbers that appear in account names (e.g. "Deposit 8222").
 
 const XLSX = require('xlsx');
-const { log } = require('../../logger');
+const { log } = require('../../../logger');
 const { parseDynamic, parseAmount } = require('./financial-report-parser');
 
 const BALANCE_PATTERNS = [
