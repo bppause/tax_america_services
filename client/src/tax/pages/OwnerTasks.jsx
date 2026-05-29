@@ -1119,7 +1119,7 @@ function TaskFormModal({
 
   const [translating, setTranslating] = useState(false);
 
-  // On edit-open, translate any missing language title.
+  // On edit-open, translate any missing language title then auto-save.
   useEffect(() => {
     if (!isEdit) return;
     const enStored = task.title_i18n?.en || '';
@@ -1129,13 +1129,31 @@ function TaskFormModal({
       if (!src) return;
       setTranslating(true);
       taxApi.adminTranslateText(auth, { text: src, fromLang: 'en', toLang: 'es' })
-        .then(r => { if (r.translated && r.translated !== src) setTitleEs(r.translated); })
+        .then(r => {
+          if (r.translated && r.translated !== src) {
+            setTitleEs(r.translated);
+            taxApi.adminUpdateTask(auth, task.id, {
+              title: src,
+              titleI18n: { en: src, es: r.translated },
+              activeLocale: 'en',
+            }).then(onSaved).catch(() => {});
+          }
+        })
         .catch(() => {})
         .finally(() => setTranslating(false));
     } else if (!enStored) {
       setTranslating(true);
       taxApi.adminTranslateText(auth, { text: esStored, fromLang: 'es', toLang: 'en' })
-        .then(r => { if (r.translated && r.translated !== esStored) setTitleEn(r.translated); })
+        .then(r => {
+          if (r.translated && r.translated !== esStored) {
+            setTitleEn(r.translated);
+            taxApi.adminUpdateTask(auth, task.id, {
+              title: esStored,
+              titleI18n: { en: r.translated, es: esStored },
+              activeLocale: 'es',
+            }).then(onSaved).catch(() => {});
+          }
+        })
         .catch(() => {})
         .finally(() => setTranslating(false));
     }
