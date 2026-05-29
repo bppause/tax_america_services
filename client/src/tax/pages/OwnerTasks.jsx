@@ -958,7 +958,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
-            {task.title_i18n?.[locale] || task.title || task.title_i18n?.[locale === 'en' ? 'es' : 'en']}
+            {task.title_i18n?.[locale] || task.title_i18n?.[locale === 'en' ? 'es' : 'en'] || task.title}
             {task.priority !== 'normal' && (
               <span style={{
                 marginLeft: 8, padding: '1px 8px', borderRadius: 999,

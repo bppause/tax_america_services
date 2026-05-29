@@ -1460,7 +1460,7 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
                              minWidth: 0, flex: 1, textDecoration: 'none',
                              color: 'inherit', cursor: 'pointer',
                            }}>
-                          <div style={{ fontWeight: 600 }}>{task.title_i18n?.[locale] || task.title || task.title_i18n?.[locale === 'en' ? 'es' : 'en']}</div>
+                          <div style={{ fontWeight: 600 }}>{task.title_i18n?.[locale] || task.title_i18n?.[locale === 'en' ? 'es' : 'en'] || task.title}</div>
                           <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)', display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                             {product && <span>{pickI18n(product.name_i18n, locale).value || product.slug}</span>}
                             {assignee && <span>· {(assignee.name || assignee.email)}</span>}
