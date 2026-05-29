@@ -1,6 +1,6 @@
 'use strict';
 
-const { log, warn } = require('../../logger');
+const { log, warn } = require('../../../logger');
 
 // Phase 4n.74: bookkeeping PDF parser — dynamic section walker.
 //
