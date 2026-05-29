@@ -1189,19 +1189,25 @@ module.exports = function createTaxRouter(deps) {
       seenScheduleIds.add(sched.id);
 
       const periods = generateSchedulePeriods(sched.anchor_rule, todayIso, 24, {
-        lang: cust.locale === 'en' ? 'en' : 'es',
+        lang: 'en',
       });
-      const scheduleName =
-        sched.name_i18n?.[cust.locale === 'en' ? 'en' : 'es']
-        || sched.name_i18n?.en || sched.name_i18n?.es || sched.slug;
+      const periodsEs = generateSchedulePeriods(sched.anchor_rule, todayIso, 24, {
+        lang: 'es',
+      });
+      const scheduleNameEn =
+        sched.name_i18n?.en || sched.name_i18n?.es || sched.slug;
+      const scheduleNameEs =
+        sched.name_i18n?.es || sched.name_i18n?.en || sched.slug;
 
       const isAutoTask = sched.source === 'auto_task';
       const isProductCadence = sched.source === 'product_cadence';
       const rows = [];
-      for (const p of periods) {
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
         if (!p.dueDate) continue;
         if (p.dueDate > cutoffIso) break;
         if (p.dueDate < todayIso) continue;
+        const pEs = periodsEs[i] || p;
         // Period key namespaces by source so auto-task and legacy
         // rows never collide on the partial unique indexes.
         const periodKey = isAutoTask
@@ -1220,7 +1226,11 @@ module.exports = function createTaxRouter(deps) {
           service_auto_task_id: isAutoTask ? sched.service_auto_task_id : null,
           period_key: periodKey,
           source: 'relationship_schedule',
-          title: `${scheduleName} — ${p.periodLabel || p.dueDate}`,
+          title: `${scheduleNameEn} — ${p.periodLabel || p.dueDate}`,
+          title_i18n: {
+            en: `${scheduleNameEn} — ${p.periodLabel || p.dueDate}`,
+            es: `${scheduleNameEs} — ${pEs.periodLabel || pEs.dueDate}`,
+          },
           status_key: defaultStatus,
           priority: sched.priority || 'normal',
           // Pre-route the new task to the auto-task's default owner
@@ -1486,15 +1496,20 @@ module.exports = function createTaxRouter(deps) {
     for (const at of autoTasks || []) {
       if (!at.cadence_kind || at.cadence_kind === 'none') continue;
       const periods = generateSchedulePeriods(at.anchor_rule, todayIso, 24, {
-        lang: cust.locale === 'en' ? 'en' : 'es',
+        lang: 'en',
       });
-      const titleBase = at.title_i18n?.[cust.locale === 'en' ? 'en' : 'es']
-                     || at.title_i18n?.en || at.title_i18n?.es || 'Auto task';
+      const periodsEs = generateSchedulePeriods(at.anchor_rule, todayIso, 24, {
+        lang: 'es',
+      });
+      const titleBaseEn = at.title_i18n?.en || at.title_i18n?.es || 'Auto task';
+      const titleBaseEs = at.title_i18n?.es || at.title_i18n?.en || 'Tarea automática';
       const rows = [];
-      for (const p of periods) {
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
         if (!p.dueDate) continue;
         if (p.dueDate > cutoffIso) break;
         if (p.dueDate < todayIso) continue;
+        const pEs = periodsEs[i] || p;
         rows.push({
           id: 'task_' + uuidv4().slice(0, 12),
           community_id: cust.community_id,
@@ -1505,7 +1520,11 @@ module.exports = function createTaxRouter(deps) {
           service_auto_task_id: at.id,
           period_key: `at:${at.id}:${p.periodStart || p.dueDate}`,
           source: 'relationship_schedule',
-          title: `${titleBase} — ${p.periodLabel || p.dueDate}`,
+          title: `${titleBaseEn} — ${p.periodLabel || p.dueDate}`,
+          title_i18n: {
+            en: `${titleBaseEn} — ${p.periodLabel || p.dueDate}`,
+            es: `${titleBaseEs} — ${pEs.periodLabel || pEs.dueDate}`,
+          },
           status_key: defaultStatus,
           priority: at.default_priority || 'normal',
           assigned_employee_id: at.default_assignee_employee_id || null,
@@ -6236,7 +6255,7 @@ module.exports = function createTaxRouter(deps) {
 
     let q = supabase.from('tax_tasks')
       .select(`
-        id, community_id, customer_id, product_id, title, status_key, priority,
+        id, community_id, customer_id, product_id, title, title_i18n, status_key, priority,
         assigned_employee_id, created_by_employee_id, service_auto_task_id,
         due_date, notes, completed_at, created_at, updated_at,
         blocked_by_task_id, requires_review, reviewer_employee_id,
@@ -6543,14 +6562,20 @@ module.exports = function createTaxRouter(deps) {
     const assignedTo  = trim(body.assignedEmployeeId || '', 200) || null;
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
+    const titleI18nRaw = body.titleI18n || {};
+    const titleEn = trim(titleI18nRaw.en || '', 300) || title;
+    const titleEs = trim(titleI18nRaw.es || '', 300);
 
     const id = 'task_' + uuidv4().slice(0, 16);
+    const titleI18n = { en: titleEn };
+    if (titleEs) titleI18n.es = titleEs;
     const row = {
       id,
       community_id: communitySlug,
       customer_id: customerId,
       product_id: productId,
       title,
+      title_i18n: titleI18n,
       status_key: statusKey,
       priority,
       assigned_employee_id: assignedTo,
@@ -6595,7 +6620,16 @@ module.exports = function createTaxRouter(deps) {
     }
 
     const update = { updated_at: new Date().toISOString() };
-    if (body.title !== undefined)              update.title = trim(body.title, 300);
+    if (body.title !== undefined) {
+      update.title = trim(body.title, 300);
+      if (body.titleI18n && typeof body.titleI18n === 'object') {
+        const en = trim(body.titleI18n.en || '', 300) || update.title;
+        const es = trim(body.titleI18n.es || '', 300);
+        update.title_i18n = es ? { en, es } : { en };
+      } else {
+        update.title_i18n = { en: update.title };
+      }
+    }
     if (body.statusKey !== undefined)          update.status_key = trim(body.statusKey, 60);
     if (body.priority !== undefined && ['urgent','high','normal','low'].includes(body.priority)) {
       update.priority = body.priority;

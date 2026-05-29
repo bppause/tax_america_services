@@ -2875,6 +2875,12 @@ alter table public.tax_tasks
   add column if not exists reviewed_at              timestamptz,
   add column if not exists reviewed_by_employee_id  text references public.tax_employees(id) on delete set null,
   add column if not exists review_note              text not null default '';
+
+-- Bilingual task titles. Stores { "en": "...", "es": "..." } so
+-- employee-facing UI can show the title in the viewing employee's
+-- preferred language. `title` is kept as the canonical fallback.
+alter table public.tax_tasks
+  add column if not exists title_i18n jsonb not null default '{}'::jsonb;
 create index if not exists idx_tax_tasks_blocked_by
   on public.tax_tasks(blocked_by_task_id);
 create index if not exists idx_tax_tasks_pending_review

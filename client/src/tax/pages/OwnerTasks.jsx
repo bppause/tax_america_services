@@ -945,7 +945,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 600 }}>
-            {task.title}
+            {(task.title_i18n?.[locale]) || task.title}
             {task.priority !== 'normal' && (
               <span style={{
                 marginLeft: 8, padding: '1px 8px', borderRadius: 999,
@@ -1070,7 +1070,8 @@ function TaskFormModal({
   onCustomersChanged, onClose, onSaved,
 }) {
   const isEdit = mode === 'edit';
-  const [title, setTitle] = useState(isEdit ? (task.title || '') : '');
+  const [titleEn, setTitleEn] = useState(isEdit ? (task.title_i18n?.en || task.title || '') : '');
+  const [titleEs, setTitleEs] = useState(isEdit ? (task.title_i18n?.es || '') : '');
   const [customerId, setCustomerId] = useState(isEdit ? (task.customer_id || '') : '');
   const [productId, setProductId] = useState(isEdit ? (task.product_id || '') : '');
   const [productAutoFilledFor, setProductAutoFilledFor] = useState('');
@@ -1137,11 +1138,12 @@ function TaskFormModal({
 
   const onSave = async (e) => {
     e?.preventDefault?.();
-    if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
+    if (!titleEn.trim()) { setErr(t('owner.tasks.errTitle')); return; }
     setBusy(true); setErr('');
     try {
       const payload = {
-        title: title.trim(),
+        title: titleEn.trim(),
+        titleI18n: { en: titleEn.trim(), ...(titleEs.trim() ? { es: titleEs.trim() } : {}) },
         customerId: customerId || null,
         productId: productId || null,
         statusKey, priority,
@@ -1181,12 +1183,23 @@ function TaskFormModal({
         )}
         <form onSubmit={onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
-            <label>{t('owner.tasks.field.title')}</label>
-            <input type="text" value={title} onChange={e => setTitle(e.target.value)}
-                   maxLength={300} list="task-suggestions" required autoFocus />
-            <datalist id="task-suggestions">
+            <label>{t('owner.tasks.field.titleEn')}</label>
+            <input type="text" value={titleEn} onChange={e => setTitleEn(e.target.value)}
+                   maxLength={300} list="task-suggestions-en" required autoFocus />
+            <datalist id="task-suggestions-en">
               {suggestions.map((s, i) => (
-                <option key={i} value={pickI18n(s, locale).value || s.en || s.es} />
+                <option key={i} value={s.en || s.es || ''} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label>{t('owner.tasks.field.titleEs')}</label>
+            <input type="text" value={titleEs} onChange={e => setTitleEs(e.target.value)}
+                   maxLength={300} list="task-suggestions-es"
+                   placeholder={t('owner.tasks.field.titleEsHint')} />
+            <datalist id="task-suggestions-es">
+              {suggestions.map((s, i) => (
+                <option key={i} value={s.es || s.en || ''} />
               ))}
             </datalist>
           </div>
