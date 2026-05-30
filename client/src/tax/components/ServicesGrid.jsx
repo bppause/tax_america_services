@@ -25,6 +25,16 @@ export default function ServicesGrid({ products, onRequestService }) {
     if (typeof onRequestService === 'function') onRequestService(slug);
   };
 
+  // Auto-open service modal when URL hash matches #service-{slug}
+  // (e.g. links from WhatsApp messages or the PDF brochure).
+  useEffect(() => {
+    const hash = window.location.hash; // e.g. "#service-business-tax-prep"
+    if (!hash.startsWith('#service-')) return;
+    const slug = hash.slice('#service-'.length);
+    const match = products.find(p => p.slug === slug);
+    if (match) setOpenId(match.id);
+  }, [products]);
+
   return (
     <section className="tax-section" id="services">
       <div className="tax-container">
