@@ -4437,7 +4437,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, source, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at, ai_conversation')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);

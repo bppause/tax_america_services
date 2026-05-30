@@ -277,14 +277,41 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
             <a href={`mailto:${lead.email}`}>{lead.email}</a>
             {lead.phone ? <> • {lead.phone}</> : null}
             {lead.whatsapp ? <> • WhatsApp {lead.whatsapp}</> : null}
-            {(() => {
-              const services = Array.isArray(lead.product_slugs) && lead.product_slugs.length
-                ? lead.product_slugs
-                : (lead.product_slug ? [lead.product_slug] : []);
-              return services.length ? <> • {services.join(', ')}</> : null;
-            })()}
+            {Array.isArray(lead.ai_conversation) && lead.ai_conversation.length > 0 && (
+              <span title="Includes AI chat transcript" style={{
+                marginLeft: 6, padding: '1px 7px', borderRadius: 999,
+                background: '#f0f4ff', color: '#3730a3',
+                border: '1px solid #c7d2fe', fontSize: 11, fontWeight: 700,
+              }}>🤖 AI chat</span>
+            )}
             <> • {new Date(lead.created_at).toLocaleDateString()}</>
           </div>
+          {/* Services as chips — own row so they're scannable */}
+          {(() => {
+            const services = Array.isArray(lead.product_slugs) && lead.product_slugs.length
+              ? lead.product_slugs
+              : (lead.product_slug ? [lead.product_slug] : []);
+            if (!services.length) return null;
+            return (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 5 }}>
+                <span style={{ fontSize: 11, color: 'var(--tax-muted)', fontWeight: 600, alignSelf: 'center' }}>
+                  Interested in:
+                </span>
+                {services.map(s => {
+                  const p = products.find(x => x.slug === s);
+                  const label = p ? (p.name_i18n?.[locale]?.value || p.name_i18n?.en?.value || s) : s;
+                  return (
+                    <span key={s} style={{
+                      padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                      background: 'color-mix(in srgb, var(--tax-brand-primary) 10%, #fff)',
+                      color: 'var(--tax-brand-primary)',
+                      border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)',
+                    }}>{label}</span>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                 onClick={() => setExpanded(x => !x)}
@@ -316,6 +343,40 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               )}
             </div>
           )}
+          {/* Services summary — top of expanded panel for quick scanning */}
+          {(() => {
+            const services = Array.isArray(lead.product_slugs) && lead.product_slugs.length
+              ? lead.product_slugs
+              : (lead.product_slug ? [lead.product_slug] : []);
+            if (!services.length) return null;
+            return (
+              <div style={{
+                marginBottom: 12, padding: '10px 14px',
+                background: 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)',
+                border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 20%, #fff)',
+                borderRadius: 8,
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-brand-primary)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 6 }}>
+                  Services of interest
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {services.map(s => {
+                    const p = products.find(x => x.slug === s);
+                    const label = p ? (p.name_i18n?.[locale]?.value || p.name_i18n?.en?.value || s) : s;
+                    return (
+                      <span key={s} style={{
+                        padding: '3px 10px', borderRadius: 999, fontSize: 13, fontWeight: 600,
+                        background: 'color-mix(in srgb, var(--tax-brand-primary) 14%, #fff)',
+                        color: 'var(--tax-brand-primary)',
+                        border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 28%, #fff)',
+                      }}>{label}</span>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+
           {lead.message && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
@@ -326,20 +387,29 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
           )}
           {Array.isArray(lead.ai_conversation) && lead.ai_conversation.length > 0 && (
             <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 6 }}>
-                AI Chat Transcript
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 12px',
+                background: '#f0f4ff', borderRadius: '8px 8px 0 0',
+                border: '1px solid #c7d2fe', borderBottom: 'none',
+              }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#3730a3' }}>🤖 AI Chat Transcript</span>
+                <span style={{ fontSize: 11, color: '#6366f1', marginLeft: 'auto' }}>
+                  {lead.ai_conversation.filter(m => m.role === 'user').length} question{lead.ai_conversation.filter(m => m.role === 'user').length !== 1 ? 's' : ''} asked
+                </span>
               </div>
-              <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ border: '1px solid #c7d2fe', borderRadius: '0 0 8px 8px', overflow: 'hidden' }}>
                 {lead.ai_conversation.map((m, i) => (
                   <div key={i} style={{
-                    padding: '8px 12px',
-                    background: m.role === 'user' ? 'var(--tax-bg-alt)' : '#fff',
-                    borderTop: i > 0 ? '1px solid var(--tax-border)' : 'none',
+                    padding: '10px 14px',
+                    background: m.role === 'user' ? '#f8f9ff' : '#fff',
+                    borderTop: i > 0 ? '1px solid #e0e7ff' : 'none',
                   }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: m.role === 'user' ? 'var(--tax-brand-primary)' : 'var(--tax-muted)', marginBottom: 2, textTransform: 'uppercase' }}>
-                      {m.role === 'user' ? 'Lead' : 'AI'}
+                    <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 3, textTransform: 'uppercase', letterSpacing: '.04em',
+                                  color: m.role === 'user' ? 'var(--tax-brand-primary)' : '#6366f1' }}>
+                      {m.role === 'user' ? '👤 Lead' : '🤖 AI Assistant'}
                     </div>
-                    <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                    <div style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap', color: '#1e293b' }}>{m.content}</div>
                   </div>
                 ))}
               </div>
