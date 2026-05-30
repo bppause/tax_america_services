@@ -6760,6 +6760,47 @@ module.exports = function createTaxRouter(deps) {
     res.json({ periods });
   });
 
+  // GET /admin/whatsapp-template?communitySlug=
+  // Returns saved custom opening/closing/signoff per locale, or {} when defaults apply.
+  router.get('/admin/whatsapp-template', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('community_config')
+      .select('value').eq('community_id', communitySlug).eq('key', 'whatsapp_template').maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    let template = {};
+    if (data?.value) { try { template = JSON.parse(data.value); } catch (_) {} }
+    res.json({ template });
+  });
+
+  // PUT /admin/whatsapp-template — upsert editable template parts for ES and EN.
+  // Only opening/closing/signoff are accepted; service and contact blocks stay auto.
+  router.put('/admin/whatsapp-template', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const incoming = body.template && typeof body.template === 'object' ? body.template : {};
+    const MAX_FIELD = 2000;
+    const sanitized = {};
+    for (const locale of ['es', 'en']) {
+      if (!incoming[locale] || typeof incoming[locale] !== 'object') continue;
+      sanitized[locale] = {};
+      for (const field of ['opening', 'closing', 'signoff']) {
+        if (typeof incoming[locale][field] === 'string') {
+          sanitized[locale][field] = incoming[locale][field].trim().slice(0, MAX_FIELD);
+        }
+      }
+    }
+    const { error } = await supabase.from('community_config').upsert(
+      { community_id: communitySlug, key: 'whatsapp_template', value: JSON.stringify(sanitized), updated_at: new Date().toISOString() },
+      { onConflict: 'community_id,key' },
+    );
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
   // POST /admin/translate — translate a short string between 'en' and 'es'.
   router.post('/admin/translate', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;

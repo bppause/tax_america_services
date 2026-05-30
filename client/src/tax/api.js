@@ -456,6 +456,8 @@ export const taxApi = {
   },
   adminCreateTask(auth, payload)              { return request('POST',   '/admin/tasks', payload, auth); },
   adminUpdateTask(auth, id, payload)          { return request('PATCH',  `/admin/tasks/${encodeURIComponent(id)}`, payload, auth); },
+  adminGetWhatsappTemplate(auth, communitySlug) { return request('GET', `/admin/whatsapp-template?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminSaveWhatsappTemplate(auth, payload)     { return request('PUT',  '/admin/whatsapp-template', payload, auth, { admin: true }); },
   adminTranslateText(auth, payload)           { return request('POST',   '/admin/translate', payload, auth); },
   adminFillMissingTranslations(auth)          { return request('POST',   '/admin/tasks/fill-missing-translations', {}, auth); },
   adminBulkUpdateTasks(auth, payload)         { return request('PATCH',  '/admin/tasks/bulk', payload, auth); },
