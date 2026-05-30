@@ -1749,6 +1749,8 @@
   "owner.settings.community.postalCode": "Postal code",
   "owner.settings.community.country": "Country",
   "owner.settings.community.whatsappHint": "International format starting with + and country code.",
+  "owner.settings.community.website": "Website URL",
+  "owner.settings.community.websiteHint": "Your public website (e.g., https://www.taxamericaservices.com). Used as the web link in the PDF brochure, WhatsApp template, and footer.",
   "owner.settings.community.calendly": "Calendly URL",
   "owner.settings.community.calendlyHint": "Optional. Paste the public link to your Calendly profile or a specific event type (e.g., https://calendly.com/your-handle/intro-call). Visitors will see an inline scheduler near the bottom of your landing page. Leave blank to hide the section.",
   "owner.settings.community.editBtn": "Edit contact info",

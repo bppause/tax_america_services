@@ -1246,7 +1246,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
     contact_email: '', phone: '', whatsapp: '',
     address_line1: '', address_line2: '',
     city: '', state: '', postal_code: '', country: '',
-    calendly_url: '',
+    website_url: '', calendly_url: '',
   });
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1264,6 +1264,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
       state: settings.state || '',
       postal_code: settings.postal_code || '',
       country: settings.country || '',
+      website_url: settings.website_url || '',
       calendly_url: settings.calendly_url || '',
     });
   }, [settings]);
@@ -1284,6 +1285,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
         state: form.state.trim(),
         postal_code: form.postal_code.trim(),
         country: form.country.trim(),
+        website_url: form.website_url.trim(),
         calendly_url: form.calendly_url.trim(),
       });
       setMsg({ kind: 'success', text: t('owner.settings.saved') });
@@ -1321,6 +1323,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
           <ReadRow label={t('owner.settings.community.phone')}        value={settings.phone} />
           <ReadRow label={t('owner.settings.community.whatsapp')}     value={settings.whatsapp} />
           <ReadRow label={t('owner.settings.community.address')}      value={[settings.address_line1, settings.address_line2, settings.city, settings.state, settings.postal_code, settings.country].filter(Boolean).join(', ')} />
+          <ReadRow label={t('owner.settings.community.website')}      value={settings.website_url} />
           <ReadRow label={t('owner.settings.community.calendly')}     value={settings.calendly_url} />
           <ReadRow label={t('owner.settings.community.defaultLocale')} value={settings.default_locale === 'en' ? 'English' : 'Español'} />
         </div>
@@ -1351,6 +1354,11 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
           </div>
           <Field id="cs-country" label={t('owner.settings.community.country')}
                  value={form.country} onChange={v => onField('country', v)} />
+          <Field id="cs-website" label={t('owner.settings.community.website')}
+                 type="url" placeholder="https://www.yoursite.com"
+                 hint={t('owner.settings.community.websiteHint')}
+                 value={form.website_url}
+                 onChange={v => onField('website_url', v)} />
           <Field id="cs-calendly" label={t('owner.settings.community.calendly')}
                  type="url" placeholder="https://calendly.com/your-handle"
                  hint={t('owner.settings.community.calendlyHint')}

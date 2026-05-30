@@ -1748,6 +1748,8 @@
   "owner.settings.community.postalCode": "Código postal",
   "owner.settings.community.country": "País",
   "owner.settings.community.whatsappHint": "Formato internacional comenzando con + y código de país.",
+  "owner.settings.community.website": "URL del sitio web",
+  "owner.settings.community.websiteHint": "Tu sitio web público (p. ej., https://www.taxamericaservices.com). Se usa como enlace web en el portafolio PDF, la plantilla de WhatsApp y el pie de página.",
   "owner.settings.community.calendly": "URL de Calendly",
   "owner.settings.community.calendlyHint": "Opcional. Pega el enlace público a tu perfil de Calendly o a un tipo de evento específico (p. ej., https://calendly.com/tu-usuario/consulta-inicial). Los visitantes verán un calendario integrado cerca del final de la página pública. Déjalo vacío para ocultar la sección.",
   "owner.settings.community.editBtn": "Editar información de contacto",

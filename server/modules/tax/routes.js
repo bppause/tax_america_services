@@ -380,7 +380,7 @@ module.exports = function createTaxRouter(deps) {
 
     const [{ data: community, error: cErr }, { data: products }] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, name_en, logo_url, brand_primary_color, brand_secondary_color, phone, whatsapp, contact_email, address_line1, address_line2, city, state, postal_code, country')
+        .select('id, name, name_en, logo_url, brand_primary_color, brand_secondary_color, phone, whatsapp, contact_email, address_line1, address_line2, city, state, postal_code, country, website_url')
         .eq('id', slug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle(),
       supabase.from('tax_products')
         .select('slug, category, display_order, name_i18n, description_i18n, long_description_i18n')
@@ -439,7 +439,7 @@ module.exports = function createTaxRouter(deps) {
     const bizName  = lang === 'es'
       ? (community.name    || community.name_en || '')
       : (community.name_en || community.name    || '');
-    const publicUrl = `${process.env.PUBLIC_APP_URL || ''}/tax/${slug}`;
+    const publicUrl = community.website_url || `${process.env.PUBLIC_APP_URL || ''}/tax/${slug}`;
 
     // Draw footer band on the current page (call before doc.end()).
     function drawFooter() {
@@ -3160,7 +3160,7 @@ module.exports = function createTaxRouter(deps) {
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
-        default_locale, calendly_url, landing_copy_i18n
+        default_locale, calendly_url, website_url, landing_copy_i18n
       `)
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle();
     if (error) return sendSupabaseError(res, error);
@@ -3213,6 +3213,16 @@ module.exports = function createTaxRouter(deps) {
             message: 'WhatsApp must be in international format, e.g., +14155551234.' });
         }
         update.whatsapp = norm;
+      }
+    }
+    if (body.website_url !== undefined) {
+      const raw = String(body.website_url || '').trim();
+      if (raw === '') { update.website_url = ''; }
+      else if (!/^https?:\/\/.+/i.test(raw)) {
+        return res.status(400).json({ error: 'website_url_invalid',
+          message: 'Website URL must start with http:// or https://.' });
+      } else {
+        update.website_url = raw.slice(0, 500);
       }
     }
     if (body.calendly_url !== undefined) {

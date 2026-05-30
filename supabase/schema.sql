@@ -2694,6 +2694,9 @@ end $$;
 alter table public.communities
   add column if not exists calendly_url text not null default '';
 
+alter table public.communities
+  add column if not exists website_url text not null default '';
+
 -- Owner-customizable copy for the public landing page. JSONB shape:
 --   { "<i18n.key>": { "en": "...", "es": "..." }, ... }
 -- Empty / missing values fall back to the platform i18n defaults so the

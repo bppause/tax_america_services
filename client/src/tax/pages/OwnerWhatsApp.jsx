@@ -159,7 +159,7 @@ export default function OwnerWhatsApp() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
 
-  const publicUrl = `${window.location.origin}/tax/${community?.id}`;
+  const publicUrl = settings?.website_url || `${window.location.origin}/tax/${community?.id}`;
   const pdfUrl    = community ? brochureUrl(window.location.origin, community.id, msgLocale) : '';
 
   const getField = (field) => template[msgLocale]?.[field] ?? DEFAULTS[msgLocale][field];
