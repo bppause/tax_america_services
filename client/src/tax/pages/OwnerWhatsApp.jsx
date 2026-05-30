@@ -58,7 +58,13 @@ function buildContactBlock(locale, settings) {
     settings.phone         ? (locale === 'es' ? `📞 Teléfono: ${settings.phone}` : `📞 Phone: ${settings.phone}`) : '',
     waUrl                  ? `💬 WhatsApp: ${waUrl}` : '',
     settings.contact_email ? `📧 Email: ${settings.contact_email}` : '',
-    `🌐 {SITE}`,
+    `🌐 ${locale === 'es' ? 'Sitio web' : 'Website'}: {SITE}`,
+    settings.calendly_url
+      ? `📅 ${locale === 'es' ? 'Agende su cita' : 'Schedule a meeting'}: ${settings.calendly_url}`
+      : '',
+    `📩 ${locale === 'es'
+      ? 'Envíe su consulta sobre nuestros servicios'
+      : 'Send us your service inquiry'}: {SITE}#contact`,
   ].filter(Boolean).join('\n');
 }
 
