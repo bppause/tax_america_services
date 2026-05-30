@@ -181,8 +181,13 @@ module.exports = function createTaxSenders(deps) {
         ).join('\n\n')
       : '';
 
+    const isReturning = lead.source === 'returning_customer';
+
     const lines = [
-      `New lead via ${community.name} landing page:`,
+      isReturning
+        ? `Inquiry from existing customer — ${community.name}:`
+        : `New lead via ${community.name} landing page:`,
+      isReturning ? '⚠️  This email is already associated with an existing customer.' : '',
       '',
       `Name:    ${lead.name}`,
       `Email:   ${lead.email}`,
@@ -216,7 +221,8 @@ module.exports = function createTaxSenders(deps) {
 
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:560px">
-        <h2 style="margin-top:0">New lead — ${escapeHtml(community.name)}</h2>
+        <h2 style="margin-top:0">${isReturning ? 'Existing customer inquiry' : 'New lead'} — ${escapeHtml(community.name)}</h2>
+        ${isReturning ? `<div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#92400e">⚠️ This email is already associated with an existing customer in your portal.</div>` : ''}
         <table style="border-collapse:collapse;width:100%">
           <tr><td style="padding:6px 8px;color:#555">Name</td><td style="padding:6px 8px"><strong>${escapeHtml(lead.name)}</strong></td></tr>
           <tr><td style="padding:6px 8px;color:#555">Email</td><td style="padding:6px 8px"><a href="mailto:${escapeHtml(lead.email)}">${escapeHtml(lead.email)}</a></td></tr>
@@ -238,7 +244,9 @@ module.exports = function createTaxSenders(deps) {
     `;
 
     const defaults = {
-      subject: `[${community.name}] New lead from ${lead.name}`,
+      subject: isReturning
+        ? `[${community.name}] Existing customer inquiry from ${lead.name}`
+        : `[${community.name}] New lead from ${lead.name}`,
       text, html,
     };
     const vars = {

@@ -864,6 +864,22 @@ module.exports = function createTaxRouter(deps) {
     if (cErr) return sendSupabaseError(res, cErr);
     if (!community) return res.status(404).json({ error: 'Tax community not found.' });
 
+    // Check whether this email belongs to an existing customer in the same community.
+    // If so, tag the lead so the owner can distinguish new vs returning inquiries.
+    let existingCustomerId = null;
+    if (email) {
+      const { data: existingCustomer } = await supabase
+        .from('tax_customers')
+        .select('id')
+        .eq('community_id', community.id)
+        .ilike('email', email.trim())
+        .maybeSingle();
+      if (existingCustomer) existingCustomerId = existingCustomer.id;
+    }
+
+    const leadSource = existingCustomerId ? 'returning_customer'
+      : aiConversation ? 'ai_chat' : 'landing';
+
     const lead = {
       id: 'lead_' + uuidv4().slice(0, 12),
       community_id: community.id,
@@ -880,9 +896,10 @@ module.exports = function createTaxRouter(deps) {
       // exist on older deployments. Run the migration in schema.sql to
       // add it: ALTER TABLE tax_leads ADD COLUMN ai_conversation jsonb;
       ...(aiConversation ? { ai_conversation: aiConversation } : {}),
+      ...(existingCustomerId ? { converted_customer_id: existingCustomerId } : {}),
       preferred_locale: preferredLocale,
       status: 'new',
-      source: aiConversation ? 'ai_chat' : 'landing',
+      source: leadSource,
       user_agent: userAgent,
       ip,
     };

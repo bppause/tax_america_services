@@ -251,6 +251,21 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               marginLeft: 8, padding: '1px 8px', borderRadius: 999,
               background: b.bg, color: b.fg, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
             }}>{statusLabel(lead.status, t)}</span>
+            {lead.source === 'returning_customer' ? (
+              <span title="This email is already associated with a customer in your portal" style={{
+                marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+                background: '#fffbeb', color: '#92400e',
+                border: '1px solid #f59e0b',
+                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>↩ Existing customer</span>
+            ) : (
+              <span style={{
+                marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+                background: '#f0fdf4', color: '#166534',
+                border: '1px solid #86efac',
+                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>★ New lead</span>
+            )}
             {lead.preferred_locale && (
               <span style={{ marginLeft: 6, color: 'var(--tax-muted)', fontSize: 11 }}>
                 {lead.preferred_locale === 'en' ? 'EN' : 'ES'}
