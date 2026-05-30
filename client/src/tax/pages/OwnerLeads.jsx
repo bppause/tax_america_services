@@ -287,6 +287,27 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, focu
               <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.55 }}>{lead.message}</div>
             </div>
           )}
+          {Array.isArray(lead.ai_conversation) && lead.ai_conversation.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 6 }}>
+                AI Chat Transcript
+              </div>
+              <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, overflow: 'hidden' }}>
+                {lead.ai_conversation.map((m, i) => (
+                  <div key={i} style={{
+                    padding: '8px 12px',
+                    background: m.role === 'user' ? 'var(--tax-bg-alt)' : '#fff',
+                    borderTop: i > 0 ? '1px solid var(--tax-border)' : 'none',
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: m.role === 'user' ? 'var(--tax-brand-primary)' : 'var(--tax-muted)', marginBottom: 2, textTransform: 'uppercase' }}>
+                      {m.role === 'user' ? 'Lead' : 'AI'}
+                    </div>
+                    <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ marginBottom: 12 }}>
             <label htmlFor={`ln-${lead.id}`} style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
               {t('owner.leads.notes')}

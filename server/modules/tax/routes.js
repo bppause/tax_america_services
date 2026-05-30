@@ -815,6 +815,14 @@ module.exports = function createTaxRouter(deps) {
       .slice(0, 20);                                  // cap so we can't be flooded
     const productSlug = productSlugs[0] || '';
     const message = trim(body.message, MAX_TEXT_LEN);
+    // AI conversation transcript from the chat widget — saved verbatim
+    // so the owner can see exactly what the lead asked and was told.
+    const aiConversation = (() => {
+      const raw = body.aiConversation;
+      if (!Array.isArray(raw)) return null;
+      const valid = raw.filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+      return valid.length ? valid.map(m => ({ role: m.role, content: String(m.content).slice(0, 2000) })) : null;
+    })();
     const customerType = (String(body.customerType || '').toLowerCase() === 'business')
       ? 'business' : 'individual';
     // For individuals we deliberately drop any company string the
@@ -866,9 +874,10 @@ module.exports = function createTaxRouter(deps) {
       product_slug: productSlug,
       product_slugs: productSlugs,
       message,
+      ai_conversation: aiConversation,
       preferred_locale: preferredLocale,
       status: 'new',
-      source: 'landing',
+      source: aiConversation ? 'ai_chat' : 'landing',
       user_agent: userAgent,
       ip,
     };
@@ -892,6 +901,110 @@ module.exports = function createTaxRouter(deps) {
     }
 
     res.json({ ok: true, id: inserted.id });
+  });
+
+  // ── POST /leads/chat ────────────────────────────────────────────────────────
+  // Public AI chat endpoint. Proxies to Anthropic so the API key stays
+  // server-side. Takes the running conversation and the community/product
+  // context; returns the next assistant message + a readyToConnect flag
+  // the client uses to reveal the contact form.
+  router.post('/leads/chat', async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'AI assistant not configured.' });
+
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const productSlug   = trim(body.productSlug || '', 200);
+    const messages      = Array.isArray(body.messages) ? body.messages : [];
+
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    if (messages.length === 0) return res.status(400).json({ error: 'messages required.' });
+
+    // Validate message shape and cap history to prevent abuse.
+    const MAX_MSGS = 30;
+    const validMsgs = messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .map(m => ({ role: m.role, content: trim(m.content, 2000) }))
+      .slice(-MAX_MSGS);
+
+    if (validMsgs.length === 0) return res.status(400).json({ error: 'No valid messages.' });
+    if (validMsgs[validMsgs.length - 1].role !== 'user') {
+      return res.status(400).json({ error: 'Last message must be from user.' });
+    }
+
+    const { data: community, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name, contact_email, default_locale')
+      .eq('id', communitySlug)
+      .eq('business_type', TAX_BUSINESS_TYPE)
+      .maybeSingle();
+    if (cErr) return sendSupabaseError(res, cErr);
+    if (!community) return res.status(404).json({ error: 'Community not found.' });
+
+    // Load products to give the AI context about offered services.
+    const { data: products } = await supabase
+      .from('tax_products')
+      .select('slug, name_i18n, description_i18n, long_description_i18n, category')
+      .eq('community_id', community.id)
+      .eq('enabled', true)
+      .order('sort_order', { ascending: true });
+
+    const productLines = (products || []).map(p => {
+      const name = (p.name_i18n?.en || p.name_i18n?.es || p.slug);
+      const desc = (p.long_description_i18n?.en || p.description_i18n?.en
+                 || p.long_description_i18n?.es || p.description_i18n?.es || '');
+      return `- ${name} (${p.category}): ${desc.slice(0, 300)}`;
+    }).join('\n');
+
+    const focusProduct = productSlug
+      ? (products || []).find(p => p.slug === productSlug)
+      : null;
+    const focusName = focusProduct
+      ? (focusProduct.name_i18n?.en || focusProduct.name_i18n?.es || productSlug)
+      : null;
+
+    const systemPrompt = [
+      `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
+      `Your job is to answer questions prospects have about the services offered, help them understand`,
+      `what service fits their situation, and — when they are ready — invite them to send their contact`,
+      `details so a team member can follow up.`,
+      '',
+      `Services offered:\n${productLines || '(No services listed yet)'}`,
+      '',
+      focusName ? `The visitor is currently looking at the "${focusName}" service. Start the conversation focused there, but answer questions about any service.` : '',
+      '',
+      `Behavior guidelines:`,
+      `- Be concise and friendly. Answer honestly; do not invent fees or timelines.`,
+      `- Ask one clarifying question at a time to understand the prospect's situation.`,
+      `- After 3 or more exchanges, or whenever the prospect expresses clear interest, offer to connect`,
+      `  them with the team by ending your reply with exactly the token [READY_TO_CONNECT] on its own line.`,
+      `- You can also include [READY_TO_CONNECT] earlier if the user explicitly asks to be contacted.`,
+      `- Do NOT include [READY_TO_CONNECT] on the very first reply or before you have answered at least one question.`,
+      `- Reply in the same language the user is writing in (English or Spanish).`,
+    ].filter(Boolean).join('\n');
+
+    let Anthropic;
+    try { Anthropic = require('@anthropic-ai/sdk'); }
+    catch { return res.status(503).json({ error: 'AI SDK not installed.' }); }
+
+    const client = new Anthropic.default({ apiKey });
+    let aiText;
+    try {
+      const aiRes = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: validMsgs,
+      });
+      aiText = aiRes.content?.[0]?.text || '';
+    } catch (e) {
+      warn('[tax/chat] Anthropic error', e?.message || e);
+      return res.status(502).json({ error: 'AI assistant unavailable. Please try again.' });
+    }
+
+    const readyToConnect = aiText.includes('[READY_TO_CONNECT]');
+    const message = aiText.replace(/\[READY_TO_CONNECT\]\s*/g, '').trim();
+    res.json({ message, readyToConnect });
   });
 
   // Phase 4b: lead inbox lives at /admin/leads — see below. /leads stays

@@ -174,6 +174,13 @@ module.exports = function createTaxSenders(deps) {
     // auto-expands the matching row and scrolls to it.
     const leadInboxUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/leads?lead=${encodeURIComponent(lead.id)}`;
 
+    const conversation = Array.isArray(lead.ai_conversation) ? lead.ai_conversation : [];
+    const conversationText = conversation.length
+      ? '\n\nAI Chat Transcript:\n' + conversation.map(m =>
+          `${m.role === 'user' ? 'Lead' : 'AI'}: ${m.content}`
+        ).join('\n\n')
+      : '';
+
     const lines = [
       `New lead via ${community.name} landing page:`,
       '',
@@ -185,13 +192,27 @@ module.exports = function createTaxSenders(deps) {
       '',
       'Message:',
       lead.message || '(none)',
-      '',
+      conversationText,
       `Open in app: ${leadInboxUrl}`,
       '',
       `Lead ID: ${lead.id}`,
       `Submitted: ${lead.created_at}`,
     ];
     const text = lines.join('\n');
+
+    const conversationHtml = conversation.length ? `
+        <h3 style="margin-top:24px">AI Chat Transcript</h3>
+        <div style="border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+          ${conversation.map(m => `
+            <div style="padding:10px 14px;${m.role === 'user' ? 'background:#f0f4ff' : 'background:#fff'}">
+              <div style="font-size:11px;font-weight:700;color:${m.role === 'user' ? '#1d3a6d' : '#555'};margin-bottom:4px;text-transform:uppercase">
+                ${m.role === 'user' ? 'Lead' : 'AI Assistant'}
+              </div>
+              <div style="font-size:14px;line-height:1.5;white-space:pre-wrap">${escapeHtml(m.content)}</div>
+            </div>
+          `).join('')}
+        </div>
+    ` : '';
 
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:560px">
@@ -205,6 +226,7 @@ module.exports = function createTaxSenders(deps) {
         </table>
         <h3>Message</h3>
         <div style="white-space:pre-wrap;background:#f7f7f7;padding:12px;border-radius:8px">${escapeHtml(lead.message || '(none)')}</div>
+        ${conversationHtml}
         <p style="margin:20px 0">
           <a href="${escapeHtml(leadInboxUrl)}"
              style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">

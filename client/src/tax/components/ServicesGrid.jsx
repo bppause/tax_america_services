@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import VideoEmbed from './VideoEmbed';
 import { useLandingCopy } from '../lib/landingCopy';
+import LeadChatWidget from './LeadChatWidget';
 
 const ICON_LETTER = {
   receipt: 'IR', briefcase: 'BT', 'id-card': 'ID', book: 'BK', wallet: 'PR',
@@ -14,7 +15,7 @@ const ICON_LETTER = {
 // this service" CTA. Earlier inline-list variant was rolled back per
 // the owner request — full descriptions live behind a click again so
 // the landing page stays scannable.
-export default function ServicesGrid({ products, onRequestService }) {
+export default function ServicesGrid({ products, community, onRequestService }) {
   const { locale, t } = useT();
   const { pick } = useLandingCopy();
   const [openId, setOpenId] = useState(null);
@@ -68,6 +69,8 @@ export default function ServicesGrid({ products, onRequestService }) {
           product={open}
           locale={locale}
           t={t}
+          community={community}
+          products={products}
           onClose={() => setOpenId(null)}
           onRequest={() => onRequest(open.slug)}
         />
@@ -76,8 +79,9 @@ export default function ServicesGrid({ products, onRequestService }) {
   );
 }
 
-function ServiceDetailModal({ product, locale, t, onClose, onRequest }) {
+function ServiceDetailModal({ product, locale, t, community, products, onClose, onRequest }) {
   const closeRef = useRef(null);
+  const [tab, setTab] = useState('info'); // 'info' | 'chat'
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -104,41 +108,86 @@ function ServiceDetailModal({ product, locale, t, onClose, onRequest }) {
     return '';
   }).filter(Boolean);
 
+  const tabLabel = {
+    info: locale === 'es' ? 'Información' : 'About',
+    chat: locale === 'es' ? 'Preguntar al asistente' : 'Ask AI assistant',
+  };
+
   return (
     <div className="tax-modal" role="dialog" aria-modal="true" aria-labelledby="svcmodal-title"
          onClick={onClose}>
       <div className="tax-modal__panel" onClick={e => e.stopPropagation()}>
         <button type="button" ref={closeRef} className="tax-modal__close"
                 onClick={onClose} aria-label={t('services.modal.close')}>×</button>
-        {videoUrl && <VideoEmbed url={videoUrl} title={name} />}
         <span className="tax-service-card__category">{categoryLabel}</span>
         <h3 id="svcmodal-title" className="tax-modal__title">{name}</h3>
-        <p className="tax-modal__desc">{desc}</p>
-        {longDesc && (
-          <div className="tax-modal__longdesc">
-            {longDesc.split(/\n{2,}/).map((para, i) => (
-              <p key={i}>{para}</p>
+
+        {/* Tab bar */}
+        {community && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--tax-border)' }}>
+            {['info', 'chat'].map(tabKey => (
+              <button key={tabKey} type="button"
+                onClick={() => setTab(tabKey)}
+                style={{
+                  padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                  background: 'transparent', borderBottom: tab === tabKey ? '2px solid var(--tax-brand-primary, #1d3a6d)' : '2px solid transparent',
+                  color: tab === tabKey ? 'var(--tax-brand-primary, #1d3a6d)' : 'var(--tax-muted)',
+                  marginBottom: -1,
+                }}>
+                {tabLabel[tabKey]}
+              </button>
             ))}
           </div>
         )}
-        {requiresLabels.length > 0 && (
-          <div className="tax-modal__section">
-            <h4>{t('services.modal.requires')}</h4>
-            <ul>
-              {requiresLabels.map((r, i) => <li key={i}>{r}</li>)}
-            </ul>
+
+        {tab === 'info' && (
+          <>
+            {videoUrl && <VideoEmbed url={videoUrl} title={name} />}
+            <p className="tax-modal__desc">{desc}</p>
+            {longDesc && (
+              <div className="tax-modal__longdesc">
+                {longDesc.split(/\n{2,}/).map((para, i) => (
+                  <p key={i}>{para}</p>
+                ))}
+              </div>
+            )}
+            {requiresLabels.length > 0 && (
+              <div className="tax-modal__section">
+                <h4>{t('services.modal.requires')}</h4>
+                <ul>
+                  {requiresLabels.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              </div>
+            )}
+            <div className="tax-modal__actions">
+              {community && (
+                <button type="button" className="tax-btn tax-btn--ghost"
+                        onClick={() => setTab('chat')}
+                        style={{ color: 'var(--tax-brand-primary, #1d3a6d)' }}>
+                  {locale === 'es' ? '¿Tienes preguntas? Pregunta al asistente →' : 'Have questions? Ask AI →'}
+                </button>
+              )}
+              <button type="button" className="tax-btn tax-btn--primary"
+                      onClick={onRequest}>
+                {t('services.modal.requestCta')}
+              </button>
+              <button type="button" className="tax-btn tax-btn--ghost"
+                      onClick={onClose} style={{ color: 'var(--tax-text)' }}>
+                {t('services.modal.close')}
+              </button>
+            </div>
+          </>
+        )}
+
+        {tab === 'chat' && community && (
+          <div style={{ height: 440 }}>
+            <LeadChatWidget
+              community={community}
+              products={products}
+              preselectedProduct={product}
+            />
           </div>
         )}
-        <div className="tax-modal__actions">
-          <button type="button" className="tax-btn tax-btn--primary"
-                  onClick={onRequest}>
-            {t('services.modal.requestCta')}
-          </button>
-          <button type="button" className="tax-btn tax-btn--ghost"
-                  onClick={onClose} style={{ color: 'var(--tax-text)' }}>
-            {t('services.modal.close')}
-          </button>
-        </div>
       </div>
     </div>
   );

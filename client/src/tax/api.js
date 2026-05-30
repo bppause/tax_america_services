@@ -104,6 +104,7 @@ export const taxApi = {
   getCommunityTestimonials(slug)  { return request('GET',  `/community/${encodeURIComponent(slug)}/testimonials`); },
   getCommunityTeam(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/team`); },
   submitLead(payload)             { return request('POST', '/leads', payload); },
+  chatWithAi(payload)             { return request('POST', '/leads/chat', payload, null, { timeoutMs: 30000 }); },
   getResponse(token)              { return request('GET',  `/respond/${encodeURIComponent(token)}`); },
   submitResponse(token, payload)  { return request('POST', `/respond/${encodeURIComponent(token)}`, payload); },
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { hasSavedLocale, useT } from '../i18n';
 import { taxApi } from '../api';
 import Header from '../components/Header';
+import LeadChatWidget from '../components/LeadChatWidget';
 import Hero from '../components/Hero';
 import ServicesGrid from '../components/ServicesGrid';
 import TeamSection from '../components/TeamSection';
@@ -34,6 +35,7 @@ export default function Landing({ communitySlug }) {
   // modal. Passed down to LeadForm so the chip is pre-checked when the
   // visitor lands at the contact form.
   const [pendingService, setPendingService] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
   // Testimonials lifted to Landing so the Reviews nav link can hide
   // itself when there are zero rows (instead of linking to a section
   // that self-hides — a scroll-to-nothing surprise). Also captures
@@ -159,7 +161,7 @@ export default function Landing({ communitySlug }) {
       <div className="tax-app" style={brandStyle}>
         <Header community={community} sections={sections} />
         <Hero community={community} />
-        <ServicesGrid products={products} onRequestService={onRequestService} />
+        <ServicesGrid products={products} community={community} onRequestService={onRequestService} />
         <TeamSection communitySlug={communitySlug} />
         <TestimonialsSection communitySlug={communitySlug}
                              rows={testimonials}
@@ -171,6 +173,47 @@ export default function Landing({ communitySlug }) {
         <Contact community={community} products={products}
                  initialProductSlug={pendingService} />
         <Footer community={community} />
+
+        {/* Floating AI chat button */}
+        <button type="button"
+          onClick={() => setChatOpen(o => !o)}
+          aria-label={locale === 'es' ? 'Abrir asistente virtual' : 'Open AI assistant'}
+          style={{
+            position: 'fixed', bottom: 24, right: 24, zIndex: 1200,
+            width: 56, height: 56, borderRadius: '50%',
+            background: 'var(--tax-brand-primary, #1d3a6d)',
+            color: '#fff', border: 'none', cursor: 'pointer',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+            fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+          {chatOpen ? '×' : '💬'}
+        </button>
+
+        {chatOpen && (
+          <div style={{
+            position: 'fixed', bottom: 90, right: 24, zIndex: 1200,
+            width: 360, maxWidth: 'calc(100vw - 32px)',
+            height: 520, maxHeight: 'calc(100vh - 110px)',
+            background: '#fff', border: '1px solid var(--tax-border)',
+            borderRadius: 14, boxShadow: '0 8px 32px rgba(0,0,0,0.16)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '12px 16px', background: 'var(--tax-brand-primary, #1d3a6d)',
+              color: '#fff', fontWeight: 600, fontSize: 14, display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span>{locale === 'es' ? 'Asistente virtual' : 'AI Assistant'}</span>
+              <button type="button" onClick={() => setChatOpen(false)}
+                style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
+                ×
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', padding: 12 }}>
+              <LeadChatWidget community={community} products={products} />
+            </div>
+          </div>
+        )}
       </div>
     </LandingCopyProvider>
   );
