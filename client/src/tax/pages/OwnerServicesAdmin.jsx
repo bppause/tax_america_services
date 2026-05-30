@@ -377,6 +377,131 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], onC
   );
 }
 
+// Curated credential list grouped by relevance to service category.
+// Each entry is the canonical display string stored in the DB.
+const CERT_LIBRARY = [
+  // IRS credentials
+  { label: 'CAA – Certified Acceptance Agent (IRS)',        categories: ['one_off', 'tax_prep', 'recurring'] },
+  { label: 'IRS Enrolled Agent (EA)',                       categories: ['tax_prep', 'recurring', 'one_off'] },
+  { label: 'IRS EFIN – Authorized e-File Provider',        categories: ['tax_prep', 'recurring'] },
+  { label: 'IRS Annual Filing Season Program (AFSP)',       categories: ['tax_prep'] },
+  { label: 'IRS PTIN – Registered Tax Preparer',           categories: ['tax_prep', 'recurring'] },
+  // Accounting
+  { label: 'CPA – Certified Public Accountant',            categories: ['recurring', 'tax_prep', 'one_off'] },
+  { label: 'QuickBooks ProAdvisor – Certified',            categories: ['recurring'] },
+  { label: 'Xero Advisor Certified',                       categories: ['recurring'] },
+  // Payroll
+  { label: 'FPC – Fundamental Payroll Certification',      categories: ['recurring'] },
+  { label: 'CPP – Certified Payroll Professional',         categories: ['recurring'] },
+  // Business / legal
+  { label: 'Notary Public',                                categories: ['one_off', 'tax_prep'] },
+  { label: 'USCIS Accredited Representative',              categories: ['one_off'] },
+  // Translation / general
+  { label: 'ATA Certified Translator',                     categories: ['one_off'] },
+  { label: 'NAICS Licensed Professional',                  categories: ['one_off', 'recurring', 'tax_prep'] },
+];
+
+function CertificationsEditor({ certifications, setCertifications, certInput, setCertInput, category, t }) {
+  // Show credentials relevant to this service's category first, then the rest.
+  const relevant = CERT_LIBRARY.filter(c => c.categories.includes(category));
+  const others   = CERT_LIBRARY.filter(c => !c.categories.includes(category));
+  const ordered  = [...relevant, ...others];
+
+  const toggle = (label) => {
+    setCertifications(prev =>
+      prev.includes(label) ? prev.filter(c => c !== label) : [...prev, label]
+    );
+  };
+
+  const addCustom = () => {
+    const v = certInput.trim();
+    if (v && !certifications.includes(v)) setCertifications(prev => [...prev, v]);
+    setCertInput('');
+  };
+
+  return (
+    <div>
+      <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+        {t('owner.services.certifications')}
+      </label>
+      <p style={{ margin: '0 0 10px', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
+        {t('owner.services.certificationsHint')}
+      </p>
+
+      {/* Credential pick-list */}
+      <div style={{ display: 'grid', gap: 5, marginBottom: 10 }}>
+        {relevant.length > 0 && (
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
+                        color: 'var(--tax-brand-primary)', marginBottom: 2 }}>
+            {t('owner.services.certificationsRelevant')}
+          </div>
+        )}
+        {ordered.map((c, i) => {
+          const checked = certifications.includes(c.label);
+          const isFirstOther = relevant.length > 0 && i === relevant.length;
+          return (
+            <div key={c.label}>
+              {isFirstOther && (
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
+                              color: 'var(--tax-muted)', marginTop: 8, marginBottom: 2 }}>
+                  {t('owner.services.certificationsOther')}
+                </div>
+              )}
+              <label style={{
+                display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                padding: '7px 10px', borderRadius: 7,
+                border: `1.5px solid ${checked ? '#f59e0b' : 'var(--tax-border)'}`,
+                background: checked ? '#fffbeb' : '#fff',
+                transition: 'all .1s',
+              }}>
+                <input type="checkbox" checked={checked} onChange={() => toggle(c.label)}
+                  style={{ width: 15, height: 15, accentColor: '#f59e0b', flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: checked ? 700 : 400,
+                               color: checked ? '#92400e' : 'var(--tax-text)' }}>
+                  {checked ? '🏅 ' : ''}{c.label}
+                </span>
+              </label>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Custom credential input */}
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 5 }}>
+        {t('owner.services.certificationsCustom')}
+      </div>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input type="text" value={certInput} onChange={e => setCertInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }}
+          placeholder={t('owner.services.certificationsPlaceholder')}
+          maxLength={200}
+          style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 }} />
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addCustom}>
+          + {t('owner.services.certificationsAdd')}
+        </button>
+      </div>
+
+      {/* Currently selected summary */}
+      {certifications.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
+          {certifications.map((c, i) => (
+            <span key={i} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+              background: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b',
+            }}>
+              🏅 {c}
+              <button type="button" onClick={() => setCertifications(prev => prev.filter((_, idx) => idx !== i))}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e',
+                         fontSize: 15, lineHeight: 1, padding: '0 0 0 1px' }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProductEditor({ product: p, auth, community, relTypes = [], employees = [], onDone, onCancel, t }) {
   const [nameEn, setNameEn] = useState(p.name_i18n?.en || '');
   const [nameEs, setNameEs] = useState(p.name_i18n?.es || '');
@@ -550,53 +675,14 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
       </div>
 
       {/* Certifications — surface in AI chat upfront and as badges on service cards */}
-      <div>
-        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
-          {t('owner.services.certifications')}
-        </label>
-        <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
-          {t('owner.services.certificationsHint')}
-        </p>
-        {/* Existing certification tags */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-          {certifications.map((c, i) => (
-            <span key={i} style={{
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-              background: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b',
-            }}>
-              🏅 {c}
-              <button type="button" onClick={() => setCertifications(prev => prev.filter((_, idx) => idx !== i))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontSize: 14, padding: '0 0 0 2px', lineHeight: 1 }}>
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-        {/* Add new certification */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          <input type="text" value={certInput} onChange={e => setCertInput(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                const v = certInput.trim();
-                if (v && !certifications.includes(v)) setCertifications(prev => [...prev, v]);
-                setCertInput('');
-              }
-            }}
-            placeholder={t('owner.services.certificationsPlaceholder')}
-            maxLength={200}
-            style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 }} />
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-            onClick={() => {
-              const v = certInput.trim();
-              if (v && !certifications.includes(v)) setCertifications(prev => [...prev, v]);
-              setCertInput('');
-            }}>
-            + {t('owner.services.certificationsAdd')}
-          </button>
-        </div>
-      </div>
+      <CertificationsEditor
+        certifications={certifications}
+        setCertifications={setCertifications}
+        certInput={certInput}
+        setCertInput={setCertInput}
+        category={p.category}
+        t={t}
+      />
 
       <div>
         <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
