@@ -55,6 +55,7 @@ module.exports = function createTaxRouter(deps) {
     isSupabaseConfigured,
     auditLog,
     sendTaxLeadEmail,
+    sendTaxLeadConfirmationEmail,
     sendTaxTaskAssignedEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
@@ -920,6 +921,23 @@ module.exports = function createTaxRouter(deps) {
         && await communityStaffEmailFlag(community.id, 'tax_staff_email_lead_enabled')) {
       try { await sendTaxLeadEmail({ community, lead: inserted }); }
       catch (e) { warn('[tax] lead notification email failed', e?.message || e); }
+    }
+
+    // Send branded confirmation to the lead with services + AI transcript.
+    if (typeof sendTaxLeadConfirmationEmail === 'function' && inserted.email) {
+      try {
+        // Fetch product details so confirmation email can show proper names + links.
+        let products = [];
+        if (productSlugs.length) {
+          const { data: pd } = await supabase
+            .from('tax_products')
+            .select('slug, name_i18n, description_i18n')
+            .eq('community_id', community.id)
+            .in('slug', productSlugs);
+          products = pd || [];
+        }
+        await sendTaxLeadConfirmationEmail({ community, lead: inserted, products });
+      } catch (e) { warn('[tax] lead confirmation email failed', e?.message || e); }
     }
 
     res.json({ ok: true, id: inserted.id });

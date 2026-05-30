@@ -277,6 +277,136 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // ── Lead confirmation email (sent to the lead/customer) ────────────────────
+  // Branded with the practice's logo + contact info. Confirms receipt,
+  // lists the services they enquired about (each linked to the public
+  // landing-page anchor), and shows the AI chat transcript when present.
+  const sendTaxLeadConfirmationEmail = async ({ community, lead, products = [] }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(lead?.email || '').trim();
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return { sent: false, skipped: true, reason: 'Lead has no valid email.' };
+    }
+
+    // Full branding (logo, address, phone …) for brandedEmailLayout.
+    const bCommunity = await ensureBrandingFields(community);
+
+    const lang = (lead.preferred_locale === 'en') ? 'en' : 'es';
+    const practiceName = (lang === 'en' && bCommunity.name_en) ? bCommunity.name_en : (bCommunity.name || 'Tax America Services');
+    const firstName = lead.first_name || (lead.name || '').split(' ')[0] || lead.name || '';
+
+    const base     = appBase();
+    const siteBase = base ? `${base}/tax/${encodeURIComponent(bCommunity.id)}` : `#`;
+
+    // Build service rows — proper name + anchor link to public landing page.
+    const slugs = (Array.isArray(lead.product_slugs) && lead.product_slugs.length)
+      ? lead.product_slugs
+      : (lead.product_slug ? [lead.product_slug] : []);
+
+    const serviceRows = slugs.map(slug => {
+      const p = products.find(x => x.slug === slug);
+      const nameEn  = p?.name_i18n?.en?.value  || p?.name_i18n?.es?.value  || slug;
+      const nameEs  = p?.name_i18n?.es?.value  || p?.name_i18n?.en?.value  || slug;
+      const label   = lang === 'en' ? nameEn : nameEs;
+      const descEn  = p?.description_i18n?.en?.value || '';
+      const descEs  = p?.description_i18n?.es?.value || '';
+      const desc    = lang === 'en' ? descEn : descEs;
+      const href    = `${siteBase}#service-${encodeURIComponent(slug)}`;
+      return { label, desc, href };
+    });
+
+    const conversation = Array.isArray(lead.ai_conversation) ? lead.ai_conversation : [];
+
+    // ── Plain-text ─────────────────────────────────────────────────────────
+    const greetingLine = lang === 'en'
+      ? `Hi ${firstName},`
+      : `Hola ${firstName},`;
+    const confirmedLine = lang === 'en'
+      ? `Thank you for reaching out to ${practiceName}! We've received your inquiry and will be in touch soon.`
+      : `¡Gracias por comunicarte con ${practiceName}! Hemos recibido tu consulta y nos pondremos en contacto contigo pronto.`;
+    const servicesHeading = lang === 'en' ? 'Services you asked about:' : 'Servicios sobre los que consultaste:';
+    const transcriptHeading = lang === 'en' ? 'Your AI chat summary:' : 'Resumen de tu chat con IA:';
+    const serviceTextLines = serviceRows.map(r => `• ${r.label}\n  ${r.href}`).join('\n\n');
+    const transcriptText = conversation.length
+      ? `\n\n${transcriptHeading}\n` + conversation.map(m =>
+          `${m.role === 'user' ? (lang === 'en' ? 'You' : 'Tú') : 'AI'}: ${m.content}`
+        ).join('\n\n')
+      : '';
+
+    const text = [
+      greetingLine, '',
+      confirmedLine,
+      serviceTextLines ? `\n${servicesHeading}\n\n${serviceTextLines}` : '',
+      transcriptText,
+      '',
+      practiceName,
+      bCommunity.contact_email || '',
+      bCommunity.phone || '',
+    ].filter(l => l !== undefined).join('\n');
+
+    // ── HTML ──────────────────────────────────────────────────────────────
+    const servicesHtml = serviceRows.length ? `
+      <tr><td style="padding:20px 26px 4px">
+        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:10px">
+          ${lang === 'en' ? 'Services you asked about' : 'Servicios consultados'}
+        </div>
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+          ${serviceRows.map(r => `
+            <tr><td style="padding:8px 0;border-bottom:1px solid #f1f5f9">
+              <a href="${escapeHtml(r.href)}"
+                 style="font-size:15px;font-weight:700;color:var(--c,#0f766e);text-decoration:none;display:block">
+                ${escapeHtml(r.label)}
+              </a>
+              ${r.desc ? `<div style="font-size:13px;color:#475569;margin-top:3px;line-height:1.5">${escapeHtml(r.desc)}</div>` : ''}
+              <a href="${escapeHtml(r.href)}"
+                 style="font-size:12px;color:#0f766e;text-decoration:none;display:inline-block;margin-top:4px">
+                ${lang === 'en' ? 'View service details →' : 'Ver detalles del servicio →'}
+              </a>
+            </td></tr>
+          `).join('')}
+        </table>
+      </td></tr>` : '';
+
+    const transcriptHtml = conversation.length ? `
+      <tr><td style="padding:20px 26px 4px">
+        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#64748b;margin-bottom:10px">
+          ${lang === 'en' ? '🤖 Your AI chat summary' : '🤖 Resumen de tu chat con IA'}
+        </div>
+        <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+          ${conversation.map((m, i) => `
+            <div style="padding:10px 14px;${m.role === 'user' ? 'background:#f8f9ff' : 'background:#fff'};${i > 0 ? 'border-top:1px solid #e2e8f0' : ''}">
+              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:${m.role === 'user' ? '#1e3a8a' : '#6366f1'};margin-bottom:4px">
+                ${m.role === 'user' ? (lang === 'en' ? '👤 You' : '👤 Tú') : '🤖 AI Assistant'}
+              </div>
+              <div style="font-size:13px;line-height:1.6;color:#1e293b;white-space:pre-wrap">${escapeHtml(m.content)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </td></tr>` : '';
+
+    const innerHtml = `
+      <tr><td style="padding:26px 26px 4px">
+        <div style="font-size:16px;font-weight:600;color:#0f172a;margin-bottom:8px">${escapeHtml(greetingLine)}</div>
+        <div style="font-size:14px;line-height:1.65;color:#334155">${escapeHtml(confirmedLine)}</div>
+      </td></tr>
+      ${servicesHtml}
+      ${transcriptHtml}
+      <tr><td style="padding:20px 26px 26px">
+        <div style="font-size:13px;color:#64748b;line-height:1.6">
+          ${lang === 'en'
+            ? `We look forward to speaking with you. If you have any questions in the meantime, feel free to reply to this email or reach us through any of the contact options below.`
+            : `Esperamos hablar contigo pronto. Si tienes alguna pregunta, no dudes en responder a este correo o contactarnos por cualquiera de las opciones que aparecen abajo.`}
+        </div>
+      </td></tr>`;
+
+    const html = brandedEmailLayout({ community: bCommunity, lang, innerHtml });
+    const subject = lang === 'en'
+      ? `Your inquiry has been received — ${practiceName}`
+      : `Hemos recibido tu consulta — ${practiceName}`;
+
+    return sendSpanishEmail({ to, subject, text, html, lang: lang === 'en' ? 'en' : 'es-CO' });
+  };
+
   // ── Reminder email (Phase 1.5) ───────────────────────────────────────────
   // Formal bilingual reminder asking the customer for the info needed to
   // complete a filing. Tone consciously formal per owner preference. Lang
@@ -1987,6 +2117,7 @@ module.exports = function createTaxSenders(deps) {
 
   return {
     sendTaxLeadEmail,
+    sendTaxLeadConfirmationEmail,
     sendTaxTaskAssignedEmail,
     sendTaxDailyDigestEmail,
     sendTaxReminderEmail,
