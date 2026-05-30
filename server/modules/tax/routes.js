@@ -388,112 +388,158 @@ module.exports = function createTaxRouter(deps) {
     ]);
     if (cErr || !community) return res.status(404).json({ error: 'Community not found.' });
 
-    // Fetch logo as buffer (PNG/JPEG only; SVG silently skipped).
+    // Fetch logo buffer — accept PNG/JPEG by content-type OR file extension.
     let logoBuffer = null;
     if (community.logo_url) {
       try {
-        const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(5000) });
+        const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(6000) });
         if (lr.ok) {
-          const ct = lr.headers.get('content-type') || '';
-          if (ct.includes('png') || ct.includes('jpeg') || ct.includes('jpg') || ct.includes('gif')) {
-            logoBuffer = Buffer.from(await lr.arrayBuffer());
-          }
+          const ct  = (lr.headers.get('content-type') || '').toLowerCase();
+          const url = community.logo_url.toLowerCase().split('?')[0];
+          const isRaster = ct.includes('image/png') || ct.includes('image/jpeg') ||
+                           ct.includes('image/jpg') || ct.includes('image/gif')  ||
+                           url.endsWith('.png') || url.endsWith('.jpg') ||
+                           url.endsWith('.jpeg') || url.endsWith('.gif');
+          if (isRaster) logoBuffer = Buffer.from(await lr.arrayBuffer());
         }
-      } catch (_) { /* logo unavailable — continue without it */ }
+      } catch (_) { /* unavailable — continue without logo */ }
     }
 
     const PDFDocument = require('pdfkit');
-    const doc = new PDFDocument({
-      size: 'A4', margin: 0,
-      info: {
-        Title: lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio',
-        Author: community.name_en || community.name,
-      },
-    });
+    const doc = new PDFDocument({ size: 'A4', margin: 0,
+      info: { Title: lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio',
+              Author: community.name_en || community.name } });
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${slug}-services-${lang}.pdf"`);
     res.setHeader('Cache-Control', 'public, max-age=300');
     doc.pipe(res);
 
-    // ── Brand colors (fall back to professional defaults) ──────────────────
-    const BRAND   = community.brand_primary_color   || '#1e40af';
-    const ACCENT  = community.brand_secondary_color || '#93c5fd';
-    const PW      = doc.page.width;   // 595.28 pts
-    const MARGIN  = 50;
-    const CW      = PW - MARGIN * 2;
-    const DARK    = '#1e293b';
-    const MUTED   = '#64748b';
-    const RULE    = '#e2e8f0';
-    const WHITE   = '#ffffff';
+    // ── Helpers ───────────────────────────────────────────────────────────
+    const BRAND  = community.brand_primary_color  || '#1e3a8a';
+    const ACCENT = community.brand_secondary_color || '#93c5fd';
+    const PW     = doc.page.width;   // 595.28 pts  A4
+    const PH     = doc.page.height;  // 841.89 pts
+    const M      = 48;               // page margin
+    const CW     = PW - M * 2;
+    const DARK   = '#1e293b';
+    const BODY   = '#374151';
+    const MUTED  = '#6b7280';
+    const WHITE  = '#ffffff';
+    const FOOTER = 44;               // footer band height
+    const pickL  = (obj) => (obj?.[lang] || obj?.en || obj?.es || '');
 
-    const LOGO_H   = 70;  // max logo height in header
-    const LOGO_W   = 130; // max logo width in header
-    const HEADER_H = logoBuffer ? 130 : 110;
+    // Lighten brand color for card backgrounds (blend with white at 93%).
+    function lighten(hex, pct = 0.93) {
+      const r = parseInt(hex.slice(1,3)||'1e',16);
+      const g = parseInt(hex.slice(3,5)||'40',16);
+      const b = parseInt(hex.slice(5,7)||'af',16);
+      const lr = Math.round(r + (255-r)*pct);
+      const lg = Math.round(g + (255-g)*pct);
+      const lb = Math.round(b + (255-b)*pct);
+      return `#${lr.toString(16).padStart(2,'0')}${lg.toString(16).padStart(2,'0')}${lb.toString(16).padStart(2,'0')}`;
+    }
+    const CARD_BG = lighten(BRAND, 0.93);
 
-    const pickL = (obj) => (obj?.[lang] || obj?.en || obj?.es || '');
-
-    const bizName = lang === 'es'
+    const bizName  = lang === 'es'
       ? (community.name    || community.name_en || '')
       : (community.name_en || community.name    || '');
-
     const publicUrl = `${process.env.PUBLIC_APP_URL || ''}/tax/${slug}`;
 
-    // ── Header band ────────────────────────────────────────────────────────
+    // Draw footer band on the current page (call before doc.end()).
+    function drawFooter() {
+      const fy = PH - FOOTER;
+      doc.rect(0, fy, PW, FOOTER).fill(BRAND);
+      doc.font('Helvetica').fontSize(9).fillColor(WHITE)
+         .text(`${bizName}  ·  ${publicUrl}`, M, fy + 15, { width: CW, align: 'center' });
+    }
+
+    // Add a new page, reset Y, redraw header bar.
+    function newPage() {
+      drawFooter();
+      doc.addPage({ size: 'A4', margin: 0 });
+      doc.rect(0, 0, PW, 6).fill(BRAND); // thin top stripe on continuation pages
+      doc.y = 24;
+    }
+
+    // Ensure `needed` pts fit before the footer. If not, new page.
+    function ensureSpace(needed) {
+      if (doc.y + needed > PH - FOOTER - 16) newPage();
+    }
+
+    // ── Header ────────────────────────────────────────────────────────────
+    const HEADER_H = logoBuffer ? 150 : 120;
     doc.rect(0, 0, PW, HEADER_H).fill(BRAND);
 
     if (logoBuffer) {
-      // Logo left, name/tagline right
+      // White logo pill on the left; name + tagline on the right.
+      const LOGO_PAD = 10;
+      const PILL_W   = 160;
+      const PILL_H   = 110;
+      const pillX    = M;
+      const pillY    = (HEADER_H - PILL_H) / 2;
+      doc.roundedRect(pillX, pillY, PILL_W, PILL_H, 8).fill(WHITE);
       try {
-        doc.image(logoBuffer, MARGIN, 20, { fit: [LOGO_W, LOGO_H], align: 'left', valign: 'center' });
-      } catch (_) { /* unsupported format — skip logo */ }
-      const textX = MARGIN + LOGO_W + 16;
-      const textW = CW - LOGO_W - 16;
-      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(20)
-         .text(bizName, textX, 28, { width: textW });
-      const tagline = lang === 'es'
-        ? 'Firma bilingue especializada en servicios tributarios y contables'
-        : 'Bilingual tax & accounting firm — professional, accurate, on time';
-      doc.font('Helvetica').fontSize(11).fillColor(ACCENT)
-         .text(tagline, textX, 64, { width: textW });
+        doc.image(logoBuffer, pillX + LOGO_PAD, pillY + LOGO_PAD,
+          { fit: [PILL_W - LOGO_PAD*2, PILL_H - LOGO_PAD*2], align: 'center', valign: 'center' });
+      } catch (_) { /* unsupported format — pill stays, logo skipped */ }
+      const tx = pillX + PILL_W + 18;
+      const tw = CW - PILL_W - 18;
+      const nameY = (HEADER_H / 2) - 22;
+      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(22)
+         .text(bizName, tx, nameY, { width: tw });
+      doc.fillColor(ACCENT).font('Helvetica').fontSize(11)
+         .text(
+           lang === 'es'
+             ? 'Firma bilingue especializada en servicios tributarios y contables'
+             : 'Bilingual tax & accounting firm — professional, accurate, on time',
+           tx, nameY + 32, { width: tw });
     } else {
-      // Name + tagline full-width
-      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(24)
-         .text(bizName, MARGIN, 28, { width: CW });
-      const tagline = lang === 'es'
-        ? 'Firma bilingue especializada en servicios tributarios y contables'
-        : 'Bilingual tax & accounting firm — professional, accurate, on time';
-      doc.font('Helvetica').fontSize(12).fillColor(ACCENT)
-         .text(tagline, MARGIN, 68, { width: CW });
+      // Centered name + tagline, no logo.
+      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(26)
+         .text(bizName, M, 32, { width: CW, align: 'center' });
+      doc.fillColor(ACCENT).font('Helvetica').fontSize(12)
+         .text(
+           lang === 'es'
+             ? 'Firma bilingue especializada en servicios tributarios y contables'
+             : 'Bilingual tax & accounting firm — professional, accurate, on time',
+           M, 72, { width: CW, align: 'center' });
     }
 
-    // ── Intro ──────────────────────────────────────────────────────────────
-    doc.y = HEADER_H + 22;
+    // ── Intro strip ───────────────────────────────────────────────────────
     const intro = lang === 'es'
-      ? `Somos su aliado de confianza para el manejo de sus obligaciones fiscales y financieras en los Estados Unidos. Con un equipo bilingue con experiencia, ofrecemos atencion de calidad a personas naturales y empresas — con precision, confidencialidad y trato personalizado.`
-      : `We are your trusted partner for tax and financial obligations in the United States. With an experienced bilingual team, we deliver quality service to individuals and businesses — accurate, confidential, and always on time.`;
+      ? 'Somos su aliado de confianza para el manejo de sus obligaciones fiscales en los Estados Unidos. Equipo bilingue con experiencia — precision, confidencialidad y atencion personalizada.'
+      : 'Your trusted partner for tax and financial obligations in the United States. Experienced bilingual team — accurate, confidential, and always on time.';
+    const INTRO_PAD = 14;
+    const introH    = 56;
+    doc.rect(0, HEADER_H, PW, introH).fill(CARD_BG);
+    doc.font('Helvetica').fontSize(10).fillColor(BODY)
+       .text(intro, M, HEADER_H + INTRO_PAD, { width: CW, lineGap: 3 });
 
-    doc.font('Helvetica').fontSize(10.5).fillColor(DARK)
-       .text(intro, MARGIN, doc.y, { width: CW, lineGap: 3 });
-    doc.moveDown(1.2);
+    doc.y = HEADER_H + introH + 20;
 
-    // ── Services heading ───────────────────────────────────────────────────
-    const svcHeading = lang === 'es' ? 'Nuestros Servicios' : 'Our Services';
-    doc.font('Helvetica-Bold').fontSize(15).fillColor(BRAND)
-       .text(svcHeading, MARGIN, doc.y);
-    doc.moveDown(0.25);
-    doc.moveTo(MARGIN, doc.y).lineTo(MARGIN + 55, doc.y)
-       .lineWidth(2.5).strokeColor(BRAND).stroke();
-    doc.moveDown(0.9);
+    // ── Services section heading ───────────────────────────────────────────
+    const svcHead = lang === 'es' ? 'Nuestros Servicios' : 'Our Services';
+    doc.font('Helvetica-Bold').fontSize(16).fillColor(BRAND)
+       .text(svcHead, M, doc.y);
+    doc.moveDown(0.2);
+    doc.moveTo(M, doc.y).lineTo(M + 60, doc.y).lineWidth(3).strokeColor(BRAND).stroke();
+    doc.moveDown(1.0);
 
-    // ── Category labels ────────────────────────────────────────────────────
+    // ── Category labels ───────────────────────────────────────────────────
     const CAT = {
       tax_prep:  { es: 'Preparacion de impuestos', en: 'Tax preparation' },
       recurring: { es: 'Servicio recurrente',      en: 'Ongoing service' },
-      one_off:   { es: 'Servicio unico',           en: 'One-time service' },
+      one_off:   { es: 'Servicio de una sola vez', en: 'One-time service' },
     };
 
-    const FOOTER_RESERVE = 50;
+    // ── Service cards ─────────────────────────────────────────────────────
+    // Each card: colored left accent bar + tinted background.
+    // We pre-estimate height, draw the background rect, then draw text.
+    // The accent bar is 5 px wide on the far left of the content area.
+    const ACCENT_W  = 5;
+    const CARD_PAD  = 12;
+    const CARD_INNER = CW - ACCENT_W - CARD_PAD * 2; // text width inside card
 
     for (const p of (products || [])) {
       const pname  = pickL(p.name_i18n);
@@ -502,65 +548,72 @@ module.exports = function createTaxRouter(deps) {
       const catLbl = CAT[p.category]?.[lang] || '';
       if (!pname) continue;
 
-      if (doc.y > doc.page.height - FOOTER_RESERVE - 70) {
-        doc.addPage({ size: 'A4', margin: 0 });
-        doc.y = MARGIN;
+      // Rough height: cat(16) + name(22) + desc lines + long lines + link(14) + pads
+      const descLines  = pdesc  ? Math.ceil(pdesc.length  / 80) : 0;
+      const longLines  = (plong && plong !== pdesc) ? Math.ceil(plong.length / 80) : 0;
+      const estH = 16 + 22 + descLines*14 + longLines*13 + 14 + CARD_PAD*2 + 8;
+
+      ensureSpace(estH + 12);
+
+      const cardX = M;
+      const cardY = doc.y;
+
+      // Background rect
+      doc.rect(cardX, cardY, CW, estH).fill(CARD_BG);
+      // Left accent strip
+      doc.rect(cardX, cardY, ACCENT_W, estH).fill(BRAND);
+
+      const textX = cardX + ACCENT_W + CARD_PAD;
+      let   ty    = cardY + CARD_PAD;
+
+      // Category label
+      if (catLbl) {
+        doc.font('Helvetica').fontSize(8).fillColor(BRAND)
+           .text(catLbl.toUpperCase(), textX, ty, { width: CARD_INNER });
+        ty += 14;
       }
 
       // Service name
-      doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK)
-         .text(pname, MARGIN, doc.y, { continued: false, width: CW });
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK)
+         .text(pname, textX, ty, { width: CARD_INNER });
+      ty += 20;
 
-      // Category tag (right-aligned, same line)
-      if (catLbl) {
-        const tagY = doc.y - doc.currentLineHeight() - 1;
-        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED)
-           .text(catLbl.toUpperCase(), MARGIN, tagY, { width: CW, align: 'right' });
-      }
-
-      doc.moveDown(0.25);
-
+      // Short description
       if (pdesc) {
-        doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
-           .text(pdesc, MARGIN, doc.y, { width: CW, lineGap: 2 });
-        doc.moveDown(0.25);
+        doc.font('Helvetica').fontSize(10.5).fillColor(BODY)
+           .text(pdesc, textX, ty, { width: CARD_INNER, lineGap: 2 });
+        ty += descLines * 14 + 6;
       }
 
+      // Long description
       if (plong && plong !== pdesc) {
         doc.font('Helvetica').fontSize(10).fillColor(MUTED)
-           .text(plong, MARGIN, doc.y, { width: CW, lineGap: 2 });
-        doc.moveDown(0.25);
+           .text(plong, textX, ty, { width: CARD_INNER, lineGap: 2 });
+        ty += longLines * 13 + 6;
       }
 
-      // Deep-link to service card on the website
-      const svcUrl   = `${publicUrl}#service-${p.slug}`;
-      const linkLabel = lang === 'es' ? `Mas informacion: ${svcUrl}` : `Learn more: ${svcUrl}`;
-      doc.font('Helvetica').fontSize(9).fillColor(BRAND)
-         .text(linkLabel, MARGIN, doc.y, { width: CW });
+      // Learn-more link
+      const svcUrl    = `${publicUrl}#service-${p.slug}`;
+      const learnMore = lang === 'es' ? `Mas informacion: ${svcUrl}` : `Learn more: ${svcUrl}`;
+      doc.font('Helvetica').fontSize(8.5).fillColor(BRAND)
+         .text(learnMore, textX, ty, { width: CARD_INNER });
 
-      doc.moveDown(0.6);
-      doc.moveTo(MARGIN, doc.y).lineTo(MARGIN + CW, doc.y)
-         .lineWidth(0.5).strokeColor(RULE).stroke();
-      doc.moveDown(0.75);
+      doc.y = cardY + estH + 10;
     }
 
-    // ── Contact section ────────────────────────────────────────────────────
-    if (doc.y > doc.page.height - FOOTER_RESERVE - 140) {
-      doc.addPage({ size: 'A4', margin: 0 });
-      doc.y = MARGIN;
-    } else {
-      doc.moveDown(0.5);
-    }
+    // ── Contact section ───────────────────────────────────────────────────
+    ensureSpace(160);
+    doc.moveDown(0.6);
 
-    const ctaHeading = lang === 'es' ? 'Contactenos' : 'Contact Us';
-    doc.font('Helvetica-Bold').fontSize(15).fillColor(BRAND)
-       .text(ctaHeading, MARGIN, doc.y);
-    doc.moveDown(0.25);
-    doc.moveTo(MARGIN, doc.y).lineTo(MARGIN + 55, doc.y)
-       .lineWidth(2.5).strokeColor(BRAND).stroke();
+    const ctaHead = lang === 'es' ? 'Contactenos' : 'Contact Us';
+    doc.font('Helvetica-Bold').fontSize(16).fillColor(BRAND)
+       .text(ctaHead, M, doc.y);
+    doc.moveDown(0.2);
+    doc.moveTo(M, doc.y).lineTo(M + 60, doc.y).lineWidth(3).strokeColor(BRAND).stroke();
     doc.moveDown(0.9);
 
-    const contactLines = [
+    // Contact block — light card matching service cards.
+    const ctaLines = [
       community.phone         && (lang === 'es' ? `Tel: ${community.phone}` : `Phone: ${community.phone}`),
       community.whatsapp      && `WhatsApp: ${community.whatsapp}`,
       community.contact_email && `Email: ${community.contact_email}`,
@@ -568,21 +621,23 @@ module.exports = function createTaxRouter(deps) {
     ].filter(Boolean);
 
     const addrParts = [community.address_line1, community.city, community.state, community.postal_code].filter(Boolean);
-    if (addrParts.length) contactLines.push(addrParts.join(', '));
+    if (addrParts.length) ctaLines.push(addrParts.join(', '));
 
-    for (const line of contactLines) {
+    const ctaCardH = ctaLines.length * 20 + CARD_PAD * 2;
+    const ctaY     = doc.y;
+    doc.rect(M, ctaY, CW, ctaCardH).fill(CARD_BG);
+    doc.rect(M, ctaY, ACCENT_W, ctaCardH).fill(BRAND);
+
+    let cy = ctaY + CARD_PAD;
+    for (const line of ctaLines) {
       doc.font('Helvetica').fontSize(11).fillColor(DARK)
-         .text(line, MARGIN, doc.y);
-      doc.moveDown(0.5);
+         .text(line, M + ACCENT_W + CARD_PAD, cy, { width: CARD_INNER });
+      cy += 20;
     }
+    doc.y = ctaY + ctaCardH + 16;
 
-    // ── Footer band ────────────────────────────────────────────────────────
-    const BAND_H  = 40;
-    const footerY = doc.page.height - BAND_H;
-    doc.rect(0, footerY, PW, BAND_H).fill(BRAND);
-    doc.font('Helvetica').fontSize(9.5).fillColor(WHITE)
-       .text(`${bizName}  |  ${publicUrl}`, MARGIN, footerY + 13, { width: CW, align: 'center' });
-
+    // ── Footer ────────────────────────────────────────────────────────────
+    drawFooter();
     doc.end();
   });
 
