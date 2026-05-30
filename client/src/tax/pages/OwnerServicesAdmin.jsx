@@ -513,6 +513,18 @@ function CertificationsEditor({ certifications, setCertifications, certInput, se
   const related   = CERT_LIBRARY.filter(c => score(c) === 1);
   const general   = CERT_LIBRARY.filter(c => score(c) === 0);
 
+  // Certs already in use across other services in this catalog — shown as
+  // quick-pick "from your catalog" chips regardless of CERT_LIBRARY membership.
+  const libLabels = React.useMemo(() => new Set(CERT_LIBRARY.map(c => c.label)), []);
+  const catalogPool = React.useMemo(() => {
+    const all = new Set();
+    (allProducts || []).forEach(p => {
+      if (p.slug !== slug) (p.certifications || []).forEach(c => all.add(c));
+    });
+    // exclude certs already covered by CERT_LIBRARY (they appear in the sections above)
+    return [...all].filter(c => !libLabels.has(c)).sort();
+  }, [allProducts, slug, libLabels]);
+
   // Render sections only when they have entries. "General" collapses behind
   // a disclosure toggle so the list doesn't feel overwhelming for services
   // with many suggested certs.
@@ -603,6 +615,34 @@ function CertificationsEditor({ certifications, setCertifications, certInput, se
       </div>
 
       {/* Custom credential input */}
+      {/* Certs already used in other services in this catalog */}
+      {catalogPool.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                        letterSpacing: '.05em', color: 'var(--tax-muted)', marginBottom: 5 }}>
+            {t('owner.services.certificationsFromCatalog')}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+            {catalogPool.map(c => {
+              const active = certifications.includes(c);
+              return (
+                <button key={c} type="button"
+                  onClick={() => toggle(c)}
+                  style={{
+                    fontSize: 11, padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                    border: `1px solid ${active ? '#f59e0b' : 'var(--tax-border)'}`,
+                    background: active ? '#fef3c7' : 'var(--tax-bg)',
+                    color: active ? '#92400e' : 'var(--tax-muted)',
+                    fontWeight: active ? 700 : 400,
+                  }}>
+                  {active ? '🏅 ' : '+ '}{c}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 5 }}>
         {t('owner.services.certificationsCustom')}
       </div>

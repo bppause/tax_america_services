@@ -703,7 +703,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(404).json({ error: 'Tax community not found.' });
     }
     const { data, error } = await supabase.from('tax_employees')
-      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order')
+      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications')
       .eq('community_id', slug)
       .eq('show_on_homepage', true)
       .eq('status', 'active')
@@ -11205,7 +11205,7 @@ module.exports = function createTaxRouter(deps) {
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, created_at, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -11383,6 +11383,10 @@ module.exports = function createTaxRouter(deps) {
     }
     if (Number.isFinite(Number(body.displayOrder))) {
       update.homepage_display_order = Math.max(0, Math.min(10000, Math.round(Number(body.displayOrder))));
+    }
+    if (Array.isArray(body.certifications)) {
+      update.certifications = body.certifications.slice(0, 20)
+        .map(c => String(c).trim().slice(0, 200)).filter(Boolean);
     }
     if (Object.keys(update).length === 1) {
       return res.status(400).json({ error: 'Nothing to update.' });

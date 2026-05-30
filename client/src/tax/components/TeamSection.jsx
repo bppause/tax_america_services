@@ -44,6 +44,7 @@ export default function TeamSection({ communitySlug }) {
             const experience = pickI18n(m.experience_i18n, locale).value;
             const highlightLines = (highlights || '')
               .split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+            const certs = Array.isArray(m.certifications) ? m.certifications : [];
             return (
               <article key={m.id} style={{
                 display: 'grid', gap: 12, padding: 18,
@@ -95,6 +96,16 @@ export default function TeamSection({ communitySlug }) {
                       </li>
                     ))}
                   </ul>
+                )}
+                {certs.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    {certs.map((c, i) => (
+                      <span key={i} style={{
+                        fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 999,
+                        background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
+                      }}>🏅 {c}</span>
+                    ))}
+                  </div>
                 )}
                 {experience && (
                   <TeamFactBlock label={t('landing.team.experience')} body={experience} />

@@ -138,7 +138,7 @@ export default function OwnerStaffDetail({ employeeId }) {
       {/* Permissions card — owner can revoke specific powers from this
           employee. Self-edit is blocked server-side for manage_employees
           so the owner can't accidentally lock themselves out. */}
-      <PublicProfileCard emp={emp} auth={auth} onSaved={loadEmployee} t={t} />
+      <PublicProfileCard emp={emp} auth={auth} community={community} onSaved={loadEmployee} t={t} />
       <PermissionsCard emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
 
       <h3 style={{ marginTop: 32 }}>{t('owner.staffDetail.assignments')}</h3>
@@ -630,7 +630,7 @@ function AssignmentManager({ assignments, customers, empId, auth, onChange, t, l
 // landing page's "Meet the team" section with a photo, a short title,
 // and a bilingual bio. Default visibility is OFF — the owner explicitly
 // turns it on per employee so nobody is published by surprise.
-function PublicProfileCard({ emp, auth, onSaved, t }) {
+function PublicProfileCard({ emp, auth, community, onSaved, t }) {
   const initial = () => ({
     showOnHomepage: !!emp.show_on_homepage,
     photoUrl: emp.photo_url || '',
@@ -650,6 +650,25 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
   });
   const [draft, setDraft] = useState(initial);
   useEffect(() => { setDraft(initial()); }, [emp]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [certifications, setCertifications] = useState(
+    Array.isArray(emp.certifications) ? emp.certifications : []
+  );
+  useEffect(() => {
+    setCertifications(Array.isArray(emp.certifications) ? emp.certifications : []);
+  }, [emp]);
+  const [certInput, setCertInput] = useState('');
+  // Pool of all certs already assigned to any service in this community's catalog
+  const [certPool, setCertPool] = useState([]);
+  useEffect(() => {
+    if (!community?.id) return;
+    taxApi.adminListProducts(auth, community.id)
+      .then(d => {
+        const all = new Set();
+        (d.products || []).forEach(p => (p.certifications || []).forEach(c => all.add(c)));
+        setCertPool([...all].sort());
+      })
+      .catch(() => {});
+  }, [community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
@@ -667,7 +686,8 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
              || draft.educationEs !== (emp.education_i18n?.es || '')
              || draft.experienceEn !== (emp.experience_i18n?.en || '')
              || draft.experienceEs !== (emp.experience_i18n?.es || '')
-             || Number(draft.displayOrder) !== (emp.homepage_display_order ?? 100);
+             || Number(draft.displayOrder) !== (emp.homepage_display_order ?? 100)
+             || JSON.stringify(certifications) !== JSON.stringify(Array.isArray(emp.certifications) ? emp.certifications : []);
 
   const set = (k, v) => setDraft(prev => ({ ...prev, [k]: v }));
 
@@ -684,6 +704,7 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
         educationI18n: { en: draft.educationEn.trim(), es: draft.educationEs.trim() },
         experienceI18n: { en: draft.experienceEn.trim(), es: draft.experienceEs.trim() },
         displayOrder: Number(draft.displayOrder) || 100,
+        certifications,
       });
       setMsg({ kind: 'success', text: t('owner.publicProfile.saved') });
       onSaved && onSaved();
@@ -871,6 +892,67 @@ function PublicProfileCard({ emp, auth, onSaved, t }) {
                       onChange={e => set('experienceEs', e.target.value)}
                       placeholder={t('owner.publicProfile.experiencePlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
+          </div>
+        </div>
+
+        {/* Certifications — drawn from the community's service catalog cert pool */}
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+            {t('owner.publicProfile.certifications')}
+          </label>
+          <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
+            {t('owner.publicProfile.certificationsHint')}
+          </p>
+          {/* Pool from services — quick-pick chips */}
+          {certPool.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+              {certPool.map(c => {
+                const active = certifications.includes(c);
+                return (
+                  <button key={c} type="button"
+                    onClick={() => setCertifications(prev => active ? prev.filter(x => x !== c) : [...prev, c])}
+                    style={{
+                      fontSize: 11, padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
+                      border: `1px solid ${active ? '#f59e0b' : 'var(--tax-border)'}`,
+                      background: active ? '#fef3c7' : 'var(--tax-bg)',
+                      color: active ? '#92400e' : 'var(--tax-muted)',
+                      fontWeight: active ? 700 : 400,
+                    }}>
+                    {active ? '🏅 ' : '+ '}{c}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* Selected chips */}
+          {certifications.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+              {certifications.map(c => (
+                <span key={c} style={{
+                  fontSize: 11, padding: '3px 10px', borderRadius: 999,
+                  background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}>
+                  🏅 {c}
+                  <button type="button" onClick={() => setCertifications(prev => prev.filter(x => x !== c))}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontSize: 13, lineHeight: 1, padding: 0 }}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {/* Custom cert input */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input type="text" value={certInput} maxLength={200}
+              onChange={e => setCertInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const v = certInput.trim(); if (v && !certifications.includes(v)) setCertifications(p => [...p, v]); setCertInput(''); } }}
+              placeholder={t('owner.services.certificationsPlaceholder')}
+              style={{ flex: 1, padding: '5px 8px', border: '1px solid var(--tax-border)', borderRadius: 4, fontSize: 12 }} />
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+              onClick={() => { const v = certInput.trim(); if (v && !certifications.includes(v)) setCertifications(p => [...p, v]); setCertInput(''); }}>
+              {t('owner.services.certificationsAdd')}
+            </button>
           </div>
         </div>
 

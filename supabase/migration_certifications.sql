@@ -7,3 +7,7 @@ ALTER TABLE public.tax_products
 UPDATE public.tax_products
 SET certifications = '["CAA – Certified Acceptance Agent (IRS)", "IRS Authorized – no need to mail original passport"]'::jsonb
 WHERE slug = 'itin';
+
+-- Add certifications column to tax_employees (for employee/owner profile pages).
+ALTER TABLE public.tax_employees
+  ADD COLUMN IF NOT EXISTS certifications jsonb NOT NULL DEFAULT '[]'::jsonb;
