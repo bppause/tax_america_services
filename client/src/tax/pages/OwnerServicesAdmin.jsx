@@ -213,14 +213,11 @@ function AddServiceLauncher({ community, auth, onAdded, t }) {
 }
 
 function ServiceRow({ product: p, auth, community, relTypes, employees = [], allProducts = [], onChange, locale, t }) {
-  const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
   const name = pickI18n(p.name_i18n, locale).value || p.slug;
-  const desc = pickI18n(p.description_i18n, locale).value;
-  const longDesc = pickI18n(p.long_description_i18n, locale).value;
-  const reqs = Array.isArray(p.required_documents) ? p.required_documents : [];
 
   const toggleEnabled = async () => {
     setBusy(true); setErr('');
@@ -232,10 +229,6 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], all
   };
 
   const onDelete = async () => {
-    // First attempt is a plain delete. The server refuses with 409 +
-    // `usage` counts when active subscriptions reference the service;
-    // we surface those numbers to the owner and require a second
-    // confirm before re-trying with force=1.
     if (!window.confirm(t('owner.services.deleteConfirm', { name }))) return;
     setBusy(true); setErr('');
     try {
@@ -249,129 +242,92 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], all
           name, subs: u.active_subscriptions || 0,
           schedules: u.filing_schedules || 0,
         }));
-        if (!proceed) {
-          setErr(t('owner.services.deleteCancelled'));
-          setBusy(false);
-          return;
-        }
+        if (!proceed) { setErr(t('owner.services.deleteCancelled')); setBusy(false); return; }
         try {
           await taxApi.adminDeleteProduct(auth, p.id, { force: true });
-          onChange();
-          return;
-        } catch (e2) {
-          setErr(e2?.message || '');
-        }
-      } else {
-        setErr(e?.message || '');
-      }
+          onChange(); return;
+        } catch (e2) { setErr(e2?.message || ''); }
+      } else { setErr(e?.message || ''); }
     } finally { setBusy(false); }
   };
 
-  // Auto-task count surfaced from the list endpoint. A "0" badge means
-  // this service won't generate recurring work for tagged customers —
-  // worth flagging in red so the owner notices missing setup.
   const autoTasksActive = Number(p.auto_tasks_active || 0);
-  const autoTasksTotal  = Number(p.auto_tasks_total  || 0);
 
   return (
-    <div className="tax-contact-item">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span>{name}</span>
-            <span style={{
-              padding: '1px 8px', borderRadius: 999,
-              background: 'var(--tax-bg-alt)', color: 'var(--tax-muted)',
-              fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-            }}>{p.category}</span>
-            {!p.enabled && (
+    <div className="tax-contact-item" style={{ padding: 0, overflow: 'hidden' }}>
+      {/* Clickable header — click anywhere to expand/collapse */}
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', justifyContent: 'space-between',
+          alignItems: 'center', gap: 12, padding: '12px 14px',
+          background: open ? 'color-mix(in srgb, var(--tax-brand-primary) 5%, #fff)' : 'transparent',
+          border: 'none', cursor: 'pointer', textAlign: 'left',
+          borderBottom: open ? '1px solid var(--tax-border)' : 'none',
+        }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+          <span style={{
+            fontSize: 12, color: 'var(--tax-muted)', flexShrink: 0,
+            transition: 'transform .15s', display: 'inline-block',
+            transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+          }}>▶</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span>{name}</span>
               <span style={{
                 padding: '1px 8px', borderRadius: 999,
-                background: '#fee2e2', color: '#991b1b',
+                background: 'var(--tax-bg-alt)', color: 'var(--tax-muted)',
                 fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-              }}>{t('owner.services.hidden')}</span>
-            )}
-            {/* Recurring-task badge: green when configured, red when
-                empty so the missing setup pops visually. */}
-            <span
-              title={autoTasksActive > 0
-                ? t('owner.services.autoTasksBadge.titleConfigured', { n: autoTasksActive })
-                : t('owner.services.autoTasksBadge.titleEmpty')}
-              style={{
-                padding: '1px 8px', borderRadius: 999,
-                background: autoTasksActive > 0 ? '#dcfce7' : '#fee2e2',
-                color:      autoTasksActive > 0 ? '#166534' : '#991b1b',
-                fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-              }}>
-              {autoTasksActive > 0
-                ? t('owner.services.autoTasksBadge.count', { n: autoTasksActive })
-                : t('owner.services.autoTasksBadge.none')}
-            </span>
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-            {t('owner.services.slug')}: {p.slug} • {t('owner.services.displayOrder')}: {p.display_order}
+              }}>{p.category}</span>
+              {!p.enabled && (
+                <span style={{
+                  padding: '1px 8px', borderRadius: 999,
+                  background: '#fee2e2', color: '#991b1b',
+                  fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                }}>{t('owner.services.hidden')}</span>
+              )}
+              <span title={autoTasksActive > 0
+                  ? t('owner.services.autoTasksBadge.titleConfigured', { n: autoTasksActive })
+                  : t('owner.services.autoTasksBadge.titleEmpty')}
+                style={{
+                  padding: '1px 8px', borderRadius: 999,
+                  background: autoTasksActive > 0 ? '#dcfce7' : '#fee2e2',
+                  color:      autoTasksActive > 0 ? '#166534' : '#991b1b',
+                  fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+                }}>
+                {autoTasksActive > 0
+                  ? t('owner.services.autoTasksBadge.count', { n: autoTasksActive })
+                  : t('owner.services.autoTasksBadge.none')}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 1 }}>
+              {t('owner.services.slug')}: {p.slug}
+            </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-          {!editing && (
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={() => setEditing(true)}
-                    style={{
-                      color: autoTasksActive > 0 ? 'var(--tax-brand-primary)' : 'var(--tax-error)',
-                      borderColor: autoTasksActive > 0 ? 'var(--tax-brand-primary)' : 'var(--tax-error)',
-                    }}>
-              {autoTasksActive > 0
-                ? t('owner.services.viewRecurring')
-                : t('owner.services.addRecurring')}
-            </button>
-          )}
-          {!editing && (
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={() => setEditing(true)} style={{ color: 'var(--tax-text)' }}>
-              {t('owner.services.edit')}
-            </button>
-          )}
-          {!editing && (
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={toggleEnabled} disabled={busy}
-                    style={{ color: 'var(--tax-muted)' }}>
-              {p.enabled ? t('owner.services.hide') : t('owner.services.show')}
-            </button>
-          )}
-          {!editing && (
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={onDelete} disabled={busy}
-                    style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}>
-              {t('owner.services.delete')}
-            </button>
-          )}
+        {/* Row actions — stop propagation so they don't toggle expand */}
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}
+             onClick={e => e.stopPropagation()}>
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={toggleEnabled} disabled={busy}
+                  style={{ color: 'var(--tax-muted)', fontSize: 11 }}>
+            {p.enabled ? t('owner.services.hide') : t('owner.services.show')}
+          </button>
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={onDelete} disabled={busy}
+                  style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)', fontSize: 11 }}>
+            {t('owner.services.delete')}
+          </button>
         </div>
-      </div>
+      </button>
 
-      {err && <div className="tax-msg tax-msg--error" style={{ marginTop: 8 }}>{err}</div>}
+      {err && <div className="tax-msg tax-msg--error" style={{ margin: '0 14px 8px' }}>{err}</div>}
 
-      {editing ? (
-        <ProductEditor product={p} auth={auth}
-                       community={community} relTypes={relTypes}
-                       employees={employees} allProducts={allProducts}
-                       onDone={() => { setEditing(false); onChange(); }}
-                       onCancel={() => setEditing(false)} t={t} />
-      ) : (
-        <div style={{ marginTop: 8, fontSize: 13, color: 'var(--tax-muted)',
-                      whiteSpace: 'pre-wrap' }}>
-          <div>{desc || <em>{t('owner.services.descMissing')}</em>}</div>
-          {longDesc && (
-            <div style={{ marginTop: 6, fontSize: 12 }}>
-              <strong style={{ color: 'var(--tax-text)' }}>{t('owner.services.longLabel')}:</strong>{' '}
-              {longDesc.length > 200 ? `${longDesc.slice(0, 200)}…` : longDesc}
-            </div>
-          )}
-          {reqs.length > 0 && (
-            <div style={{ marginTop: 6, fontSize: 12 }}>
-              <strong style={{ color: 'var(--tax-text)' }}>{t('owner.services.requiresLabel')}:</strong>{' '}
-              {reqs.length} {t('owner.services.requiresItems')}
-            </div>
-          )}
+      {open && (
+        <div style={{ padding: '0 14px 14px' }}>
+          <ProductEditor product={p} auth={auth}
+                         community={community} relTypes={relTypes}
+                         employees={employees} allProducts={allProducts}
+                         onSaved={onChange} t={t} />
         </div>
       )}
     </div>
@@ -568,7 +524,21 @@ function CertificationsEditor({ certifications, setCertifications, certInput, se
   );
 }
 
-function ProductEditor({ product: p, auth, community, relTypes = [], employees = [], allProducts = [], onDone, onCancel, t }) {
+// Auto-save status indicator shown inline next to section headings.
+function SaveStatus({ status }) {
+  if (status === 'saving') return (
+    <span style={{ fontSize: 11, color: 'var(--tax-muted)', marginLeft: 8 }}>Saving…</span>
+  );
+  if (status === 'saved') return (
+    <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)', marginLeft: 8 }}>✓ Saved</span>
+  );
+  if (status && status !== 'idle') return (
+    <span style={{ fontSize: 11, color: 'var(--tax-error)', marginLeft: 8 }}>{status}</span>
+  );
+  return null;
+}
+
+function ProductEditor({ product: p, auth, community, relTypes = [], employees = [], allProducts = [], onSaved, t }) {
   const [nameEn, setNameEn] = useState(p.name_i18n?.en || '');
   const [nameEs, setNameEs] = useState(p.name_i18n?.es || '');
   const [descEn, setDescEn] = useState(p.description_i18n?.en || '');
@@ -586,13 +556,85 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
   const [order, setOrder] = useState(String(p.display_order || 0));
   const [videoUrl, setVideoUrl] = useState(p.video_url || '');
 
-  // Phase 4n.46: Internal section. A service owns a list of
-  // auto-tasks instead of a single cadence — each auto-task is its
-  // own generation unit (monthly reconciliation + quarterly P&L +
-  // annual close = three auto-tasks on the Bookkeeping service).
-  // List is loaded from the server on mount; the form maintains a
-  // local working copy and the bulk-replace PUT pushes the diff on
-  // Save.
+  // Auto-save status: 'idle' | 'saving' | 'saved' | error string
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const debounceRef = React.useRef(null);
+  const savedTimerRef = React.useRef(null);
+
+  // Debounced auto-save for text fields — fires 1.2s after last keystroke.
+  const scheduleAutoSave = React.useCallback((overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    debounceRef.current = setTimeout(async () => {
+      setSaveStatus('saving');
+      try {
+        const cleanedReqs = (overrides.reqs ?? reqs)
+          .map(r => ({ en: r.en.trim(), es: r.es.trim() }))
+          .filter(r => r.en || r.es);
+        await taxApi.adminUpdateProduct(auth, p.id, {
+          nameI18n: { en: (overrides.nameEn ?? nameEn).trim(), es: (overrides.nameEs ?? nameEs).trim() },
+          descriptionI18n: { en: (overrides.descEn ?? descEn).trim(), es: (overrides.descEs ?? descEs).trim() },
+          longDescriptionI18n: { en: (overrides.longEn ?? longEn).trim(), es: (overrides.longEs ?? longEs).trim() },
+          requiredDocuments: cleanedReqs,
+          certifications: (overrides.certifications ?? certifications).filter(Boolean),
+          displayOrder: Number(overrides.order ?? order) || 0,
+          videoUrl: (overrides.videoUrl ?? videoUrl).trim(),
+        });
+        setSaveStatus('saved');
+        onSaved?.();
+        savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
+      } catch (e) {
+        setSaveStatus(e?.message || 'Save failed');
+      }
+    }, 1200);
+  }, [auth, p.id, nameEn, nameEs, descEn, descEs, longEn, longEs, reqs, certifications, order, videoUrl, onSaved]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Immediate save for discrete actions (cert toggles, req add/remove).
+  const saveNow = React.useCallback(async (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    setSaveStatus('saving');
+    try {
+      const cleanedReqs = (overrides.reqs ?? reqs)
+        .map(r => ({ en: r.en.trim(), es: r.es.trim() }))
+        .filter(r => r.en || r.es);
+      await taxApi.adminUpdateProduct(auth, p.id, {
+        nameI18n: { en: nameEn.trim(), es: nameEs.trim() },
+        descriptionI18n: { en: descEn.trim(), es: descEs.trim() },
+        longDescriptionI18n: { en: longEn.trim(), es: longEs.trim() },
+        requiredDocuments: cleanedReqs,
+        certifications: (overrides.certifications ?? certifications).filter(Boolean),
+        displayOrder: Number(order) || 0,
+        videoUrl: videoUrl.trim(),
+      });
+      setSaveStatus('saved');
+      onSaved?.();
+      savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch (e) {
+      setSaveStatus(e?.message || 'Save failed');
+    }
+  }, [auth, p.id, nameEn, nameEs, descEn, descEs, longEn, longEs, reqs, certifications, order, videoUrl, onSaved]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
+
+  const updateReq = (i, lang, v) => {
+    const next = reqs.map((r, idx) => idx === i ? { ...r, [lang]: v } : r);
+    setReqs(next);
+    scheduleAutoSave({ reqs: next });
+  };
+  const addReq = () => {
+    const next = [...reqs, { en: '', es: '' }];
+    setReqs(next);
+    saveNow({ reqs: next });
+  };
+  const removeReq = (i) => {
+    const next = reqs.filter((_, idx) => idx !== i);
+    setReqs(next);
+    saveNow({ reqs: next });
+  };
+
+  // Auto-tasks section — still uses an explicit save button since it's
+  // a bulk-replace operation with its own server call.
   const [autoTasks, setAutoTasks] = useState([]);
   const [autoTasksLoaded, setAutoTasksLoaded] = useState(false);
   useEffect(() => {
@@ -604,50 +646,23 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.id]);
 
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-
-  const updateReq = (i, lang, v) =>
-    setReqs(prev => prev.map((r, idx) => idx === i ? { ...r, [lang]: v } : r));
-  const addReq = () => setReqs(prev => [...prev, { en: '', es: '' }]);
-  const removeReq = (i) => setReqs(prev => prev.filter((_, idx) => idx !== i));
+  const [taskBusy, setTaskBusy] = useState(false);
+  const [taskErr, setTaskErr] = useState('');
+  const [taskSaved, setTaskSaved] = useState(false);
 
   const addAutoTask = () => setAutoTasks(prev => [...prev, {
-    id: null,
-    titleEn: '', titleEs: '',
-    descriptionEn: '', descriptionEs: '',
-    cadenceKind: 'monthly',
-    day: '15', weekday: '1', month: '1',
-    defaultPriority: 'normal',
-    defaultAssigneeEmployeeId: '',
+    id: null, titleEn: '', titleEs: '', descriptionEn: '', descriptionEs: '',
+    cadenceKind: 'monthly', day: '15', weekday: '1', month: '1',
+    defaultPriority: 'normal', defaultAssigneeEmployeeId: '',
   }]);
   const updateAutoTask = (idx, patch) =>
     setAutoTasks(prev => prev.map((at, i) => i === idx ? { ...at, ...patch } : at));
   const removeAutoTask = (idx) =>
     setAutoTasks(prev => prev.filter((_, i) => i !== idx));
 
-  const onSave = async () => {
-    setBusy(true); setErr('');
+  const saveAutoTasks = async () => {
+    setTaskBusy(true); setTaskErr(''); setTaskSaved(false);
     try {
-      const cleanedReqs = reqs
-        .map(r => ({ en: r.en.trim(), es: r.es.trim() }))
-        .filter(r => r.en || r.es);
-      await taxApi.adminUpdateProduct(auth, p.id, {
-        nameI18n: { en: nameEn.trim(), es: nameEs.trim() },
-        descriptionI18n: { en: descEn.trim(), es: descEs.trim() },
-        longDescriptionI18n: { en: longEn.trim(), es: longEs.trim() },
-        requiredDocuments: cleanedReqs,
-        certifications: certifications.filter(Boolean),
-        displayOrder: Number(order) || 0,
-        videoUrl: videoUrl.trim(),
-        // Phase 4n.46: the product-level cadence + employee_notes
-        // fields are no longer authored from the editor. Server
-        // keeps the columns for legacy fallback when a service has
-        // no auto-tasks yet.
-      });
-
-      // Bulk-replace the auto-tasks list. The server diffs against
-      // the existing rows — updates, inserts, deletes accordingly.
       await taxApi.adminReplaceAutoTasks(auth, p.id, autoTasks.map((at, i) => ({
         id: at.id || undefined,
         titleI18n: { en: at.titleEn.trim(), es: at.titleEs.trim() },
@@ -659,26 +674,29 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         displayOrder: (i + 1) * 10,
         active: true,
       })));
-
-      onDone();
-    } catch (e) { setErr(e?.message || ''); }
-    finally { setBusy(false); }
+      setTaskSaved(true);
+      onSaved?.();
+      setTimeout(() => setTaskSaved(false), 2500);
+    } catch (e) { setTaskErr(e?.message || ''); }
+    finally { setTaskBusy(false); }
   };
 
   return (
-    <div style={{ marginTop: 12, padding: 12, background: 'var(--tax-bg-alt)',
-                  borderRadius: 8, display: 'grid', gap: 12 }}>
+    <div style={{ marginTop: 12, display: 'grid', gap: 14 }}>
       <SectionHeader emoji="🏠" label={t('owner.services.section.homepage')}
-                     hint={t('owner.services.section.homepageHint')} />
+                     hint={t('owner.services.section.homepageHint')}
+                     extra={<SaveStatus status={saveStatus} />} />
       <div className="tax-form__row2">
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.services.nameEn')}</label>
-          <input type="text" value={nameEn} onChange={e => setNameEn(e.target.value)} maxLength={200}
+          <input type="text" value={nameEn} maxLength={200}
+                 onChange={e => { setNameEn(e.target.value); scheduleAutoSave({ nameEn: e.target.value }); }}
                  style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.services.nameEs')}</label>
-          <input type="text" value={nameEs} onChange={e => setNameEs(e.target.value)} maxLength={200}
+          <input type="text" value={nameEs} maxLength={200}
+                 onChange={e => { setNameEs(e.target.value); scheduleAutoSave({ nameEs: e.target.value }); }}
                  style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
         </div>
       </div>
@@ -686,12 +704,14 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
       <div className="tax-form__row2">
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.services.descEn')}</label>
-          <textarea rows={2} value={descEn} onChange={e => setDescEn(e.target.value)} maxLength={400}
+          <textarea rows={2} value={descEn} maxLength={400}
+                    onChange={e => { setDescEn(e.target.value); scheduleAutoSave({ descEn: e.target.value }); }}
                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.services.descEs')}</label>
-          <textarea rows={2} value={descEs} onChange={e => setDescEs(e.target.value)} maxLength={400}
+          <textarea rows={2} value={descEs} maxLength={400}
+                    onChange={e => { setDescEs(e.target.value); scheduleAutoSave({ descEs: e.target.value }); }}
                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
         </div>
       </div>
@@ -699,14 +719,16 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
       <div className="tax-form__row2">
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.services.longEn')}</label>
-          <textarea rows={6} value={longEn} onChange={e => setLongEn(e.target.value)} maxLength={4000}
+          <textarea rows={6} value={longEn} maxLength={4000}
                     placeholder={t('owner.services.longPlaceholder')}
+                    onChange={e => { setLongEn(e.target.value); scheduleAutoSave({ longEn: e.target.value }); }}
                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
         </div>
         <div>
           <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.services.longEs')}</label>
-          <textarea rows={6} value={longEs} onChange={e => setLongEs(e.target.value)} maxLength={4000}
+          <textarea rows={6} value={longEs} maxLength={4000}
                     placeholder={t('owner.services.longPlaceholder')}
+                    onChange={e => { setLongEs(e.target.value); scheduleAutoSave({ longEs: e.target.value }); }}
                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
         </div>
       </div>
@@ -740,10 +762,14 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         </div>
       </div>
 
-      {/* Certifications — surface in AI chat upfront and as badges on service cards */}
+      {/* Certifications — auto-save on every toggle/add/remove */}
       <CertificationsEditor
         certifications={certifications}
-        setCertifications={setCertifications}
+        setCertifications={(next) => {
+          const resolved = typeof next === 'function' ? next(certifications) : next;
+          setCertifications(resolved);
+          saveNow({ certifications: resolved });
+        }}
         certInput={certInput}
         setCertInput={setCertInput}
         slug={p.slug}
@@ -756,9 +782,9 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
           {t('owner.services.videoUrl')}
         </label>
-        <input type="url" value={videoUrl} onChange={e => setVideoUrl(e.target.value)}
+        <input type="url" value={videoUrl} maxLength={500}
+               onChange={e => { setVideoUrl(e.target.value); scheduleAutoSave({ videoUrl: e.target.value }); }}
                placeholder="https://youtube.com/watch?v=… or https://vimeo.com/…"
-               maxLength={500}
                style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
         <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
           {t('owner.services.videoUrlHint')}
@@ -768,7 +794,8 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <label style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
           {t('owner.services.displayOrder')}:&nbsp;
-          <input type="number" value={order} onChange={e => setOrder(e.target.value)} min="0" max="10000"
+          <input type="number" value={order} min="0" max="10000"
+                 onChange={e => { setOrder(e.target.value); scheduleAutoSave({ order: e.target.value }); }}
                  style={{ width: 80, padding: '4px 6px', border: '1px solid var(--tax-border)', borderRadius: 4 }} />
         </label>
       </div>
@@ -805,17 +832,16 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
               </div>}
       </div>
 
-      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      {taskErr && <div className="tax-msg tax-msg--error">{taskErr}</div>}
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
         <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                onClick={onSave} disabled={busy}>
-          {busy ? t('lead.submitting') : t('owner.services.save')}
+                onClick={saveAutoTasks} disabled={taskBusy}>
+          {taskBusy ? t('lead.submitting') : t('owner.services.autoTasks.save')}
         </button>
-        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                onClick={onCancel} style={{ color: 'var(--tax-text)' }}>
-          {t('owner.services.cancel')}
-        </button>
+        {taskSaved && (
+          <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>
+        )}
       </div>
     </div>
   );
@@ -824,7 +850,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
 // Small banner heading that delineates the Homepage section (public
 // marketing copy) from the Internal section (cadence, relationship
 // tag, employee notes — only visible inside the staff portal).
-function SectionHeader({ emoji, label, hint, tone = 'homepage' }) {
+function SectionHeader({ emoji, label, hint, tone = 'homepage', extra }) {
   // Two visual tones — homepage = blue (public marketing surface),
   // internal = amber (operational surface). The contrast makes it
   // impossible to confuse which audience an edit affects.
@@ -850,6 +876,7 @@ function SectionHeader({ emoji, label, hint, tone = 'homepage' }) {
           background: palette.tag.bg, color: palette.tag.fg,
           fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
         }}>{palette.tagLabel}</span>
+        {extra}
       </div>
       {hint && <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>{hint}</div>}
     </div>

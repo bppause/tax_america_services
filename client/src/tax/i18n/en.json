@@ -359,6 +359,7 @@
   "owner.services.autoTasks.heading": "Recurring auto-tasks",
   "owner.services.autoTasks.subheading": "Each row generates its own series of tasks on its own cadence. Bookkeeping might be \"Monthly reconciliation\" + \"Quarterly P&L\" + \"Annual close\" — three rows. Add as many as you need.",
   "owner.services.autoTasks.add": "Add auto-task",
+  "owner.services.autoTasks.save": "Save auto-tasks",
   "owner.services.autoTasks.remove": "Remove",
   "owner.services.autoTasks.empty": "No auto-tasks yet. Add one — when a customer is tagged with the relationship above, the system will generate a task series for each row.",
   "owner.services.autoTasks.untitled": "Untitled auto-task",

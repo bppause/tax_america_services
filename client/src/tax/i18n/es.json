@@ -359,6 +359,7 @@
   "owner.services.autoTasks.heading": "Tareas automáticas recurrentes",
   "owner.services.autoTasks.subheading": "Cada fila genera su propia serie de tareas con su propia cadencia. Una contabilidad puede tener \"Conciliación mensual\" + \"P&G trimestral\" + \"Cierre anual\" — tres filas. Agrega tantas como necesites.",
   "owner.services.autoTasks.add": "Agregar tarea automática",
+  "owner.services.autoTasks.save": "Guardar tareas automáticas",
   "owner.services.autoTasks.remove": "Eliminar",
   "owner.services.autoTasks.empty": "Aún no hay tareas automáticas. Agrega una — cuando un cliente se etiquete con la relación de arriba, el sistema generará una serie de tareas por cada fila.",
   "owner.services.autoTasks.untitled": "Tarea sin título",
