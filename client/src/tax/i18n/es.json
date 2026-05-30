@@ -1788,6 +1788,7 @@
   "owner.whatsapp.block.contact": "Contacto (automático, de la configuración)",
   "owner.whatsapp.block.contact.edit": "Editar contacto",
   "owner.whatsapp.block.contact.empty": "Sin información de contacto — agrégala en Configuración.",
+  "owner.whatsapp.block.aiCta": "Llamada al asistente de IA (automático)",
   "owner.whatsapp.block.brochure": "Enlace al portafolio (automático)",
   "owner.whatsapp.block.closing": "Cierre",
   "owner.whatsapp.block.signoff": "Despedida",

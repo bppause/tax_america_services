@@ -46,9 +46,28 @@ function buildServicesBlock(locale, products) {
     const pname = pickI18n(p.name_i18n, locale).value || p.slug;
     const pdesc = pickI18n(p.description_i18n, locale).value || '';
     const emoji = CATEGORY_EMOJI[p.category] || '•';
-    return [`${emoji} *${pname}*`, pdesc, `🔗 {SITE}#service-${p.slug}`]
+    // Each service ends with an AI chat nudge deep-linking to that service
+    const aiLine = locale === 'es'
+      ? `🤖 ¿Preguntas sobre *${pname}*? Chatea con nuestro asistente: {SITE}?service=${p.slug}`
+      : `🤖 Questions about *${pname}*? Chat with our AI assistant: {SITE}?service=${p.slug}`;
+    return [`${emoji} *${pname}*`, pdesc, `🔗 {SITE}#service-${p.slug}`, aiLine]
       .filter(Boolean).join('\n');
   }).join('\n\n');
+}
+
+function buildAiCtaBlock(locale, publicUrl) {
+  if (locale === 'es') {
+    return [
+      '🤖 *¿Tienes preguntas? Nuestro asistente virtual está disponible 24/7*',
+      'Responde preguntas sobre nuestros servicios al instante y te ayuda a conectar con nuestro equipo:',
+      `👉 ${publicUrl}`,
+    ].join('\n');
+  }
+  return [
+    '🤖 *Have questions? Our AI assistant is available 24/7*',
+    'Get instant answers about our services and connect with our team:',
+    `👉 ${publicUrl}`,
+  ].join('\n');
 }
 
 function buildContactBlock(locale, settings) {
@@ -70,10 +89,11 @@ function buildMessage(locale, settings, products, publicUrl, pdfUrl, template) {
   const svcLabel   = locale === 'es' ? 'Nuestros servicios:' : 'Our services:';
   const svcBlock   = buildServicesBlock(locale, products).replace(/\{SITE\}/g, publicUrl);
   const ctaBlock   = buildContactBlock(locale, settings).replace(/\{SITE\}/g, publicUrl);
+  const aiCta      = buildAiCtaBlock(locale, publicUrl);
   const brochLine  = locale === 'es'
     ? `📄 Portafolio de servicios: ${pdfUrl}`
     : `📄 Services portfolio: ${pdfUrl}`;
-  return [tpl('opening'), '', svcLabel, '', svcBlock, '', ctaBlock, '', brochLine, '', tpl('closing'), '', tpl('signoff')].join('\n');
+  return [tpl('opening'), '', svcLabel, '', svcBlock, '', aiCta, '', ctaBlock, '', brochLine, '', tpl('closing'), '', tpl('signoff')].join('\n');
 }
 
 // ── TemplateBlock — one section of the editor ─────────────────────────────
@@ -182,6 +202,7 @@ export default function OwnerWhatsApp() {
 
   const hasServices = products.some(p => p.enabled);
   const svcPreview  = settings ? buildServicesBlock(msgLocale, products).replace(/\{SITE\}/g, publicUrl) : '';
+  const aiCtaPreview = buildAiCtaBlock(msgLocale, publicUrl);
   const ctaPreview  = settings ? buildContactBlock(msgLocale, settings).replace(/\{SITE\}/g, publicUrl) : '';
   const brochLine   = msgLocale === 'es' ? `📄 Portafolio de servicios: ${pdfUrl}` : `📄 Services portfolio: ${pdfUrl}`;
 
@@ -285,6 +306,11 @@ export default function OwnerWhatsApp() {
               hintHref={`${base}/service-catalog`}
               hintText={t('owner.whatsapp.block.services.edit')}>
               {hasServices ? svcPreview : <span style={{ color: 'var(--tax-muted)', fontStyle: 'italic' }}>{t('owner.whatsapp.noServices')}</span>}
+            </TemplateBlock>
+
+            {/* AI assistant CTA — auto, drives lead to chat widget */}
+            <TemplateBlock label={t('owner.whatsapp.block.aiCta')}>
+              <span style={{ color: '#4f46e5' }}>{aiCtaPreview}</span>
             </TemplateBlock>
 
             {/* Contact — locked, from settings */}

@@ -1789,6 +1789,7 @@
   "owner.whatsapp.block.contact": "Contact info (auto, from settings)",
   "owner.whatsapp.block.contact.edit": "Edit contact",
   "owner.whatsapp.block.contact.empty": "No contact info yet — add it in Settings.",
+  "owner.whatsapp.block.aiCta": "AI assistant call-to-action (auto)",
   "owner.whatsapp.block.brochure": "Brochure link (auto)",
   "owner.whatsapp.block.closing": "Closing line",
   "owner.whatsapp.block.signoff": "Sign-off",
