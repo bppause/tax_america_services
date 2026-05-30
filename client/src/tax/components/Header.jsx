@@ -9,7 +9,7 @@ import { useCalendlyPopup } from './CalendlySection';
 // scrolling doesn't compete with the menu.
 const MOBILE_BREAKPOINT = 760;
 
-export default function Header({ community, sections }) {
+export default function Header({ community, sections, communitySlug }) {
   const { locale, t } = useT();
   const [logoFailed, setLogoFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -41,6 +41,7 @@ export default function Header({ community, sections }) {
     schedule: calendlyAvailable
       ? { label: t('nav.schedule'), onClick: openCalendly }
       : null,
+    communitySlug,
   });
 
   const renderLink = (l, opts = {}) => {
@@ -115,17 +116,20 @@ export default function Header({ community, sections }) {
 }
 
 // Resolve the visible nav links. Always includes Services / About / Contact;
-// Team and FAQs surface only when the parent reports the matching section
-// is rendering. Schedule is special — it's a popup trigger (not an anchor)
-// supplied by the caller when Calendly is configured.
+// Team, FAQs, News, Articles, and Calendar surface only when the parent
+// reports the matching section/data is available.
 function buildNavLinks(sections, t, overrides = {}) {
-  const has = (k) => !sections || sections[k] !== false;
+  const has = (k) => sections && sections[k] === true;
+  const slug = overrides.communitySlug;
   const out = [
     { href: '#services', label: t('nav.services') },
   ];
-  if (has('team')) out.push({ href: '#team', label: t('nav.team') });
+  if (!sections || sections.team !== false) out.push({ href: '#team', label: t('nav.team') });
   if (overrides.schedule) out.push(overrides.schedule);
-  if (has('faqs')) out.push({ href: '#faqs', label: t('nav.faqs') });
+  if (has('news')) out.push({ href: '#news', label: t('nav.news') });
+  if (has('articles')) out.push({ href: '#articles', label: t('nav.articles') });
+  if (has('calendar') && slug) out.push({ href: `/tax/${slug}/calendar`, label: t('nav.calendar') });
+  if (!sections || sections.faqs !== false) out.push({ href: '#faqs', label: t('nav.faqs') });
   out.push({ href: '#about', label: t('nav.about') });
   out.push({ href: '#contact', label: t('nav.contact') });
   return out;

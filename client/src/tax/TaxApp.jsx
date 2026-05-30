@@ -13,6 +13,7 @@ import { TaxLocaleProvider } from './i18n';
 import Landing from './pages/Landing';
 import PublicFaqs from './pages/PublicFaqs';
 import PublicArticles from './pages/PublicArticles';
+import PublicCalendar from './pages/PublicCalendar';
 import Respond from './pages/Respond';
 import PortalLogin from './pages/PortalLogin';
 import PortalDashboard from './pages/PortalDashboard';
@@ -76,6 +77,7 @@ function parseTaxPath() {
   // landing page at /tax/:slug/{faqs,articles}.
   if (parts[2] === 'faqs')     return { route: 'public-faqs', slug };
   if (parts[2] === 'articles') return { route: 'public-articles', slug };
+  if (parts[2] === 'calendar') return { route: 'public-calendar', slug };
   if (parts[2] === 'employee') {
     if (parts[3] === 'profile') return { route: 'employee-profile', slug };
     if (parts[3] === 'threads' && parts[4]) return { route: 'employee-thread', slug, threadId: decodeURIComponent(parts[4]) };
@@ -139,7 +141,9 @@ export default function TaxApp() {
                 ? <PublicFaqs communitySlug={parsed.slug} />
                 : parsed.route === 'public-articles'
                   ? <PublicArticles communitySlug={parsed.slug} />
-                  : <Landing communitySlug={parsed.slug} />}
+                  : parsed.route === 'public-calendar'
+                    ? <PublicCalendar communitySlug={parsed.slug} />
+                    : <Landing communitySlug={parsed.slug} />}
     </TaxLocaleProvider>
   );
 }

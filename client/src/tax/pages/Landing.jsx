@@ -9,6 +9,7 @@ import TeamSection from '../components/TeamSection';
 import TestimonialsSection from '../components/TestimonialsSection';
 import FaqsSection from '../components/FaqsSection';
 import NewsSection from '../components/NewsSection';
+import ArticlesSection from '../components/ArticlesSection';
 import About from '../components/About';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
@@ -47,6 +48,9 @@ export default function Landing({ communitySlug }) {
   // itself when the feed is empty.
   const [news, setNews] = useState(null);
   const [newsLimit, setNewsLimit] = useState(null);
+  // Articles + deadlines: fetched here so the nav links can hide when empty.
+  const [hasArticles, setHasArticles] = useState(null);
+  const [hasDeadlines, setHasDeadlines] = useState(null);
 
   const onRequestService = (slug) => {
     setPendingService(slug);
@@ -93,6 +97,22 @@ export default function Landing({ communitySlug }) {
         setNewsLimit(d.displayLimit || null);
       })
       .catch(() => !cancelled && setNews([]));
+    return () => { cancelled = true; };
+  }, [communitySlug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    taxApi.getCommunityArticles(communitySlug)
+      .then(d => { if (!cancelled) setHasArticles((d.articles || []).length > 0); })
+      .catch(() => { if (!cancelled) setHasArticles(false); });
+    return () => { cancelled = true; };
+  }, [communitySlug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    taxApi.getCommunityDeadlines(communitySlug)
+      .then(d => { if (!cancelled) setHasDeadlines((d.deadlines || []).length > 0); })
+      .catch(() => { if (!cancelled) setHasDeadlines(false); });
     return () => { cancelled = true; };
   }, [communitySlug]);
 
@@ -151,6 +171,8 @@ export default function Landing({ communitySlug }) {
     team: true,
     reviews: Array.isArray(testimonials) && testimonials.length > 0,
     news: Array.isArray(news) && news.length > 0,
+    articles: hasArticles === true,
+    calendar: hasDeadlines === true,
     faqs: true,
     about: true,
     contact: true,
@@ -159,7 +181,7 @@ export default function Landing({ communitySlug }) {
   return (
     <LandingCopyProvider community={community}>
       <div className="tax-app" style={brandStyle}>
-        <Header community={community} sections={sections} />
+        <Header community={community} sections={sections} communitySlug={communitySlug} />
         <Hero community={community} />
         <ServicesGrid products={products} community={community} onRequestService={onRequestService} />
         <TeamSection communitySlug={communitySlug} />
@@ -168,6 +190,7 @@ export default function Landing({ communitySlug }) {
                              displayLimit={testimonialsLimit} />
         <NewsSection communitySlug={communitySlug}
                      articles={news} displayLimit={newsLimit} />
+        <ArticlesSection communitySlug={communitySlug} />
         <FaqsSection communitySlug={communitySlug} />
         <About />
         <Contact community={community} products={products}
