@@ -156,7 +156,7 @@ export default function OwnerLeads() {
           : <div style={{ display: 'grid', gap: 8 }}>
               {shown.map(lead => (
                 <LeadRow key={lead.id} lead={lead} auth={auth} onChange={load}
-                         communitySlug={community.id}
+                         communitySlug={community.id} community={community}
                          products={products} relTypes={relTypes}
                          focused={lead.id === focusLeadId}
                          locale={locale} t={t} />
@@ -178,7 +178,7 @@ function statusLabel(status, t) {
   return t('owner.leads.status.open');
 }
 
-function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, focused, locale, t }) {
+function LeadRow({ lead, auth, onChange, communitySlug, community, products, relTypes, focused, locale, t }) {
   const [expanded, setExpanded] = useState(!!focused);
   const [notes, setNotes] = useState(lead.notes || '');
   const [busy, setBusy] = useState(false);
@@ -287,6 +287,27 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, focu
               <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.55 }}>{lead.message}</div>
             </div>
           )}
+          {Array.isArray(lead.ai_conversation) && lead.ai_conversation.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 6 }}>
+                AI Chat Transcript
+              </div>
+              <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, overflow: 'hidden' }}>
+                {lead.ai_conversation.map((m, i) => (
+                  <div key={i} style={{
+                    padding: '8px 12px',
+                    background: m.role === 'user' ? 'var(--tax-bg-alt)' : '#fff',
+                    borderTop: i > 0 ? '1px solid var(--tax-border)' : 'none',
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: m.role === 'user' ? 'var(--tax-brand-primary)' : 'var(--tax-muted)', marginBottom: 2, textTransform: 'uppercase' }}>
+                      {m.role === 'user' ? 'Lead' : 'AI'}
+                    </div>
+                    <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{m.content}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{ marginBottom: 12 }}>
             <label htmlFor={`ln-${lead.id}`} style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
               {t('owner.leads.notes')}
@@ -351,6 +372,34 @@ function LeadRow({ lead, auth, onChange, communitySlug, products, relTypes, focu
                   {t('owner.leads.action.viewCustomer')}
                 </a>
               )}
+
+              {/* Quick-contact buttons — pre-filled email and WhatsApp drafts */}
+              {lead.email && (
+                <a href={`mailto:${lead.email}?subject=${encodeURIComponent(
+                    `${t('owner.leads.action.emailSubject') || 'Following up on your inquiry'}`
+                  )}&body=${encodeURIComponent(
+                    (locale === 'es'
+                      ? `Hola ${lead.first_name || lead.name},\n\nGracias por tu interés en nuestros servicios. Me gustaría coordinar una cita para hablar sobre ${(lead.product_slugs || [lead.product_slug]).filter(Boolean).join(', ') || 'nuestros servicios'}.\n\n¿Cuándo tienes disponibilidad?\n\nSaludos,`
+                      : `Hi ${lead.first_name || lead.name},\n\nThank you for your interest in our services. I'd love to schedule a quick call to discuss ${(lead.product_slugs || [lead.product_slug]).filter(Boolean).join(', ') || 'our services'}.\n\nWhat times work for you?\n\nBest regards,`)
+                  )}`}
+                   className="tax-btn tax-btn--ghost tax-btn--sm"
+                   style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
+                  ✉️ {locale === 'es' ? 'Email' : 'Email'}
+                </a>
+              )}
+              {(lead.whatsapp || lead.phone) && (
+                <a href={`https://wa.me/${String(lead.whatsapp || lead.phone).replace(/^\+/, '').replace(/\D+/g, '')}?text=${encodeURIComponent(
+                    locale === 'es'
+                      ? `Hola ${lead.first_name || lead.name}, soy de ${community?.name || ''}. Recibí tu solicitud sobre ${(lead.product_slugs || [lead.product_slug]).filter(Boolean).join(', ') || 'nuestros servicios'}. ¿Tienes unos minutos para hablar o coordinar una cita?`
+                      : `Hi ${lead.first_name || lead.name}, this is ${community?.name || ''}. I saw your inquiry about ${(lead.product_slugs || [lead.product_slug]).filter(Boolean).join(', ') || 'our services'}. Do you have a few minutes to chat or schedule an appointment?`
+                  )}`}
+                   target="_blank" rel="noopener noreferrer"
+                   className="tax-btn tax-btn--ghost tax-btn--sm"
+                   style={{ color: '#25d366', borderColor: '#25d366' }}>
+                  💬 WhatsApp
+                </a>
+              )}
+
               {lead.status !== 'converted' && lead.status !== 'closed' && (
                 <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                         onClick={() => setClosing(true)} disabled={busy}

@@ -25,7 +25,28 @@ const { escapeHtml } = require('../../core/utils');
 const { firstNameOf, displayNameOf } = require('./names');
 
 module.exports = function createTaxSenders(deps) {
-  const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery, publicAppUrl } = deps;
+  const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery, publicAppUrl, supabase } = deps;
+
+  // Branded customer-facing emails need the practice's logo + contact
+  // info to render header and footer. The wide variety of call sites
+  // pass different community projections (some have logo_url, some
+  // don't), so the helper backfills the missing branding columns from
+  // the DB when needed. No-op when the columns are already present —
+  // cost of one extra select per email when not, which is negligible.
+  async function ensureBrandingFields(community) {
+    if (!community || !community.id || !supabase) return community || {};
+    const needsFetch = community.logo_url === undefined
+      || community.contact_email === undefined
+      || community.address_line1 === undefined;
+    if (!needsFetch) return community;
+    try {
+      const { data } = await supabase.from('communities')
+        .select('id, name, name_en, default_locale, logo_url, address_line1, address_line2, city, state, postal_code, phone, contact_email, whatsapp')
+        .eq('id', community.id).maybeSingle();
+      if (data) return { ...community, ...data };
+    } catch (_e) {}
+    return community;
+  }
 
   // Resolve the deployed app's base URL for clickable links in emails.
   // Falls through to empty string in tests so the helper never throws —
@@ -35,6 +56,72 @@ module.exports = function createTaxSenders(deps) {
     try { return typeof publicAppUrl === 'function' ? publicAppUrl() : ''; }
     catch { return ''; }
   };
+
+  // Phase 4n.73: shared layout for customer-facing emails. Wraps the
+  // body in a branded header (logo linked to the public landing page)
+  // and a footer carrying the practice's contact info (address, phone,
+  // contact email, WhatsApp, website link). Currently used by the
+  // bookkeeping report send; the other customer-facing senders pre-date
+  // it and still use their own ad-hoc HTML — retrofit one at a time.
+  function brandedEmailLayout({ community, lang, innerHtml }) {
+    const base = appBase();
+    const slug = community?.id || '';
+    const websiteUrl = base ? `${base}/tax/${encodeURIComponent(slug)}` : (slug ? `/tax/${encodeURIComponent(slug)}` : '#');
+    // logo_url is typically a relative path like /tax/...png; prefix
+    // with base so it resolves inside the email client.
+    let logoUrl = String(community?.logo_url || '').trim();
+    if (logoUrl && !/^https?:\/\//i.test(logoUrl)) logoUrl = `${base}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`;
+    const name = (lang === 'en' && community?.name_en) ? community.name_en : (community?.name || 'Tax America Services');
+    const addressLine = [
+      community?.address_line1,
+      community?.address_line2,
+      [community?.city, community?.state, community?.postal_code].filter(Boolean).join(', '),
+    ].filter(Boolean).join(' · ');
+    const phone = community?.phone || '';
+    const whatsapp = community?.whatsapp || '';
+    const contactEmail = community?.contact_email || '';
+    const websiteLabel = websiteUrl.replace(/^https?:\/\//, '');
+    const headerInner = logoUrl
+      ? `<img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(name)}" style="max-height:54px;max-width:260px;display:inline-block;border:0;outline:0;text-decoration:none">`
+      : `<div style="font-size:18px;font-weight:700;color:#134e4a">${escapeHtml(name)}</div>`;
+    return `<!doctype html>
+<html lang="${lang === 'en' ? 'en' : 'es-CO'}">
+<body style="margin:0;padding:0;background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;color:#0f172a">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f6f7f9;padding:24px 12px">
+    <tr><td align="center">
+      <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.08)">
+        <tr><td align="center" style="background:#fff;padding:20px 26px;border-bottom:1px solid #e2e8f0">
+          <a href="${escapeHtml(websiteUrl)}" style="text-decoration:none;color:inherit">${headerInner}</a>
+        </td></tr>
+        ${innerHtml}
+        <tr><td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px 26px;font-size:12px;color:#64748b;text-align:center;line-height:1.65">
+          <div style="font-weight:700;color:#0f172a;margin-bottom:4px">${escapeHtml(name)}</div>
+          ${addressLine ? `<div>${escapeHtml(addressLine)}</div>` : ''}
+          ${(phone || whatsapp) ? `<div>${escapeHtml([phone && `Tel: ${phone}`, whatsapp && `WhatsApp: ${whatsapp}`].filter(Boolean).join(' · '))}</div>` : ''}
+          ${contactEmail ? `<div style="margin-top:4px"><a href="mailto:${escapeHtml(contactEmail)}" style="color:#0f766e;text-decoration:none">${escapeHtml(contactEmail)}</a></div>` : ''}
+          <div style="margin-top:10px"><a href="${escapeHtml(websiteUrl)}" style="color:#0f766e;text-decoration:none;font-weight:600">${escapeHtml(websiteLabel)}</a></div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+  }
+
+  // Wrap a customer-facing email body in the branded header + footer
+  // layout. Resolves the community's branding columns (logo, address,
+  // phone, contact email, etc.) on demand so legacy call sites that
+  // pass a stripped-down community projection still get the full
+  // branded chrome. `cust.community_id` is used as a fallback when the
+  // caller didn't pass a community at all.
+  async function brandedWrap({ community, cust, lang, html }) {
+    const seed = community || (cust?.community_id ? { id: cust.community_id } : null);
+    const resolved = await ensureBrandingFields(seed) || {};
+    return brandedEmailLayout({
+      community: resolved,
+      lang,
+      innerHtml: `<tr><td style="padding:24px 26px;color:#0f172a;font-size:14px;line-height:1.55">${html}</td></tr>`,
+    });
+  }
 
   // Phase 4i: owner-editable subject + intro paragraph per (template_key, lang).
   // Senders compute their defaults as before; if an override row exists and
@@ -87,6 +174,13 @@ module.exports = function createTaxSenders(deps) {
     // auto-expands the matching row and scrolls to it.
     const leadInboxUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/leads?lead=${encodeURIComponent(lead.id)}`;
 
+    const conversation = Array.isArray(lead.ai_conversation) ? lead.ai_conversation : [];
+    const conversationText = conversation.length
+      ? '\n\nAI Chat Transcript:\n' + conversation.map(m =>
+          `${m.role === 'user' ? 'Lead' : 'AI'}: ${m.content}`
+        ).join('\n\n')
+      : '';
+
     const lines = [
       `New lead via ${community.name} landing page:`,
       '',
@@ -98,13 +192,27 @@ module.exports = function createTaxSenders(deps) {
       '',
       'Message:',
       lead.message || '(none)',
-      '',
+      conversationText,
       `Open in app: ${leadInboxUrl}`,
       '',
       `Lead ID: ${lead.id}`,
       `Submitted: ${lead.created_at}`,
     ];
     const text = lines.join('\n');
+
+    const conversationHtml = conversation.length ? `
+        <h3 style="margin-top:24px">AI Chat Transcript</h3>
+        <div style="border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+          ${conversation.map(m => `
+            <div style="padding:10px 14px;${m.role === 'user' ? 'background:#f0f4ff' : 'background:#fff'}">
+              <div style="font-size:11px;font-weight:700;color:${m.role === 'user' ? '#1d3a6d' : '#555'};margin-bottom:4px;text-transform:uppercase">
+                ${m.role === 'user' ? 'Lead' : 'AI Assistant'}
+              </div>
+              <div style="font-size:14px;line-height:1.5;white-space:pre-wrap">${escapeHtml(m.content)}</div>
+            </div>
+          `).join('')}
+        </div>
+    ` : '';
 
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:560px">
@@ -118,6 +226,7 @@ module.exports = function createTaxSenders(deps) {
         </table>
         <h3>Message</h3>
         <div style="white-space:pre-wrap;background:#f7f7f7;padding:12px;border-radius:8px">${escapeHtml(lead.message || '(none)')}</div>
+        ${conversationHtml}
         <p style="margin:20px 0">
           <a href="${escapeHtml(leadInboxUrl)}"
              style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
@@ -262,7 +371,7 @@ module.exports = function createTaxSenders(deps) {
     return { lang, langTag, defaults, vars };
   }
 
-  const sendTaxReminderEmail = async ({ row, cust, sch, sub, magicUrl, offsetDays, tips, extraDocs, workflowRuleId, skipLog }) => {
+  const sendTaxReminderEmail = async ({ row, cust, sch, sub, magicUrl, offsetDays, tips, extraDocs, workflowRuleId, skipLog, community }) => {
     if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
     // Prefer the customer's chosen communication email (Phase 2e) when set;
     // otherwise fall back to the login email.
@@ -274,8 +383,9 @@ module.exports = function createTaxSenders(deps) {
       communityId: cust.community_id, key: 'reminder',
       lang: built.lang, vars: built.vars, defaults: built.defaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang: built.lang, html: finalCopy.html });
     const result = await sendSpanishEmail({
-      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: built.langTag,
+      to, subject: finalCopy.subject, text: finalCopy.text, html: wrappedHtml, lang: built.langTag,
     });
     // Phase 4n: persist a row keyed by Resend's message id so the webhook
     // receiver can match incoming opened/clicked events back to a customer.
@@ -766,8 +876,9 @@ module.exports = function createTaxSenders(deps) {
     const finalCopy = await applyOverride({
       communityId: cust.community_id, key: 'document', lang, vars, defaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: finalCopy.html });
     const result = await sendSpanishEmail({
-      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+      to, subject: finalCopy.subject, text: finalCopy.text, html: wrappedHtml, lang: langTag,
     });
     if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -851,8 +962,9 @@ module.exports = function createTaxSenders(deps) {
     const finalCopy = await applyOverride({
       communityId: cust.community_id, key: 'signature_request', lang, vars, defaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: finalCopy.html });
     const result = await sendSpanishEmail({
-      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+      to, subject: finalCopy.subject, text: finalCopy.text, html: wrappedHtml, lang: langTag,
     });
     if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -995,8 +1107,9 @@ module.exports = function createTaxSenders(deps) {
     const msgFinal = await applyOverride({
       communityId: cust.community_id, key: 'message_to_customer', lang, vars: msgVars, defaults: msgDefaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: msgFinal.html });
     const msgResult = await sendSpanishEmail({
-      to, subject: msgFinal.subject, text: msgFinal.text, html: msgFinal.html, lang: langTag,
+      to, subject: msgFinal.subject, text: msgFinal.text, html: wrappedHtml, lang: langTag,
     });
     if (msgResult && msgResult.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -1281,8 +1394,9 @@ module.exports = function createTaxSenders(deps) {
     const wFinal = await applyOverride({
       communityId: cust.community_id, key: 'welcome_customer', lang, vars: wVars, defaults: wDefaults,
     });
+    const wrappedHtml = await brandedWrap({ community, cust, lang, html: wFinal.html });
     const wResult = await sendSpanishEmail({
-      to, subject: wFinal.subject, text: wFinal.text, html: wFinal.html, lang: langTag,
+      to, subject: wFinal.subject, text: wFinal.text, html: wrappedHtml, lang: langTag,
     });
     if (wResult && wResult.sent && typeof logTaxEmailDelivery === 'function') {
       try {
@@ -1709,6 +1823,160 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // ── Bookkeeping financial report (Phase 4n.70) ────────────────────────────
+  // Sent when the owner clicks "Enviar al cliente" on a published
+  // financial report. Body is a visual KPI summary (revenue, net
+  // income, gross margin) plus a big CTA button to the dashboard.
+  // Includes an estimation disclaimer per owner preference. Defaults
+  // to Spanish (owner's customer base); switches to English when
+  // cust.locale === 'en'.
+  const sendTaxBookkeepingReportEmail = async ({ community, customer, report, viewUrl, isResend }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
+    const to = String(customer?.preferred_communication_email || customer?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'customer_email_missing' };
+
+    const lang = customer?.locale === 'en' ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const firstName = firstNameOf(customer)
+      || (customer?.business_name ? '' : (customer?.name || '').split(/\s+/)[0])
+      || '';
+    const practiceName = community?.name || 'Tax America Services';
+
+    const pl = report?.pl_data || {};
+    const revenueChannels = (pl.revenue && typeof pl.revenue === 'object') ? pl.revenue : {};
+    const totalRevenue = Number(pl.total_income)
+      || Object.values(revenueChannels).reduce((s, v) => s + (Number(v) || 0), 0);
+    const netIncome = Number(pl.net_income) || 0;
+    const cogs = Number(pl.cogs) || 0;
+    const grossProfit = totalRevenue - cogs;
+    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+    const fmtMoney = (n) => {
+      const v = Math.round(Number(n) || 0);
+      if (Math.abs(v) >= 1000) return `$${(v / 1000).toFixed(0)}K`;
+      return `$${v}`;
+    };
+    const fmtPct = (n) => `${(Math.round((Number(n) || 0) * 10) / 10).toFixed(1)}%`;
+
+    const T = lang === 'en' ? {
+      eyebrow: isResend ? 'Updated report' : 'New financial report',
+      greeting: firstName ? `Hi ${firstName},` : 'Hello,',
+      headline: `Your ${report?.period_label || ''} financial report is ready`.replace(/\s+/g,' ').trim(),
+      revenue: 'Revenue',
+      netIncome: 'Net income',
+      grossMargin: 'Gross margin',
+      cta: 'View full report',
+      blurb: 'Tap the button to open your interactive dashboard. You will be asked to confirm the email address this message was sent to.',
+      disclaimer: 'The information shown is estimated based on what you have provided us. Please verify against your own books before making important decisions.',
+      footer: `Prepared by ${practiceName}. Reply to this email with any questions.`,
+      subject: isResend
+        ? `${practiceName} — Updated financial report (${report?.period_label || ''})`
+        : `${practiceName} — Your financial report (${report?.period_label || ''})`,
+    } : {
+      eyebrow: isResend ? 'Informe actualizado' : 'Nuevo informe financiero',
+      greeting: firstName ? `Hola ${firstName},` : 'Hola,',
+      headline: `Su informe financiero ${report?.period_label || ''} está listo`.replace(/\s+/g,' ').trim(),
+      revenue: 'Ingresos',
+      netIncome: 'Utilidad neta',
+      grossMargin: 'Margen bruto',
+      cta: 'Ver informe completo',
+      blurb: 'Toque el botón para abrir su panel interactivo. Se le pedirá confirmar la dirección de correo a la que se envió este mensaje.',
+      disclaimer: 'La información mostrada es estimada basada en lo que usted nos ha proporcionado. Verifique con sus propios libros antes de tomar decisiones importantes.',
+      footer: `Preparado por ${practiceName}. Responda a este correo con cualquier pregunta.`,
+      subject: isResend
+        ? `${practiceName} — Informe financiero actualizado (${report?.period_label || ''})`
+        : `${practiceName} — Su informe financiero (${report?.period_label || ''})`,
+    };
+
+    const kpiCell = (label, value) => `
+      <td align="center" valign="top" style="padding:8px;">
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 10px;min-width:110px;">
+          <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:600">${escapeHtml(label)}</div>
+          <div style="font-size:20px;font-weight:700;color:#0f172a;margin-top:6px">${escapeHtml(value)}</div>
+        </div>
+      </td>`;
+
+    const innerBody = `
+        <tr><td style="background:linear-gradient(135deg,#134e4a 0%,#0f766e 100%);padding:18px 26px;color:#fff">
+          <div style="text-transform:uppercase;letter-spacing:.12em;font-size:11px;font-weight:700;opacity:.9">${escapeHtml(T.eyebrow)}</div>
+        </td></tr>
+        <tr><td style="padding:24px 26px 8px">
+          <p style="margin:0 0 8px;font-size:14px;color:#475569">${escapeHtml(T.greeting)}</p>
+          <h1 style="margin:0;font-size:20px;font-weight:700;color:#0f172a;line-height:1.3">${escapeHtml(T.headline)}</h1>
+        </td></tr>
+        <tr><td style="padding:14px 18px 4px">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f8fafc;border-radius:10px">
+            <tr>
+              ${kpiCell(T.revenue, fmtMoney(totalRevenue))}
+              ${kpiCell(T.netIncome, fmtMoney(netIncome))}
+              ${kpiCell(T.grossMargin, fmtPct(grossMargin))}
+            </tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:18px 26px 8px;font-size:14px;color:#475569;line-height:1.55">
+          ${escapeHtml(T.blurb)}
+        </td></tr>
+        <tr><td align="center" style="padding:12px 26px 24px">
+          <a href="${escapeHtml(viewUrl)}" style="display:inline-block;background:#0f766e;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;font-size:15px">${escapeHtml(T.cta)} →</a>
+        </td></tr>
+        <tr><td style="padding:0 26px 24px">
+          <div style="background:#fef3c7;border-left:3px solid #b45309;border-radius:6px;padding:12px 14px;font-size:12.5px;color:#78350f;line-height:1.5">
+            <strong style="display:block;margin-bottom:2px">${lang === 'en' ? 'Important' : 'Importante'}</strong>
+            ${escapeHtml(T.disclaimer)}
+          </div>
+        </td></tr>`;
+
+    const html = brandedEmailLayout({ community, lang, innerHtml: innerBody });
+
+    const text = [
+      T.greeting,
+      '',
+      T.headline,
+      '',
+      `${T.revenue}: ${fmtMoney(totalRevenue)}`,
+      `${T.netIncome}: ${fmtMoney(netIncome)}`,
+      `${T.grossMargin}: ${fmtPct(grossMargin)}`,
+      '',
+      T.blurb,
+      viewUrl,
+      '',
+      T.disclaimer,
+      '',
+      T.footer,
+    ].join('\n');
+
+    const defaults = { subject: T.subject, text, html };
+    const vars = {
+      practice_name: practiceName,
+      customer_first_name: firstName,
+      period_label: report?.period_label || '',
+      revenue: fmtMoney(totalRevenue),
+      net_income: fmtMoney(netIncome),
+      gross_margin: fmtPct(grossMargin),
+      view_url: viewUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community?.id, key: 'bookkeeping_report',
+      lang, vars, defaults,
+    });
+    const result = await sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '',
+          outboundMessageId: result.messageId || '',
+          to, subject: finalCopy.subject, lang,
+          kind: 'tax.bookkeeping_report',
+          relatedId: report?.id || '',
+          customerId: customer?.id || null,
+        });
+      } catch (_e) {}
+    }
+    return result;
+  };
+
   return {
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
@@ -1722,6 +1990,7 @@ module.exports = function createTaxSenders(deps) {
     sendTaxStaffWelcomeEmail,
     sendTaxSignatureRequestEmail,
     sendTaxSignatureSignedEmail,
+    sendTaxBookkeepingReportEmail,
     previewTaxEmail,
     getTemplateDefaults,
   };

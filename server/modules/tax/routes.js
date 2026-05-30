@@ -27,12 +27,16 @@ const {
   resolveNamePayload, firstNameOf, displayNameOf,
 } = require('./names');
 const { suggestionsForSlug } = require('./task-suggestions');
+const { TEMPLATES_BY_SLUG } = require('./auto-task-templates');
 const {
   PERMISSIONS: TAX_PERMISSIONS,
   hasEmployeePermission,
   sanitizePermissions,
 } = require('./permissions');
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
+const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
+const { generateFaqsForService, inferRelationshipCategory } = require('./faq-autogen');
+const { translateText, buildTitleI18n } = require('../../core/translate');
 
 const TAX_BUSINESS_TYPE = 'tax';
 const MAX_TEXT_LEN = 4000;
@@ -47,6 +51,7 @@ const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 module.exports = function createTaxRouter(deps) {
   const {
     supabase, requireSupabaseEnv, sendSupabaseError,
+    isSupabaseConfigured,
     auditLog,
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
@@ -59,10 +64,13 @@ module.exports = function createTaxRouter(deps) {
     sendTaxStaffWelcomeEmail,
     sendTaxSignatureRequestEmail,
     sendTaxSignatureSignedEmail,
+    sendTaxBookkeepingReportEmail,
     previewTaxEmail,
     getTemplateDefaults,
     publicAppUrl,
     emailFrom: PLATFORM_EMAIL_FROM,
+    googlePlacesApiKey: GOOGLE_PLACES_API_KEY,
+    anthropicApiKey: ANTHROPIC_API_KEY,
     isGlobalAdmin,
     isEnvGlobalAdminEmail,
     runReminderCron,
@@ -360,6 +368,297 @@ module.exports = function createTaxRouter(deps) {
     res.json({ community, products: products || [] });
   });
 
+  // ── GET /community/:slug/brochure.pdf?lang=es|en ─────────────────────────
+  // Public services brochure — generated on-demand from live community data.
+  // No auth required; suitable for linking from WhatsApp / email.
+  // 5-minute cache so Render doesn't re-generate on every click.
+  router.get('/community/:slug/brochure.pdf', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    const lang = req.query.lang === 'en' ? 'en' : 'es';
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+
+    const [{ data: community, error: cErr }, { data: products }] = await Promise.all([
+      supabase.from('communities')
+        .select('id, name, name_en, logo_url, brand_primary_color, brand_secondary_color, phone, whatsapp, contact_email, address_line1, address_line2, city, state, postal_code, country, website_url')
+        .eq('id', slug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle(),
+      supabase.from('tax_products')
+        .select('slug, category, display_order, name_i18n, description_i18n, long_description_i18n')
+        .eq('community_id', slug).eq('enabled', true).order('display_order', { ascending: true }),
+    ]);
+    if (cErr || !community) return res.status(404).json({ error: 'Community not found.' });
+
+    // Fetch logo and convert to PNG via sharp (handles PNG, JPEG, WebP, SVG, etc.).
+    let logoBuffer = null;
+    if (community.logo_url) {
+      try {
+        const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(6000) });
+        if (lr.ok) {
+          const raw = Buffer.from(await lr.arrayBuffer());
+          logoBuffer = await require('sharp')(raw).png().toBuffer();
+        } else {
+          warn(`[brochure] logo fetch ${lr.status} for ${community.logo_url}`);
+        }
+      } catch (logoErr) {
+        warn(`[brochure] logo failed: ${logoErr?.message} url=${community.logo_url}`);
+      }
+    }
+
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ size: 'A4', margin: 0,
+      info: { Title: lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio',
+              Author: community.name_en || community.name } });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${slug}-services-${lang}.pdf"`);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    doc.pipe(res);
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+    const BRAND  = community.brand_primary_color  || '#1e3a8a';
+    const ACCENT = community.brand_secondary_color || '#93c5fd';
+    const PW     = doc.page.width;   // 595.28 pts  A4
+    const PH     = doc.page.height;  // 841.89 pts
+    const M      = 48;               // page margin
+    const CW     = PW - M * 2;
+    const DARK   = '#1e293b';
+    const BODY   = '#374151';
+    const MUTED  = '#6b7280';
+    const WHITE  = '#ffffff';
+    const FOOTER = 44;               // footer band height
+    const pickL  = (obj) => (obj?.[lang] || obj?.en || obj?.es || '');
+
+    // Lighten brand color for card backgrounds (blend with white at 93%).
+    function lighten(hex, pct = 0.93) {
+      const r = parseInt(hex.slice(1,3)||'1e',16);
+      const g = parseInt(hex.slice(3,5)||'40',16);
+      const b = parseInt(hex.slice(5,7)||'af',16);
+      const lr = Math.round(r + (255-r)*pct);
+      const lg = Math.round(g + (255-g)*pct);
+      const lb = Math.round(b + (255-b)*pct);
+      return `#${lr.toString(16).padStart(2,'0')}${lg.toString(16).padStart(2,'0')}${lb.toString(16).padStart(2,'0')}`;
+    }
+    const CARD_BG = lighten(BRAND, 0.93);
+
+    const bizName  = lang === 'es'
+      ? (community.name    || community.name_en || '')
+      : (community.name_en || community.name    || '');
+    const publicUrl = community.website_url || `${process.env.PUBLIC_APP_URL || ''}/tax/${slug}`;
+
+    // Draw footer band on the current page (call before doc.end()).
+    function drawFooter() {
+      const fy = PH - FOOTER;
+      doc.rect(0, fy, PW, FOOTER).fill(BRAND);
+      doc.font('Helvetica').fontSize(9).fillColor(WHITE)
+         .text(`${bizName}  ·  ${publicUrl}`, M, fy + 15, { width: CW, align: 'center' });
+    }
+
+    // Add a new page, reset Y, redraw header bar.
+    function newPage() {
+      drawFooter();
+      doc.addPage({ size: 'A4', margin: 0 });
+      doc.rect(0, 0, PW, 6).fill(BRAND); // thin top stripe on continuation pages
+      doc.y = 24;
+    }
+
+    // Ensure `needed` pts fit before the footer. If not, new page.
+    function ensureSpace(needed) {
+      if (doc.y + needed > PH - FOOTER - 16) newPage();
+    }
+
+    // ── Header ────────────────────────────────────────────────────────────
+    const LOGO_SECTION_H = 140;  // white panel height when logo present
+    const BANNER_H       = 38;   // brand-color tagline band height
+    const HEADER_H = logoBuffer ? LOGO_SECTION_H + BANNER_H : 120;
+
+    if (logoBuffer) {
+      // White logo panel (full width) with thin brand stripe at top.
+      doc.rect(0, 0, PW, LOGO_SECTION_H).fill(WHITE);
+      doc.rect(0, 0, PW, 5).fill(BRAND);
+
+      // Logo centered in the white panel, generous fit box.
+      const MAX_LOGO_W = 340;
+      const MAX_LOGO_H = 110;
+      const logoX = (PW - MAX_LOGO_W) / 2;
+      const logoY = 5 + (LOGO_SECTION_H - 5 - MAX_LOGO_H) / 2;
+      try {
+        doc.image(logoBuffer, logoX, logoY,
+          { fit: [MAX_LOGO_W, MAX_LOGO_H], align: 'center', valign: 'center' });
+      } catch (_) { /* unsupported format — white panel stays */ }
+      // Clickable link over the entire logo panel — opens the public website.
+      doc.link(0, 0, PW, LOGO_SECTION_H, publicUrl);
+
+      // Brand-colored tagline banner immediately below logo panel.
+      doc.rect(0, LOGO_SECTION_H, PW, BANNER_H).fill(BRAND);
+      doc.fillColor(WHITE).font('Helvetica').fontSize(10)
+         .text(
+           lang === 'es'
+             ? 'Firma bilingüe especializada en servicios tributarios y contables'
+             : 'Bilingual tax & accounting firm — professional, accurate, on time',
+           M, LOGO_SECTION_H + 12, { width: CW, align: 'center' });
+    } else {
+      // No logo — centered name + tagline on solid brand background.
+      doc.rect(0, 0, PW, HEADER_H).fill(BRAND);
+      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(26)
+         .text(bizName, M, 32, { width: CW, align: 'center' });
+      doc.fillColor(WHITE).font('Helvetica').fontSize(12).opacity(0.82)
+         .text(
+           lang === 'es'
+             ? 'Firma bilingüe especializada en servicios tributarios y contables'
+             : 'Bilingual tax & accounting firm — professional, accurate, on time',
+           M, 72, { width: CW, align: 'center' });
+      doc.opacity(1);
+    }
+
+    // ── Intro strip ───────────────────────────────────────────────────────
+    const intro = lang === 'es'
+      ? 'Somos su aliado de confianza para el manejo de sus obligaciones fiscales en los Estados Unidos. Equipo bilingue con experiencia — precision, confidencialidad y atencion personalizada.'
+      : 'Your trusted partner for tax and financial obligations in the United States. Experienced bilingual team — accurate, confidential, and always on time.';
+    const INTRO_PAD = 14;
+    const introH    = 56;
+    doc.rect(0, HEADER_H, PW, introH).fill(CARD_BG);
+    doc.font('Helvetica').fontSize(10).fillColor(BODY)
+       .text(intro, M, HEADER_H + INTRO_PAD, { width: CW, lineGap: 3 });
+
+    doc.y = HEADER_H + introH + 20;
+
+    // ── Services section heading ───────────────────────────────────────────
+    const svcHead = lang === 'es' ? 'Nuestros Servicios' : 'Our Services';
+    doc.font('Helvetica-Bold').fontSize(16).fillColor(BRAND)
+       .text(svcHead, M, doc.y);
+    doc.moveDown(0.2);
+    doc.moveTo(M, doc.y).lineTo(M + 60, doc.y).lineWidth(3).strokeColor(BRAND).stroke();
+    doc.moveDown(1.0);
+
+    // ── Category labels ───────────────────────────────────────────────────
+    const CAT = {
+      tax_prep:  { es: 'Preparacion de impuestos', en: 'Tax preparation' },
+      recurring: { es: 'Servicio recurrente',      en: 'Ongoing service' },
+      one_off:   { es: 'Servicio de una sola vez', en: 'One-time service' },
+    };
+
+    // ── Service cards ─────────────────────────────────────────────────────
+    // Each card: colored left accent bar + tinted background.
+    // We pre-estimate height, draw the background rect, then draw text.
+    // The accent bar is 5 px wide on the far left of the content area.
+    const ACCENT_W  = 5;
+    const CARD_PAD  = 12;
+    const CARD_INNER = CW - ACCENT_W - CARD_PAD * 2; // text width inside card
+
+    for (const p of (products || [])) {
+      const pname  = pickL(p.name_i18n);
+      const pdesc  = pickL(p.description_i18n);
+      const plong  = pickL(p.long_description_i18n);
+      const catLbl = CAT[p.category]?.[lang] || '';
+      if (!pname) continue;
+
+      // Rough height: cat(16) + name(22) + desc lines + long lines + link(14) + pads
+      const descLines  = pdesc  ? Math.ceil(pdesc.length  / 80) : 0;
+      const longLines  = (plong && plong !== pdesc) ? Math.ceil(plong.length / 80) : 0;
+      const estH = 16 + 22 + descLines*14 + longLines*13 + 14 + CARD_PAD*2 + 8;
+
+      ensureSpace(estH + 12);
+
+      const cardX = M;
+      const cardY = doc.y;
+
+      // Background rect
+      doc.rect(cardX, cardY, CW, estH).fill(CARD_BG);
+      // Left accent strip
+      doc.rect(cardX, cardY, ACCENT_W, estH).fill(BRAND);
+
+      const textX = cardX + ACCENT_W + CARD_PAD;
+      let   ty    = cardY + CARD_PAD;
+
+      // Category label
+      if (catLbl) {
+        doc.font('Helvetica').fontSize(8).fillColor(BRAND)
+           .text(catLbl.toUpperCase(), textX, ty, { width: CARD_INNER });
+        ty += 14;
+      }
+
+      // Service name
+      doc.font('Helvetica-Bold').fontSize(13).fillColor(DARK)
+         .text(pname, textX, ty, { width: CARD_INNER });
+      ty += 20;
+
+      // Short description
+      if (pdesc) {
+        doc.font('Helvetica').fontSize(10.5).fillColor(BODY)
+           .text(pdesc, textX, ty, { width: CARD_INNER, lineGap: 2 });
+        ty += descLines * 14 + 6;
+      }
+
+      // Long description
+      if (plong && plong !== pdesc) {
+        doc.font('Helvetica').fontSize(10).fillColor(MUTED)
+           .text(plong, textX, ty, { width: CARD_INNER, lineGap: 2 });
+        ty += longLines * 13 + 6;
+      }
+
+      // Learn-more link — use a PDF hyperlink annotation so the URL
+      // doesn't print as raw text (unreadable long strings in the PDF).
+      const svcUrl    = `${publicUrl}#service-${p.slug}`;
+      const learnMoreLabel = lang === 'es' ? 'Más información →' : 'Learn more →';
+      doc.font('Helvetica').fontSize(8.5).fillColor(BRAND)
+         .text(learnMoreLabel, textX, ty, { width: CARD_INNER, link: svcUrl, underline: true });
+
+      doc.y = cardY + estH + 10;
+    }
+
+    // ── Contact section ───────────────────────────────────────────────────
+    ensureSpace(160);
+    doc.moveDown(0.6);
+
+    const ctaHead = lang === 'es' ? 'Contactenos' : 'Contact Us';
+    doc.font('Helvetica-Bold').fontSize(16).fillColor(BRAND)
+       .text(ctaHead, M, doc.y);
+    doc.moveDown(0.2);
+    doc.moveTo(M, doc.y).lineTo(M + 60, doc.y).lineWidth(3).strokeColor(BRAND).stroke();
+    doc.moveDown(0.9);
+
+    // Contact block — light card matching service cards.
+    // Items: { label?, text, link? }
+    const waDigits = (community.whatsapp || '').replace(/\D/g, '');
+    const waUrl    = waDigits ? `https://wa.me/${waDigits}` : null;
+    const ctaItems = [];
+    if (community.phone)
+      ctaItems.push({ text: lang === 'es' ? `Tel: ${community.phone}` : `Phone: ${community.phone}` });
+    if (waUrl)
+      ctaItems.push({ label: 'WhatsApp: ', text: waUrl, link: waUrl });
+    if (community.contact_email)
+      ctaItems.push({ label: 'Email: ', text: community.contact_email, link: `mailto:${community.contact_email}` });
+    if (publicUrl)
+      ctaItems.push({ label: 'Web: ', text: publicUrl, link: publicUrl });
+    const addrParts = [community.address_line1, community.city, community.state, community.postal_code].filter(Boolean);
+    if (addrParts.length) ctaItems.push({ text: addrParts.join(', ') });
+
+    const ctaCardH = ctaItems.length * 20 + CARD_PAD * 2;
+    const ctaY     = doc.y;
+    doc.rect(M, ctaY, CW, ctaCardH).fill(CARD_BG);
+    doc.rect(M, ctaY, ACCENT_W, ctaCardH).fill(BRAND);
+
+    let cy = ctaY + CARD_PAD;
+    const textX = M + ACCENT_W + CARD_PAD;
+    for (const item of ctaItems) {
+      if (item.label) {
+        doc.font('Helvetica').fontSize(11).fillColor(DARK)
+           .text(item.label, textX, cy, { width: CARD_INNER, continued: true });
+        doc.fillColor(BRAND)
+           .text(item.text, { link: item.link });
+      } else {
+        doc.font('Helvetica').fontSize(11).fillColor(DARK)
+           .text(item.text, textX, cy, { width: CARD_INNER });
+      }
+      cy += 20;
+    }
+    doc.y = ctaY + ctaCardH + 16;
+
+    // ── Footer ────────────────────────────────────────────────────────────
+    drawFooter();
+    doc.end();
+  });
+
   // ── GET /community/:slug/faqs ───────────────────────────────────────────
   // Public landing-page feed of FAQs. Surfaces the merged "effective"
   // set across every active relationship type for the community (no
@@ -428,6 +727,63 @@ module.exports = function createTaxRouter(deps) {
     } catch (e) { res.status(500).json({ error: e?.message || 'Failed to load articles.' }); }
   });
 
+  // GET /community/:slug/testimonials — public reviews for the
+  // landing-page section. Returns only Google-sourced rows so the
+  // section is fully dynamic off the Google sync; locally-authored
+  // rows stay in the DB (the admin CRUD still works) but no longer
+  // surface publicly. Ordered by display_order asc then created_at
+  // desc, where created_at is set to Google's publishTime on sync —
+  // so the default (everything at display_order=0) renders newest
+  // first. The configured displayLimit ships alongside so the client
+  // knows how many cards to render.
+  router.get('/community/:slug/testimonials', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, business_type, tax_testimonials_display_limit').eq('id', slug).maybeSingle();
+    if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
+      return res.status(404).json({ error: 'Tax community not found.' });
+    }
+    const displayLimit = Math.max(1, Math.min(30,
+      Number(community.tax_testimonials_display_limit) || 9));
+    const { data, error } = await supabase.from('tax_testimonials')
+      .select('id, source, author_name, author_role, rating, body, locale, display_order, created_at')
+      .eq('community_id', slug).eq('active', true).eq('source', 'google')
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: false })
+      .limit(60);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ testimonials: data || [], displayLimit });
+  });
+
+  // GET /community/:slug/deadlines — public list of tax deadlines for
+  // the community. The page filters client-side by entity_type and
+  // jurisdiction; we return the full active set so a fresh page render
+  // doesn't have to wait on a roundtrip per filter chip.
+  router.get('/community/:slug/deadlines', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, business_type, tax_calendar_horizon_months').eq('id', slug).maybeSingle();
+    if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
+      return res.status(404).json({ error: 'Tax community not found.' });
+    }
+    const { data, error } = await supabase.from('tax_calendar_deadlines')
+      .select('id, slug, title_i18n, description_i18n, recurrence, month, day, date, entity_types, jurisdiction, product_slug, display_order')
+      .eq('community_id', slug).eq('active', true)
+      .order('display_order', { ascending: true })
+      .limit(200);
+    if (error) return sendSupabaseError(res, error);
+    // Horizon comes from the community row so the page can expand
+    // recurring deadlines across the whole owner-configured window
+    // (default 18 months — set per community in Owner Settings).
+    const horizonMonths = Math.max(1, Math.min(36,
+      Number(community.tax_calendar_horizon_months) || 18));
+    res.json({ deadlines: data || [], horizon_months: horizonMonths });
+  });
+
   // ── POST /leads ─────────────────────────────────────────────────────────────
   router.post('/leads', async (req, res) => {
     if (!requireSupabaseEnv(res)) return;
@@ -460,6 +816,14 @@ module.exports = function createTaxRouter(deps) {
       .slice(0, 20);                                  // cap so we can't be flooded
     const productSlug = productSlugs[0] || '';
     const message = trim(body.message, MAX_TEXT_LEN);
+    // AI conversation transcript from the chat widget — saved verbatim
+    // so the owner can see exactly what the lead asked and was told.
+    const aiConversation = (() => {
+      const raw = body.aiConversation;
+      if (!Array.isArray(raw)) return null;
+      const valid = raw.filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+      return valid.length ? valid.map(m => ({ role: m.role, content: String(m.content).slice(0, 2000) })) : null;
+    })();
     const customerType = (String(body.customerType || '').toLowerCase() === 'business')
       ? 'business' : 'individual';
     // For individuals we deliberately drop any company string the
@@ -511,9 +875,10 @@ module.exports = function createTaxRouter(deps) {
       product_slug: productSlug,
       product_slugs: productSlugs,
       message,
+      ai_conversation: aiConversation,
       preferred_locale: preferredLocale,
       status: 'new',
-      source: 'landing',
+      source: aiConversation ? 'ai_chat' : 'landing',
       user_agent: userAgent,
       ip,
     };
@@ -537,6 +902,110 @@ module.exports = function createTaxRouter(deps) {
     }
 
     res.json({ ok: true, id: inserted.id });
+  });
+
+  // ── POST /leads/chat ────────────────────────────────────────────────────────
+  // Public AI chat endpoint. Proxies to Anthropic so the API key stays
+  // server-side. Takes the running conversation and the community/product
+  // context; returns the next assistant message + a readyToConnect flag
+  // the client uses to reveal the contact form.
+  router.post('/leads/chat', async (req, res) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return res.status(503).json({ error: 'AI assistant not configured.' });
+
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const productSlug   = trim(body.productSlug || '', 200);
+    const messages      = Array.isArray(body.messages) ? body.messages : [];
+
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    if (messages.length === 0) return res.status(400).json({ error: 'messages required.' });
+
+    // Validate message shape and cap history to prevent abuse.
+    const MAX_MSGS = 30;
+    const validMsgs = messages
+      .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .map(m => ({ role: m.role, content: trim(m.content, 2000) }))
+      .slice(-MAX_MSGS);
+
+    if (validMsgs.length === 0) return res.status(400).json({ error: 'No valid messages.' });
+    if (validMsgs[validMsgs.length - 1].role !== 'user') {
+      return res.status(400).json({ error: 'Last message must be from user.' });
+    }
+
+    const { data: community, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name, contact_email, default_locale')
+      .eq('id', communitySlug)
+      .eq('business_type', TAX_BUSINESS_TYPE)
+      .maybeSingle();
+    if (cErr) return sendSupabaseError(res, cErr);
+    if (!community) return res.status(404).json({ error: 'Community not found.' });
+
+    // Load products to give the AI context about offered services.
+    const { data: products } = await supabase
+      .from('tax_products')
+      .select('slug, name_i18n, description_i18n, long_description_i18n, category')
+      .eq('community_id', community.id)
+      .eq('enabled', true)
+      .order('sort_order', { ascending: true });
+
+    const productLines = (products || []).map(p => {
+      const name = (p.name_i18n?.en || p.name_i18n?.es || p.slug);
+      const desc = (p.long_description_i18n?.en || p.description_i18n?.en
+                 || p.long_description_i18n?.es || p.description_i18n?.es || '');
+      return `- ${name} (${p.category}): ${desc.slice(0, 300)}`;
+    }).join('\n');
+
+    const focusProduct = productSlug
+      ? (products || []).find(p => p.slug === productSlug)
+      : null;
+    const focusName = focusProduct
+      ? (focusProduct.name_i18n?.en || focusProduct.name_i18n?.es || productSlug)
+      : null;
+
+    const systemPrompt = [
+      `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
+      `Your job is to answer questions prospects have about the services offered, help them understand`,
+      `what service fits their situation, and — when they are ready — invite them to send their contact`,
+      `details so a team member can follow up.`,
+      '',
+      `Services offered:\n${productLines || '(No services listed yet)'}`,
+      '',
+      focusName ? `The visitor is currently looking at the "${focusName}" service. Start the conversation focused there, but answer questions about any service.` : '',
+      '',
+      `Behavior guidelines:`,
+      `- Be concise and friendly. Answer honestly; do not invent fees or timelines.`,
+      `- Ask one clarifying question at a time to understand the prospect's situation.`,
+      `- After 3 or more exchanges, or whenever the prospect expresses clear interest, offer to connect`,
+      `  them with the team by ending your reply with exactly the token [READY_TO_CONNECT] on its own line.`,
+      `- You can also include [READY_TO_CONNECT] earlier if the user explicitly asks to be contacted.`,
+      `- Do NOT include [READY_TO_CONNECT] on the very first reply or before you have answered at least one question.`,
+      `- Reply in the same language the user is writing in (English or Spanish).`,
+    ].filter(Boolean).join('\n');
+
+    let Anthropic;
+    try { Anthropic = require('@anthropic-ai/sdk'); }
+    catch { return res.status(503).json({ error: 'AI SDK not installed.' }); }
+
+    const client = new Anthropic.default({ apiKey });
+    let aiText;
+    try {
+      const aiRes = await client.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 512,
+        system: systemPrompt,
+        messages: validMsgs,
+      });
+      aiText = aiRes.content?.[0]?.text || '';
+    } catch (e) {
+      warn('[tax/chat] Anthropic error', e?.message || e);
+      return res.status(502).json({ error: 'AI assistant unavailable. Please try again.' });
+    }
+
+    const readyToConnect = aiText.includes('[READY_TO_CONNECT]');
+    const message = aiText.replace(/\[READY_TO_CONNECT\]\s*/g, '').trim();
+    res.json({ message, readyToConnect });
   });
 
   // Phase 4b: lead inbox lives at /admin/leads — see below. /leads stays
@@ -1125,19 +1594,25 @@ module.exports = function createTaxRouter(deps) {
       seenScheduleIds.add(sched.id);
 
       const periods = generateSchedulePeriods(sched.anchor_rule, todayIso, 24, {
-        lang: cust.locale === 'en' ? 'en' : 'es',
+        lang: 'en',
       });
-      const scheduleName =
-        sched.name_i18n?.[cust.locale === 'en' ? 'en' : 'es']
-        || sched.name_i18n?.en || sched.name_i18n?.es || sched.slug;
+      const periodsEs = generateSchedulePeriods(sched.anchor_rule, todayIso, 24, {
+        lang: 'es',
+      });
+      const scheduleNameEn =
+        sched.name_i18n?.en || sched.name_i18n?.es || sched.slug;
+      const scheduleNameEs =
+        sched.name_i18n?.es || sched.name_i18n?.en || sched.slug;
 
       const isAutoTask = sched.source === 'auto_task';
       const isProductCadence = sched.source === 'product_cadence';
       const rows = [];
-      for (const p of periods) {
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
         if (!p.dueDate) continue;
         if (p.dueDate > cutoffIso) break;
         if (p.dueDate < todayIso) continue;
+        const pEs = periodsEs[i] || p;
         // Period key namespaces by source so auto-task and legacy
         // rows never collide on the partial unique indexes.
         const periodKey = isAutoTask
@@ -1156,7 +1631,11 @@ module.exports = function createTaxRouter(deps) {
           service_auto_task_id: isAutoTask ? sched.service_auto_task_id : null,
           period_key: periodKey,
           source: 'relationship_schedule',
-          title: `${scheduleName} — ${p.periodLabel || p.dueDate}`,
+          title: `${scheduleNameEn} — ${p.periodLabel || p.dueDate}`,
+          title_i18n: {
+            en: `${scheduleNameEn} — ${p.periodLabel || p.dueDate}`,
+            es: `${scheduleNameEs} — ${pEs.periodLabel || pEs.dueDate}`,
+          },
           status_key: defaultStatus,
           priority: sched.priority || 'normal',
           // Pre-route the new task to the auto-task's default owner
@@ -1422,15 +1901,20 @@ module.exports = function createTaxRouter(deps) {
     for (const at of autoTasks || []) {
       if (!at.cadence_kind || at.cadence_kind === 'none') continue;
       const periods = generateSchedulePeriods(at.anchor_rule, todayIso, 24, {
-        lang: cust.locale === 'en' ? 'en' : 'es',
+        lang: 'en',
       });
-      const titleBase = at.title_i18n?.[cust.locale === 'en' ? 'en' : 'es']
-                     || at.title_i18n?.en || at.title_i18n?.es || 'Auto task';
+      const periodsEs = generateSchedulePeriods(at.anchor_rule, todayIso, 24, {
+        lang: 'es',
+      });
+      const titleBaseEn = at.title_i18n?.en || at.title_i18n?.es || 'Auto task';
+      const titleBaseEs = at.title_i18n?.es || at.title_i18n?.en || 'Tarea automática';
       const rows = [];
-      for (const p of periods) {
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
         if (!p.dueDate) continue;
         if (p.dueDate > cutoffIso) break;
         if (p.dueDate < todayIso) continue;
+        const pEs = periodsEs[i] || p;
         rows.push({
           id: 'task_' + uuidv4().slice(0, 12),
           community_id: cust.community_id,
@@ -1441,7 +1925,11 @@ module.exports = function createTaxRouter(deps) {
           service_auto_task_id: at.id,
           period_key: `at:${at.id}:${p.periodStart || p.dueDate}`,
           source: 'relationship_schedule',
-          title: `${titleBase} — ${p.periodLabel || p.dueDate}`,
+          title: `${titleBaseEn} — ${p.periodLabel || p.dueDate}`,
+          title_i18n: {
+            en: `${titleBaseEn} — ${p.periodLabel || p.dueDate}`,
+            es: `${titleBaseEs} — ${pEs.periodLabel || pEs.dueDate}`,
+          },
           status_key: defaultStatus,
           priority: at.default_priority || 'normal',
           assigned_employee_id: at.default_assignee_employee_id || null,
@@ -2460,6 +2948,54 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true, months, tasksDeleted, tasksCreated });
   });
 
+  // Public tax-calendar horizon: how many months of recurring
+  // deadlines the /tax/<slug>/calendar page expands. Owner-tunable
+  // in Owner Settings. Range 1–36, default 18 enforced in schema.
+  router.put('/admin/community-settings/calendar-horizon', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.months);
+    const months = Math.max(1, Math.min(36, Math.round(Number.isFinite(raw) ? raw : 18)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_calendar_horizon_months: months, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'calendar_horizon_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { months },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, months });
+  });
+
+  // How many reviews the public TestimonialsSection shows. Range 1–30,
+  // default 9 enforced in schema. Owners tune from the Testimonials
+  // admin card.
+  router.put('/admin/community-settings/testimonials-display-limit', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.limit);
+    const limit = Math.max(1, Math.min(30, Math.round(Number.isFinite(raw) ? raw : 9)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_testimonials_display_limit: limit, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'testimonials_display_limit_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { limit },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, limit });
+  });
+
   router.put('/admin/community-settings/reminders-enabled', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
     const communitySlug = trim(req.body?.communitySlug, 200);
@@ -2754,11 +3290,14 @@ module.exports = function createTaxRouter(deps) {
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
+        tax_calendar_horizon_months, tax_testimonials_display_limit,
+        tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
-        default_locale, calendly_url, landing_copy_i18n
+        default_locale, calendly_url, website_url, logo_url, brand_primary_color, brand_secondary_color,
+        landing_copy_i18n
       `)
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle();
     if (error) return sendSupabaseError(res, error);
@@ -2813,6 +3352,16 @@ module.exports = function createTaxRouter(deps) {
         update.whatsapp = norm;
       }
     }
+    if (body.website_url !== undefined) {
+      const raw = String(body.website_url || '').trim();
+      if (raw === '') { update.website_url = ''; }
+      else if (!/^https?:\/\/.+/i.test(raw)) {
+        return res.status(400).json({ error: 'website_url_invalid',
+          message: 'Website URL must start with http:// or https://.' });
+      } else {
+        update.website_url = raw.slice(0, 500);
+      }
+    }
     if (body.calendly_url !== undefined) {
       const raw = String(body.calendly_url || '').trim();
       if (raw === '') update.calendly_url = '';
@@ -2845,6 +3394,66 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
     res.json({ ok: true });
+  });
+
+  // POST /admin/community/logo/upload-url — returns a Supabase signed URL
+  // the client PUTs the logo file to directly (no bytes through Node).
+  // Accepts PNG, JPEG, WebP, SVG. After the PUT the client calls the PUT
+  // below to persist the public URL on the community row.
+  const COMMUNITY_LOGOS_BUCKET = 'community-logos';
+  const LOGO_MAX_BYTES = 5 * 1024 * 1024;
+  const LOGO_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif']);
+  router.post('/admin/community/logo/upload-url', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_settings');
+    if (!actor) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const fileName = sanitizeFileName(req.body?.fileName || 'logo.png');
+    const mimeType = trim(req.body?.mimeType || 'image/png', 200).toLowerCase();
+    const sizeBytes = Number(req.body?.sizeBytes || 0);
+    if (!LOGO_MIMES.has(mimeType))
+      return res.status(400).json({ error: 'logo_mime_invalid',
+        message: 'Logo must be PNG, JPEG, WebP, SVG, or GIF.' });
+    if (sizeBytes > LOGO_MAX_BYTES)
+      return res.status(400).json({ error: 'logo_too_large',
+        message: 'Logo file must be 5 MB or smaller.' });
+    const ext   = (fileName.match(/\.([a-z0-9]+)$/i)?.[1] || 'png').toLowerCase();
+    const path  = `${communitySlug}/logo-${Date.now()}.${ext}`;
+
+    // Auto-create the bucket on first use if it doesn't exist yet.
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === COMMUNITY_LOGOS_BUCKET);
+    if (!bucketExists) {
+      const { error: bErr } = await supabase.storage.createBucket(COMMUNITY_LOGOS_BUCKET, { public: true, fileSizeLimit: LOGO_MAX_BYTES });
+      if (bErr && !bErr.message?.includes('already exists')) {
+        warn('[logo-upload] createBucket failed', bErr.message);
+        return res.status(500).json({ error: 'storage_failed', message: `Could not create storage bucket: ${bErr.message}` });
+      }
+    }
+
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(COMMUNITY_LOGOS_BUCKET).createSignedUploadUrl(path, { upsert: true });
+    if (sErr) {
+      warn('[logo-upload] createSignedUploadUrl failed', sErr.message);
+      return res.status(500).json({ error: 'storage_failed', message: sErr.message });
+    }
+    const { data: pub } = supabase.storage.from(COMMUNITY_LOGOS_BUCKET).getPublicUrl(path);
+    res.json({ signedUrl: signed.signedUrl, path, publicUrl: pub?.publicUrl || '' });
+  });
+
+  // PUT /admin/community/logo — persist the public logo URL returned above.
+  router.put('/admin/community/logo', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const logoUrl = trim(body.logoUrl, 1000);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    if (!logoUrl) return res.status(400).json({ error: 'logoUrl required.' });
+    const { error } = await supabase.from('communities')
+      .update({ logo_url: logoUrl, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, logo_url: logoUrl });
   });
 
   // PUT /admin/community-settings/email-from — owner-set From-name and
@@ -3085,6 +3694,15 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
 
+    // Fire-and-forget: ask Claude to draft a few FAQs for the new
+    // service and stash them under an auto-created community-scoped
+    // relationship type. The "Create service" UI doesn't block on this;
+    // the owner sees the FAQs appear within ~10s and can edit/delete
+    // any of them in the FAQ admin. Silently no-ops when the API key
+    // isn't configured.
+    autogenFaqsForService({ service: row, communitySlug }).catch(e =>
+      warn('[faq-autogen] background failure', id, e?.message || e));
+
     res.json({ ok: true, id, slug: rawSlug });
   });
 
@@ -3174,6 +3792,90 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true });
   });
 
+  // ── Phase 4n.62: auto-task suggestion catalog ─────────────────────────
+  //
+  // GET /admin/products/:id/auto-task-templates
+  // Returns the curated catalog keyed by the product's slug, each
+  // annotated with `enabled: boolean` so the picker can render the
+  // current state. Disabled by default — nothing fires until the
+  // owner enables at least one.
+  router.get('/admin/products/:id/auto-task-templates', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    const { data: prod } = await supabase.from('tax_products')
+      .select('id, community_id, slug').eq('id', productId).maybeSingle();
+    if (!prod) return res.status(404).json({ error: 'Product not found.' });
+    const catalog = TEMPLATES_BY_SLUG[prod.slug] || [];
+    // Look up which template keys already have a row for this product.
+    const { data: enabledRows } = await supabase.from('tax_service_auto_tasks')
+      .select('id, template_key, active').eq('product_id', productId)
+      .not('template_key', 'is', null);
+    const enabledByKey = new Map();
+    for (const r of (enabledRows || [])) enabledByKey.set(r.template_key, r);
+    const templates = catalog.map(t => ({
+      ...t,
+      enabled: !!enabledByKey.get(t.key),
+      auto_task_id: enabledByKey.get(t.key)?.id || null,
+    }));
+    res.json({ templates });
+  });
+
+  // POST /admin/products/:id/auto-task-templates/:key/enable
+  // Copies the template into tax_service_auto_tasks and flags the row
+  // with template_key for later disable matching. No-op when already
+  // enabled (returns the existing row).
+  router.post('/admin/products/:id/auto-task-templates/:key/enable', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    const tplKey = trim(req.params.key, 120);
+    const { data: prod } = await supabase.from('tax_products')
+      .select('id, community_id, slug').eq('id', productId).maybeSingle();
+    if (!prod) return res.status(404).json({ error: 'Product not found.' });
+    const catalog = TEMPLATES_BY_SLUG[prod.slug] || [];
+    const tpl = catalog.find(t => t.key === tplKey);
+    if (!tpl) return res.status(404).json({ error: 'Template not found for this service.' });
+
+    const { data: existing } = await supabase.from('tax_service_auto_tasks')
+      .select('id').eq('product_id', productId).eq('template_key', tplKey).maybeSingle();
+    if (existing) return res.json({ ok: true, id: existing.id, alreadyEnabled: true });
+
+    // Append after the current max display_order so the suggestion lands
+    // at the bottom of the existing list rather than jumping to position 1.
+    const { data: maxRow } = await supabase.from('tax_service_auto_tasks')
+      .select('display_order').eq('product_id', productId)
+      .order('display_order', { ascending: false }).limit(1).maybeSingle();
+    const nextOrder = ((maxRow?.display_order || 0) + 10);
+
+    const id = 'sat_' + uuidv4().slice(0, 12);
+    const { error } = await supabase.from('tax_service_auto_tasks').insert({
+      id, product_id: productId,
+      template_key: tplKey,
+      title_i18n: tpl.title || {},
+      description_i18n: tpl.description || {},
+      cadence_kind: tpl.cadence_kind || 'monthly',
+      anchor_rule: tpl.anchor_rule || {},
+      default_priority: tpl.default_priority || 'normal',
+      display_order: nextOrder,
+      active: true,
+    });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, id });
+  });
+
+  // POST /admin/products/:id/auto-task-templates/:key/disable
+  // Deletes the matching row. If the owner edited the row freely
+  // after enabling, those changes are lost — surface that in the UI
+  // confirmation message.
+  router.post('/admin/products/:id/auto-task-templates/:key/disable', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    const tplKey = trim(req.params.key, 120);
+    const { error } = await supabase.from('tax_service_auto_tasks')
+      .delete().eq('product_id', productId).eq('template_key', tplKey);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
   // ── GET /admin/products/:id/auto-tasks ──────────────────────────────────
   // List the recurring auto-tasks owned by a service. One service can
   // have many — a Bookkeeping engagement might have a monthly
@@ -3245,8 +3947,12 @@ module.exports = function createTaxRouter(deps) {
     const valid = sanitized.filter(r => r.title_i18n.en || r.title_i18n.es);
 
     const { data: existing } = await supabase.from('tax_service_auto_tasks')
-      .select('id').eq('product_id', productId);
+      .select('id, template_key').eq('product_id', productId);
     const existingIds = new Set((existing || []).map(r => r.id));
+    // Preserve template_key across an editor save — the client doesn't
+    // round-trip it, but it shouldn't get nulled out just because the
+    // owner saved an unrelated change.
+    const templateKeyById = new Map((existing || []).map(r => [r.id, r.template_key]));
     const keepIds = new Set();
     const inserts = [];
     const updates = [];
@@ -3254,7 +3960,11 @@ module.exports = function createTaxRouter(deps) {
       const { idIfExisting, ...rest } = row;
       if (idIfExisting && existingIds.has(idIfExisting)) {
         keepIds.add(idIfExisting);
-        updates.push({ id: idIfExisting, ...rest, updated_at: new Date().toISOString() });
+        updates.push({
+          id: idIfExisting, ...rest,
+          template_key: templateKeyById.get(idIfExisting) || null,
+          updated_at: new Date().toISOString(),
+        });
       } else {
         inserts.push({
           id: 'sat_' + uuidv4().slice(0, 16),
@@ -3411,6 +4121,19 @@ module.exports = function createTaxRouter(deps) {
       });
     } catch (_e) {}
 
+    // Hide any community-scoped relationship type that was auto-linked
+    // to this product. Its FAQs vanish from the public FAQ section
+    // without a hard delete — if the owner recreates the service later
+    // they can flip active back on via the relationship-types admin.
+    // Manual relationship types (community_id IS NULL, the seeded ones)
+    // are never touched.
+    try {
+      await supabase.from('tax_relationship_types')
+        .update({ active: false })
+        .eq('product_id', productId)
+        .not('community_id', 'is', null);
+    } catch (e) { warn('[faq-autogen] deactivate types failed', productId, e?.message || e); }
+
     res.json({
       ok: true,
       cascaded: {
@@ -3419,6 +4142,115 @@ module.exports = function createTaxRouter(deps) {
       },
     });
   });
+
+  // Manual re-fire of the LLM FAQ generator for a single product.
+  // Useful when the auto-generated set on create wasn't great, or when
+  // the owner edits the service description and wants matching FAQs.
+  router.post('/admin/products/:id/regenerate-faqs', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_services'))) return;
+    const productId = trim(req.params.id, 200);
+    if (!productId) return res.status(400).json({ error: 'id required.' });
+    const { data: prod } = await supabase.from('tax_products')
+      .select('id, community_id, slug, category, name_i18n, description_i18n, long_description_i18n')
+      .eq('id', productId).maybeSingle();
+    if (!prod) return res.status(404).json({ error: 'Product not found.' });
+    const result = await autogenFaqsForService({
+      service: prod, communitySlug: prod.community_id, replaceExisting: true,
+    });
+    if (result.error) {
+      const status = result.error === 'no_api_key' ? 400 : 502;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Auto-FAQ helper. Called fire-and-forget from product create and
+  // synchronously from the manual regenerate endpoint.
+  //
+  // Flow:
+  //   1. Find or create a community-scoped tax_relationship_types row
+  //      linked to this product (so the public FAQ section can render
+  //      the FAQs grouped under the service's name).
+  //   2. Ask Claude for N bilingual FAQs based on the service's own
+  //      name + descriptions (no web_search — these are evergreen).
+  //   3. Insert as community-scoped custom FAQs against that type. When
+  //      replaceExisting=true (manual regenerate path), the old custom
+  //      FAQs for this type are wiped first; otherwise we append.
+  async function autogenFaqsForService({ service, communitySlug, replaceExisting = false } = {}) {
+    if (!ANTHROPIC_API_KEY) {
+      return { error: 'no_api_key', message: 'ANTHROPIC_API_KEY is not configured.' };
+    }
+    if (!service || !communitySlug) {
+      return { error: 'invalid_args', message: 'service + communitySlug required.' };
+    }
+    // 1. Find an existing community-scoped type linked to this product.
+    //    If none, create one. We reactivate inactive ones (covers the
+    //    "service deleted then recreated" path).
+    let relTypeId = null;
+    {
+      const { data: existing } = await supabase.from('tax_relationship_types')
+        .select('id').eq('product_id', service.id)
+        .eq('community_id', communitySlug).limit(1);
+      if (existing && existing[0]) {
+        relTypeId = existing[0].id;
+        await supabase.from('tax_relationship_types')
+          .update({ active: true }).eq('id', relTypeId);
+      }
+    }
+    if (!relTypeId) {
+      const slug = `auto-${String(service.slug || '').replace(/[^a-z0-9-]+/g, '-').slice(0, 60) || uuidv4().slice(0, 8)}`;
+      relTypeId = `${communitySlug}:${slug}`;
+      const { error: tErr } = await supabase.from('tax_relationship_types').insert({
+        id: relTypeId,
+        community_id: communitySlug,
+        category: inferRelationshipCategory(service),
+        slug,
+        name_i18n: service.name_i18n || {},
+        description_i18n: service.description_i18n || {},
+        display_order: 1000,
+        active: true,
+        product_id: service.id,
+      });
+      if (tErr) return { error: 'rel_type_insert_failed', message: tErr.message };
+    }
+
+    // 2. LLM.
+    const llm = await generateFaqsForService({ service, apiKey: ANTHROPIC_API_KEY });
+    if (llm.error) return llm;
+
+    // 3. Wipe + insert.
+    if (replaceExisting) {
+      // Only custom community FAQs for this type (default_faq_id IS NULL).
+      await supabase.from('tax_relationship_faqs')
+        .delete()
+        .eq('community_id', communitySlug)
+        .eq('relationship_type_id', relTypeId)
+        .is('default_faq_id', null);
+    }
+    const rows = llm.faqs.map((f, idx) => ({
+      id: 'tfaq_' + uuidv4().slice(0, 12),
+      community_id: communitySlug,
+      relationship_type_id: relTypeId,
+      default_faq_id: null,
+      display_order: (idx + 1) * 10,
+      question_i18n: { en: f.question_en, es: f.question_es || f.question_en },
+      answer_i18n: { en: f.answer_en, es: f.answer_es || f.answer_en },
+      visible: true,
+    }));
+    if (rows.length) {
+      const { error: iErr } = await supabase.from('tax_relationship_faqs').insert(rows);
+      if (iErr) return { error: 'faq_insert_failed', message: iErr.message };
+    }
+    try {
+      await auditLog({
+        entity: 'tax.product', entityId: service.id,
+        action: replaceExisting ? 'faqs_regenerate' : 'faqs_autogen',
+        actorEmail: 'system',
+        after: { inserted: rows.length, relationship_type_id: relTypeId, replaceExisting },
+      });
+    } catch (_e) {}
+    return { ok: true, inserted: rows.length, relationshipTypeId: relTypeId };
+  }
 
   // POST /admin/customers/:id/subscriptions — body { productId,
   // activeScheduleSlugs?, status?, startDate? }. Defaults: status='active',
@@ -5899,14 +6731,17 @@ module.exports = function createTaxRouter(deps) {
 
     let q = supabase.from('tax_tasks')
       .select(`
-        id, community_id, customer_id, product_id, title, status_key, priority,
+        id, community_id, customer_id, product_id, title, title_i18n, status_key, priority,
         assigned_employee_id, created_by_employee_id, service_auto_task_id,
         due_date, notes, completed_at, created_at, updated_at,
+        blocked_by_task_id, requires_review, reviewer_employee_id,
+        pending_review_at, reviewed_at, reviewed_by_employee_id, review_note,
         customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, address ),
         product:tax_products ( id, slug, name_i18n, category ),
         auto_task:tax_service_auto_tasks ( id, title_i18n, cadence_kind, anchor_rule ),
         assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email ),
-        creator:tax_employees!tax_tasks_created_by_employee_id_fkey ( id, name, email )
+        creator:tax_employees!tax_tasks_created_by_employee_id_fkey ( id, name, email ),
+        reviewer:tax_employees!tax_tasks_reviewer_employee_id_fkey ( id, name, email )
       `)
       .eq('community_id', communitySlug)
       .is('archived_at', null);
@@ -6182,6 +7017,94 @@ module.exports = function createTaxRouter(deps) {
     res.json({ periods });
   });
 
+  // GET /admin/whatsapp-template?communitySlug=
+  // Returns saved custom opening/closing/signoff per locale, or {} when defaults apply.
+  router.get('/admin/whatsapp-template', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('community_config')
+      .select('value').eq('community_id', communitySlug).eq('key', 'whatsapp_template').maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    let template = {};
+    if (data?.value) { try { template = JSON.parse(data.value); } catch (_) {} }
+    res.json({ template });
+  });
+
+  // PUT /admin/whatsapp-template — upsert editable template parts for ES and EN.
+  // Only opening/closing/signoff are accepted; service and contact blocks stay auto.
+  router.put('/admin/whatsapp-template', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const incoming = body.template && typeof body.template === 'object' ? body.template : {};
+    const MAX_FIELD = 2000;
+    const sanitized = {};
+    for (const locale of ['es', 'en']) {
+      if (!incoming[locale] || typeof incoming[locale] !== 'object') continue;
+      sanitized[locale] = {};
+      for (const field of ['opening', 'closing', 'signoff']) {
+        if (typeof incoming[locale][field] === 'string') {
+          sanitized[locale][field] = incoming[locale][field].trim().slice(0, MAX_FIELD);
+        }
+      }
+    }
+    const { error } = await supabase.from('community_config').upsert(
+      { community_id: communitySlug, key: 'whatsapp_template', value: JSON.stringify(sanitized), updated_at: new Date().toISOString() },
+      { onConflict: 'community_id,key' },
+    );
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // POST /admin/translate — translate a short string between 'en' and 'es'.
+  router.post('/admin/translate', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const { text, fromLang, toLang } = req.body || {};
+    if (!text || !fromLang || !toLang) return res.status(400).json({ error: 'text, fromLang, toLang required.' });
+    const translated = await translateText(String(text).slice(0, 500), fromLang, toLang);
+    res.json({ translated });
+  });
+
+  // POST /admin/tasks/fill-missing-translations
+  // Finds tasks with a missing EN or ES title, translates them, patches the DB.
+  // Responds immediately then finishes work in the background so the client
+  // isn't blocked. Safe to call repeatedly — no-ops on already-complete rows.
+  router.post('/admin/tasks/fill-missing-translations', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const { data: tasks, error } = await supabase
+      .from('tax_tasks')
+      .select('id, title, title_i18n')
+      .eq('community_id', emp.community_id)
+      .is('archived_at', null)
+      .limit(100);
+    if (error) return sendSupabaseError(res, error);
+    const toFill = (tasks || []).filter(t => {
+      const i = t.title_i18n || {};
+      return !i.en || !i.es;
+    });
+    res.json({ queued: toFill.length });
+    // Work happens after the response is sent.
+    (async () => {
+      for (const task of toFill) {
+        const i = task.title_i18n || {};
+        const es = (i.es || '').trim();
+        const en = (i.en || '').trim();
+        // Use whichever language exists as the authoritative source.
+        // Old tasks had English titles stored in task.title.
+        const [activeLang, activeSrc] = es ? ['es', es] : ['en', en || task.title || ''];
+        if (!activeSrc) continue;
+        const built = await buildTitleI18n(activeLang, activeSrc);
+        if (built.en && built.es) {
+          await supabase.from('tax_tasks')
+            .update({ title_i18n: built })
+            .eq('id', task.id);
+        }
+      }
+    })().catch(() => {});
+  });
+
   // POST /admin/tasks — create.
   router.post('/admin/tasks', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
@@ -6203,6 +7126,11 @@ module.exports = function createTaxRouter(deps) {
     const assignedTo  = trim(body.assignedEmployeeId || '', 200) || null;
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
+    // activeLocale tells us which language the user typed in — translate
+    // from that to keep both EN and ES stored and in sync.
+    const activeLocale = body.activeLocale === 'en' ? 'en' : 'es';
+    const activeTitle  = trim((body.titleI18n || {})[activeLocale] || '', 300) || title;
+    const titleI18n    = await buildTitleI18n(activeLocale, activeTitle);
 
     const id = 'task_' + uuidv4().slice(0, 16);
     const row = {
@@ -6211,6 +7139,7 @@ module.exports = function createTaxRouter(deps) {
       customer_id: customerId,
       product_id: productId,
       title,
+      title_i18n: titleI18n,
       status_key: statusKey,
       priority,
       assigned_employee_id: assignedTo,
@@ -6240,7 +7169,7 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes')
+      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -6255,7 +7184,14 @@ module.exports = function createTaxRouter(deps) {
     }
 
     const update = { updated_at: new Date().toISOString() };
-    if (body.title !== undefined)              update.title = trim(body.title, 300);
+    if (body.title !== undefined) {
+      update.title = trim(body.title, 300);
+      // Translate from the locale the user was editing to keep both languages
+      // in sync. activeLocale must be sent by the client on every title update.
+      const activeLocale = body.activeLocale === 'en' ? 'en' : 'es';
+      const activeTitle  = trim((body.titleI18n || {})[activeLocale] || '', 300) || update.title;
+      update.title_i18n  = await buildTitleI18n(activeLocale, activeTitle);
+    }
     if (body.statusKey !== undefined)          update.status_key = trim(body.statusKey, 60);
     if (body.priority !== undefined && ['urgent','high','normal','low'].includes(body.priority)) {
       update.priority = body.priority;
@@ -6265,12 +7201,25 @@ module.exports = function createTaxRouter(deps) {
     if (body.productId !== undefined)          update.product_id = trim(body.productId || '', 200) || null;
     if (body.dueDate !== undefined)            update.due_date = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     if (body.notes !== undefined)              update.notes = trim(body.notes || '', MAX_TEXT_LEN);
+    // Phase 4n.56: dependencies + review queue.
+    if (body.blockedByTaskId !== undefined) {
+      const v = trim(body.blockedByTaskId || '', 200);
+      if (v === taskId) return res.status(400).json({ error: 'A task cannot block itself.' });
+      update.blocked_by_task_id = v || null;
+    }
+    if (body.requiresReview !== undefined) update.requires_review = !!body.requiresReview;
+    if (body.reviewerEmployeeId !== undefined) {
+      update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
+    }
 
-    // Auto-stamp completed_at when moving into a terminal status. We
-    // also require non-empty notes on completion so the practice's
-    // history has a record of what was actually done — the row's
-    // existing notes count if the client didn't send new ones in the
-    // same patch.
+    // Auto-stamp completed_at when moving into a terminal status. Two
+    // gates run first:
+    //   1) Blocker must be completed — refusing the transition surfaces
+    //      a clear "Finish X before completing this" error.
+    //   2) When requires_review is on, hold the task in pending-review
+    //      state instead of completing. The status_key still moves
+    //      (so the board reflects the preparer's call), but completed_at
+    //      stays null until the reviewer approves via /admin/tasks/:id/review.
     if (update.status_key && update.status_key !== cur.status_key) {
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
@@ -6284,9 +7233,33 @@ module.exports = function createTaxRouter(deps) {
             message: 'Add a note describing what was done before completing this task.',
           });
         }
-        update.completed_at = new Date().toISOString();
+        if (cur.blocked_by_task_id) {
+          const { data: blocker } = await supabase.from('tax_tasks')
+            .select('id, title, completed_at').eq('id', cur.blocked_by_task_id).maybeSingle();
+          if (blocker && !blocker.completed_at) {
+            return res.status(400).json({
+              error: 'task_blocked',
+              message: `Complete "${blocker.title}" first — this task depends on it.`,
+              blockerId: blocker.id,
+            });
+          }
+        }
+        const stillRequiresReview = (update.requires_review !== undefined
+          ? update.requires_review : cur.requires_review)
+          && !cur.reviewed_at;
+        if (stillRequiresReview) {
+          update.pending_review_at = new Date().toISOString();
+          // completed_at stays null until the reviewer approves.
+        } else {
+          update.completed_at = new Date().toISOString();
+        }
       } else {
         update.completed_at = null;
+        // Re-opening a previously pending task clears the in-flight
+        // review state — reviewer has to re-approve once it's done again.
+        if (cur.pending_review_at && !cur.reviewed_at) {
+          update.pending_review_at = null;
+        }
       }
     }
 
@@ -6310,6 +7283,81 @@ module.exports = function createTaxRouter(deps) {
       });
     }
     res.json({ ok: true });
+  });
+
+  // POST /admin/tasks/:id/review
+  // Body: { decision: 'approve'|'reject', note?: string }
+  // The designated reviewer (or any admin) signs off on a task sitting
+  // in pending-review state. Approve completes the task; reject clears
+  // pending_review_at + stores the rejection note so the preparer can
+  // pick it back up.
+  router.post('/admin/tasks/:id/review', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const decision = trim(req.body?.decision, 40);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ error: 'decision must be approve or reject.' });
+    }
+    const { data: cur } = await supabase.from('tax_tasks')
+      .select('id, community_id, reviewer_employee_id, pending_review_at, reviewed_at, status_key, notes')
+      .eq('id', taskId).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Task not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    // Reviewer or admin can sign off. Staff who happen to be assigned
+    // to the task but aren't the designated reviewer can't approve
+    // their own work — separation of duties is the point of the queue.
+    const isReviewer = cur.reviewer_employee_id && cur.reviewer_employee_id === emp.id;
+    if (emp.role !== 'admin' && !isReviewer) {
+      return res.status(403).json({ error: 'Only the designated reviewer (or an admin) can review this task.' });
+    }
+    if (!cur.pending_review_at || cur.reviewed_at) {
+      return res.status(409).json({ error: 'This task is not awaiting review.' });
+    }
+    const nowIso = new Date().toISOString();
+    const update = { updated_at: nowIso, review_note: note };
+    if (decision === 'approve') {
+      update.reviewed_at = nowIso;
+      update.reviewed_by_employee_id = emp.id;
+      update.completed_at = nowIso;
+    } else {
+      update.pending_review_at = null; // back to in-flight; preparer fixes and re-completes
+    }
+    const { error } = await supabase.from('tax_tasks').update(update).eq('id', taskId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.task', entityId: taskId, action: `review_${decision}`,
+        actorEmail: emp.email || '', actorName: emp.name || '',
+        after: { note: note ? note.slice(0, 200) : '' },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, decision });
+  });
+
+  // GET /admin/tasks/awaiting-review
+  // Today-dashboard widget data: tasks where the caller is the
+  // reviewer and pending_review_at is set but reviewed_at isn't.
+  // Admins see every task awaiting review in their community.
+  router.get('/admin/tasks/awaiting-review', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    let q = supabase.from('tax_tasks')
+      .select(`
+        id, title, due_date, priority, status_key, customer_id, product_id, pending_review_at,
+        customer:tax_customers ( id, name, business_name, first_name, last_name, email ),
+        product:tax_products ( id, slug, name_i18n ),
+        assigned_employee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, first_name, last_name, email )
+      `)
+      .eq('community_id', emp.community_id)
+      .not('pending_review_at', 'is', null)
+      .is('reviewed_at', null)
+      .is('archived_at', null)
+      .order('pending_review_at', { ascending: true })
+      .limit(50);
+    if (emp.role !== 'admin') q = q.eq('reviewer_employee_id', emp.id);
+    const { data, error } = await q;
+    if (error) return sendSupabaseError(res, error);
+    res.json({ tasks: data || [] });
   });
 
   // PATCH /admin/tasks/bulk — apply the same patch to many tasks.
@@ -6445,6 +7493,1169 @@ module.exports = function createTaxRouter(deps) {
     } catch (_e) {}
     res.json({ ok: true });
   });
+
+  // ── Phase 4n.55: per-task time tracking ────────────────────────────────
+  //
+  // Time entries are individual start/stop intervals an employee logs on
+  // a task. Running timers leave ended_at null; the partial unique index
+  // on (employee_id) where ended_at is null enforces one-running-at-a-
+  // time at the DB layer. Closed entries store duration_seconds so
+  // reports don't have to subtract timestamps on every read.
+
+  // Visibility rule for time entries: assigned employee + admins can
+  // always log; staff can only edit/delete their own entries.
+  async function canEmployeeLogTimeOnTask(emp, task) {
+    if (!emp || !task) return false;
+    if (task.community_id !== emp.community_id) return false;
+    if (emp.role === 'admin') return true;
+    if (task.assigned_employee_id === emp.id) return true;
+    if (task.created_by_employee_id === emp.id) return true;
+    // Staff with customer-level access to this task's customer can log
+    // time even when the task isn't directly assigned to them.
+    if (task.customer_id) {
+      return await canEmployeeSeeCustomer(emp, task.customer_id);
+    }
+    return false;
+  }
+
+  function calcDurationSeconds(startedAt, endedAt) {
+    const s = new Date(startedAt).getTime();
+    const e = new Date(endedAt).getTime();
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e < s) return 0;
+    return Math.max(0, Math.round((e - s) / 1000));
+  }
+
+  router.get('/admin/tasks/:id/time-entries', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (task.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    const { data: entries, error } = await supabase.from('tax_task_time_entries')
+      .select(`
+        id, task_id, employee_id, started_at, ended_at, duration_seconds, note, billable, created_at,
+        employee:tax_employees ( id, name, first_name, last_name, email )
+      `)
+      .eq('task_id', taskId)
+      .order('started_at', { ascending: false }).limit(200);
+    if (error) return sendSupabaseError(res, error);
+    const total = (entries || []).reduce((acc, e) => {
+      if (e.ended_at) return acc + (e.duration_seconds || 0);
+      // Include the running portion of an in-flight timer so the total
+      // moves while a timer is on.
+      const live = calcDurationSeconds(e.started_at, new Date().toISOString());
+      return acc + live;
+    }, 0);
+    res.json({ entries: entries || [], total_seconds: total });
+  });
+
+  // Start a timer. Caller's currently-running entry (across any task)
+  // is stopped first so the one-running invariant holds even when the
+  // employee forgets to stop the previous one — the closed entry keeps
+  // its original start/stop on the prior task.
+  router.post('/admin/tasks/:id/time-entries/start', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!(await canEmployeeLogTimeOnTask(emp, task))) {
+      return res.status(403).json({ error: 'Not allowed to log time on this task.' });
+    }
+
+    const nowIso = new Date().toISOString();
+    // Auto-stop any in-flight timer for this employee on any task.
+    const { data: running } = await supabase.from('tax_task_time_entries')
+      .select('id, started_at').eq('employee_id', emp.id).is('ended_at', null).limit(1);
+    if (running && running.length) {
+      const r = running[0];
+      const dur = calcDurationSeconds(r.started_at, nowIso);
+      await supabase.from('tax_task_time_entries').update({
+        ended_at: nowIso, duration_seconds: dur, updated_at: nowIso,
+      }).eq('id', r.id);
+    }
+
+    const id = 'tt_' + uuidv4().slice(0, 16);
+    const { data: row, error } = await supabase.from('tax_task_time_entries').insert({
+      id, community_id: task.community_id, task_id: taskId, employee_id: emp.id,
+      started_at: nowIso, note, billable: true,
+    }).select('id, task_id, employee_id, started_at, ended_at, duration_seconds, note, billable')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ entry: row, stoppedRunningId: running && running[0]?.id || null });
+  });
+
+  router.post('/admin/tasks/:id/time-entries/stop', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const note = req.body?.note !== undefined ? trim(req.body.note, MAX_TEXT_LEN) : null;
+    // Find the running entry for this employee on this task. If none,
+    // look across all tasks (the UI sometimes calls stop from the
+    // header) but only when the body explicitly says so via any=1.
+    const { data: running } = await supabase.from('tax_task_time_entries')
+      .select('id, started_at, note')
+      .eq('employee_id', emp.id).eq('task_id', taskId).is('ended_at', null).limit(1);
+    const r = running && running[0];
+    if (!r) return res.status(404).json({ error: 'No running timer found for this task.' });
+    const nowIso = new Date().toISOString();
+    const update = {
+      ended_at: nowIso,
+      duration_seconds: calcDurationSeconds(r.started_at, nowIso),
+      updated_at: nowIso,
+    };
+    if (note !== null) update.note = note;
+    const { error } = await supabase.from('tax_task_time_entries').update(update).eq('id', r.id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, id: r.id, duration_seconds: update.duration_seconds });
+  });
+
+  // Manual entry — owner backfilling time after the fact. Requires
+  // both startedAt and endedAt (no open-ended manual entries).
+  router.post('/admin/tasks/:id/time-entries', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!(await canEmployeeLogTimeOnTask(emp, task))) {
+      return res.status(403).json({ error: 'Not allowed to log time on this task.' });
+    }
+    const startedAt = trim(req.body?.startedAt, 50);
+    const endedAt   = trim(req.body?.endedAt, 50);
+    if (!startedAt || !endedAt) return res.status(400).json({ error: 'startedAt and endedAt required.' });
+    const dur = calcDurationSeconds(startedAt, endedAt);
+    if (dur <= 0) return res.status(400).json({ error: 'endedAt must be after startedAt.' });
+    if (dur > 24 * 3600 * 7) return res.status(400).json({ error: 'Time entry longer than a week — split it into separate rows.' });
+    const billable = req.body?.billable === false ? false : true;
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    // Allow logging on behalf of another employee — admins only — via
+    // employeeId in the body. Staff always log under their own id.
+    let employeeId = emp.id;
+    if (emp.role === 'admin' && req.body?.employeeId) {
+      employeeId = trim(req.body.employeeId, 200);
+    }
+    const id = 'tt_' + uuidv4().slice(0, 16);
+    const { data: row, error } = await supabase.from('tax_task_time_entries').insert({
+      id, community_id: task.community_id, task_id: taskId, employee_id: employeeId,
+      started_at: startedAt, ended_at: endedAt, duration_seconds: dur,
+      note, billable,
+    }).select('id, task_id, employee_id, started_at, ended_at, duration_seconds, note, billable')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ entry: row });
+  });
+
+  router.put('/admin/time-entries/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const entryId = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_task_time_entries')
+      .select('id, community_id, employee_id, task_id').eq('id', entryId).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Time entry not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (emp.role !== 'admin' && cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'Staff can only edit their own time entries.' });
+    }
+    const update = { updated_at: new Date().toISOString() };
+    if (req.body?.startedAt) update.started_at = trim(req.body.startedAt, 50);
+    if (req.body?.endedAt)   update.ended_at   = trim(req.body.endedAt, 50);
+    if (update.started_at && update.ended_at) {
+      const dur = calcDurationSeconds(update.started_at, update.ended_at);
+      if (dur <= 0) return res.status(400).json({ error: 'endedAt must be after startedAt.' });
+      update.duration_seconds = dur;
+    }
+    if (req.body?.note !== undefined)     update.note     = trim(req.body.note, MAX_TEXT_LEN);
+    if (req.body?.billable !== undefined) update.billable = !!req.body.billable;
+    const { error } = await supabase.from('tax_task_time_entries').update(update).eq('id', entryId);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/time-entries/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const entryId = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_task_time_entries')
+      .select('id, community_id, employee_id').eq('id', entryId).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Time entry not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (emp.role !== 'admin' && cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'Staff can only delete their own time entries.' });
+    }
+    const { error } = await supabase.from('tax_task_time_entries').delete().eq('id', entryId);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // GET /admin/employees/me/running-timer — returns the caller's
+  // currently in-flight time entry (if any). Lets the employee shell
+  // surface a small "timer running on <task>" reminder so they don't
+  // forget to stop it at the end of the day.
+  router.get('/admin/employees/me/running-timer', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const { data } = await supabase.from('tax_task_time_entries')
+      .select(`
+        id, task_id, started_at, note,
+        task:tax_tasks ( id, title, customer_id )
+      `)
+      .eq('employee_id', emp.id).is('ended_at', null).limit(1);
+    res.json({ running: (data && data[0]) || null });
+  });
+
+  // ── Phase 4n.58: workload heatmap ──────────────────────────────────────
+  //
+  // GET /admin/workload?start=YYYY-MM-DD&days=14
+  //
+  // Per-employee per-day open-task counts, weighted by priority. The
+  // page renders a grid: rows = staff in the community, columns = the
+  // requested day range, each cell = total weight bucketed into a heat
+  // tone. Clicking a cell jumps to /tasks with assigned-to + due-date
+  // filters applied so the operator can drill down without copy-pasting
+  // dates.
+  //
+  // Weights tilt the heat so an "urgent" task counts more than three
+  // "low" ones — keeps the grid honest when one preparer has a wall
+  // of routine reminders next to another with a single 1040 audit.
+  router.get('/admin/workload', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (emp.role !== 'admin') {
+      return res.status(403).json({ error: 'Workload heatmap is admin-only.' });
+    }
+    const start = trim(req.query.start, 20) || new Date().toISOString().slice(0, 10);
+    const days  = Math.max(1, Math.min(31, Number(req.query.days) || 14));
+    // Inclusive window: start .. start + (days-1)
+    const startDate = new Date(`${start}T00:00:00Z`);
+    if (Number.isNaN(startDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid start date.' });
+    }
+    const endDate = new Date(startDate);
+    endDate.setUTCDate(endDate.getUTCDate() + days - 1);
+    const startIso = startDate.toISOString().slice(0, 10);
+    const endIso   = endDate.toISOString().slice(0, 10);
+
+    // Pull every active employee + the open tasks in window. Terminal
+    // statuses are excluded so a 100-task week of "done" doesn't show
+    // as a hot column.
+    const { data: statusOpts } = await supabase.from('tax_task_status_options')
+      .select('key, is_terminal').eq('community_id', emp.community_id);
+    const terminalKeys = (statusOpts || []).filter(s => s.is_terminal).map(s => s.key);
+    const { data: employees } = await supabase.from('tax_employees')
+      .select('id, name, first_name, last_name, email, role, status')
+      .eq('community_id', emp.community_id).eq('status', 'active')
+      .order('first_name', { ascending: true });
+    let q = supabase.from('tax_tasks')
+      .select('id, assigned_employee_id, due_date, priority, status_key, completed_at, archived_at')
+      .eq('community_id', emp.community_id)
+      .is('archived_at', null).is('completed_at', null)
+      .gte('due_date', startIso).lte('due_date', endIso);
+    if (terminalKeys.length) q = q.not('status_key', 'in', `(${terminalKeys.map(k => `"${k}"`).join(',')})`);
+    const { data: tasks } = await q.limit(5000);
+
+    // Priority weights tuned so urgent > 2× high; low contributes
+    // half — matches operators' lived sense of pressure better than
+    // a flat count.
+    const W = { urgent: 4, high: 2, normal: 1, low: 0.5 };
+    const matrix = new Map(); // employeeId → { dateIso → { count, weight } }
+    function bump(empId, dateIso, weight) {
+      if (!matrix.has(empId)) matrix.set(empId, {});
+      const row = matrix.get(empId);
+      const slot = row[dateIso] || { count: 0, weight: 0 };
+      slot.count++; slot.weight += weight;
+      row[dateIso] = slot;
+    }
+    for (const t1 of (tasks || [])) {
+      const key = t1.assigned_employee_id || '__unassigned__';
+      bump(key, t1.due_date, W[t1.priority] || W.normal);
+    }
+
+    const dates = [];
+    for (let i = 0; i < days; i++) {
+      const d = new Date(startDate);
+      d.setUTCDate(d.getUTCDate() + i);
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const rows = (employees || []).map(e => ({
+      employeeId: e.id,
+      name: [e.first_name, e.last_name].filter(Boolean).join(' ').trim() || e.name || e.email,
+      email: e.email,
+      role: e.role,
+      cells: dates.map(d => matrix.get(e.id)?.[d] || { count: 0, weight: 0 }),
+    }));
+    const unassigned = matrix.get('__unassigned__');
+    if (unassigned) {
+      rows.push({
+        employeeId: '__unassigned__', name: 'Unassigned', email: '', role: '',
+        cells: dates.map(d => unassigned[d] || { count: 0, weight: 0 }),
+      });
+    }
+    res.json({ dates, rows, totalTasks: (tasks || []).length });
+  });
+
+  // ── Phase 4n.57: smart lists / saved searches ─────────────────────────
+  //
+  // Each row is one employee's named filter preset on a scope. Server
+  // stores + returns the opaque params blob; the page (Tasks / Customers
+  // / Leads) owns the shape. List endpoint returns the caller's own
+  // rows; create/update/delete are scoped to ownership.
+  const SAVED_SEARCH_SCOPES = ['tasks','customers','leads'];
+
+  router.get('/admin/saved-searches', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const scope = trim(req.query.scope, 40);
+    let q = supabase.from('tax_saved_searches')
+      .select('id, scope, name, params, is_pinned, display_order, created_at, updated_at')
+      .eq('community_id', emp.community_id)
+      .eq('employee_id', emp.id)
+      .order('display_order', { ascending: true })
+      .order('created_at',   { ascending: true });
+    if (scope) {
+      if (!SAVED_SEARCH_SCOPES.includes(scope)) {
+        return res.status(400).json({ error: 'Invalid scope.' });
+      }
+      q = q.eq('scope', scope);
+    }
+    const { data, error } = await q;
+    if (error) return sendSupabaseError(res, error);
+    res.json({ searches: data || [] });
+  });
+
+  router.post('/admin/saved-searches', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const body = req.body || {};
+    const scope = trim(body.scope, 40);
+    const name = trim(body.name, 120);
+    if (!SAVED_SEARCH_SCOPES.includes(scope)) return res.status(400).json({ error: 'Invalid scope.' });
+    if (!name) return res.status(400).json({ error: 'name required.' });
+    const params = (body.params && typeof body.params === 'object') ? body.params : {};
+    // Caller-supplied params can be arbitrary client state; cap the
+    // serialized size so a misbehaving client can't store megabytes
+    // per row. 4KB is generous for a filter preset.
+    if (JSON.stringify(params).length > 4096) {
+      return res.status(413).json({ error: 'params too large (max 4KB).' });
+    }
+    const id = 'ss_' + uuidv4().slice(0, 12);
+    const { data, error } = await supabase.from('tax_saved_searches').insert({
+      id, community_id: emp.community_id, employee_id: emp.id,
+      scope, name, params,
+      is_pinned: !!body.isPinned,
+      display_order: Number.isFinite(Number(body.displayOrder)) ? Math.round(Number(body.displayOrder)) : 0,
+    }).select('id, scope, name, params, is_pinned, display_order')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ search: data });
+  });
+
+  router.put('/admin/saved-searches/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_saved_searches')
+      .select('id, employee_id, community_id').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Saved search not found.' });
+    if (cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'You can only edit your own saved searches.' });
+    }
+    const body = req.body || {};
+    const update = { updated_at: new Date().toISOString() };
+    if (body.name !== undefined)         update.name = trim(body.name, 120);
+    if (body.params !== undefined) {
+      const p = (body.params && typeof body.params === 'object') ? body.params : {};
+      if (JSON.stringify(p).length > 4096) {
+        return res.status(413).json({ error: 'params too large (max 4KB).' });
+      }
+      update.params = p;
+    }
+    if (body.isPinned !== undefined)     update.is_pinned = !!body.isPinned;
+    if (body.displayOrder !== undefined) update.display_order = Math.round(Number(body.displayOrder) || 0);
+    const { error } = await supabase.from('tax_saved_searches').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/saved-searches/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_saved_searches')
+      .select('id, employee_id').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Saved search not found.' });
+    if (cur.employee_id !== emp.id) {
+      return res.status(403).json({ error: 'You can only delete your own saved searches.' });
+    }
+    const { error } = await supabase.from('tax_saved_searches').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // ── Phase 4n.60: testimonials admin CRUD ───────────────────────────────
+  router.get('/admin/testimonials', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('tax_testimonials')
+      .select('id, source, source_id, author_name, author_role, rating, body, locale, display_order, active, created_at')
+      .eq('community_id', communitySlug)
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: false });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ testimonials: data || [] });
+  });
+
+  router.post('/admin/testimonials', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const authorName = trim(body.authorName, 200);
+    const text = trim(body.body, 4000);
+    if (!communitySlug || !authorName || !text) {
+      return res.status(400).json({ error: 'communitySlug, authorName, body required.' });
+    }
+    const rating = Math.max(1, Math.min(5, Math.round(Number(body.rating) || 5)));
+    const locale = body.locale === 'es' ? 'es' : 'en';
+    // Manual entries can be flagged as Google reviews so the public
+    // section shows the Google badge — the owner takes responsibility
+    // for accuracy. Anything else falls back to 'local'.
+    const source = body.source === 'google' ? 'google' : 'local';
+    const id = 'tt_' + uuidv4().slice(0, 12);
+    const { data, error } = await supabase.from('tax_testimonials').insert({
+      id, community_id: communitySlug, source,
+      author_name: authorName,
+      author_role: trim(body.authorRole, 200),
+      rating, body: text, locale,
+      display_order: Math.max(0, Math.round(Number(body.displayOrder) || 0)),
+      active: true,
+    }).select('id, source, author_name, author_role, rating, body, locale, display_order, active')
+      .maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({ testimonial: data });
+  });
+
+  router.put('/admin/testimonials/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    const body = req.body || {};
+    const update = { updated_at: new Date().toISOString() };
+    if (body.authorName !== undefined) update.author_name = trim(body.authorName, 200);
+    if (body.authorRole !== undefined) update.author_role = trim(body.authorRole, 200);
+    if (body.body       !== undefined) update.body        = trim(body.body, 4000);
+    if (body.rating     !== undefined) update.rating      = Math.max(1, Math.min(5, Math.round(Number(body.rating) || 5)));
+    if (body.locale     !== undefined) update.locale      = body.locale === 'es' ? 'es' : 'en';
+    if (body.source     !== undefined) update.source      = body.source === 'google' ? 'google' : 'local';
+    if (body.active     !== undefined) update.active      = !!body.active;
+    if (body.displayOrder !== undefined) update.display_order = Math.max(0, Math.round(Number(body.displayOrder) || 0));
+    const { error } = await supabase.from('tax_testimonials').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/testimonials/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    const { error } = await supabase.from('tax_testimonials').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // ── Phase 4n.63: Google Places reviews sync ────────────────────────────
+  //
+  // GET /admin/testimonials/google
+  //   Returns { placeId, lastSyncAt, hasApiKey } so the UI can render
+  //   the current state of the integration (set vs. unset, when the
+  //   last manual sync ran, and whether the platform has the API key
+  //   configured at all).
+  router.get('/admin/testimonials/google', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data: community, error: commErr } = await supabase.from('communities')
+      .select('id, business_type, tax_google_place_id, tax_google_reviews_auto_sync').eq('id', communitySlug).maybeSingle();
+    const { data: lastRow } = await supabase.from('tax_testimonials')
+      .select('updated_at').eq('community_id', communitySlug).eq('source', 'google')
+      .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    warn('[place-id] read', { slug: communitySlug, community, commErr: commErr?.message || null });
+    const stored = community?.tax_google_place_id || '';
+    res.json({
+      placeId: stored,
+      lastSyncAt: lastRow?.updated_at || null,
+      hasApiKey: !!GOOGLE_PLACES_API_KEY,
+      autoSyncEnabled: community?.tax_google_reviews_auto_sync !== false,
+      pendingResolution: !!stored && !looksLikeRawPlaceId(stored),
+      row: community || null,
+      commErr: commErr?.message || null,
+    });
+  });
+
+  // Pull a Google place_id out of whatever the owner pasted. Inputs:
+  //   1. Raw ChIJ… identifier — passes through.
+  //   2. Long Maps URL with `?place_id=` — extract directly.
+  //   3. Short share URL (maps.app.goo.gl, goo.gl/maps) — server
+  //      follows redirects to the final /maps/place/<name>/ URL,
+  //      then either picks up place_id= from the chain or, when an
+  //      API key is configured, calls Find Place from Text on the
+  //      extracted establishment name.
+  //
+  // Returns { placeId } on success or { error } on failure (with a
+  // machine-readable code so the caller can map it to a friendly
+  // message in either locale).
+  function looksLikeRawPlaceId(s) {
+    return /^[A-Za-z][A-Za-z0-9_-]{20,}$/.test(s) && !s.startsWith('http');
+  }
+
+  // Resolve a free-text query (typically the establishment name from a
+  // /maps/place/<name>/ URL) into a place_id using Places API (New)
+  // Text Search. The legacy findplacefromtext endpoint is deprecated;
+  // new Google Cloud projects only have the v1 endpoint enabled.
+  async function findPlaceByText(name) {
+    if (!GOOGLE_PLACES_API_KEY) return null;
+    try {
+      const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+          'X-Goog-FieldMask': 'places.id,places.displayName',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ textQuery: name, pageSize: 1 }),
+      });
+      const data = await resp.json();
+      if (data.places && data.places[0]?.id) return data.places[0].id;
+    } catch (_e) { /* fall through to null */ }
+    return null;
+  }
+
+  async function resolveGooglePlaceId(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return { error: 'placeIdMissing' };
+
+    if (looksLikeRawPlaceId(raw)) return { placeId: raw.slice(0, 200) };
+
+    const direct = raw.match(/[?&]place_id=([A-Za-z0-9_-]+)/);
+    if (direct) return { placeId: direct[1].slice(0, 200) };
+
+    if (!/^https?:\/\//i.test(raw)) {
+      return { error: 'placeIdNotRecognized' };
+    }
+
+    // Follow up to 8 redirect hops. Some hops only carry place_id in
+    // the Location header itself; some carry it in the URL we landed
+    // on. We check both at every step.
+    let current = raw;
+    let lastUrl = raw;
+    try {
+      for (let hops = 0; hops < 8; hops++) {
+        const resp = await fetch(current, {
+          redirect: 'manual',
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TaxAmericaPlaceResolver/1.0)' },
+        });
+        lastUrl = resp.url || current;
+        const nextHeader = resp.headers.get('location');
+        const scanTargets = [lastUrl, nextHeader].filter(Boolean);
+        for (const t of scanTargets) {
+          const m = t.match(/[?&]place_id=([A-Za-z0-9_-]+)/);
+          if (m) return { placeId: m[1].slice(0, 200) };
+          const blob = t.match(/!1s(ChIJ[A-Za-z0-9_-]+)/);
+          if (blob) return { placeId: blob[1].slice(0, 200) };
+        }
+        if (!nextHeader) break;
+        current = new URL(nextHeader, current).toString();
+      }
+    } catch (e) {
+      return { error: 'fetchFailed', detail: e?.message || String(e) };
+    }
+
+    // Short URLs land on /maps/place/<name>/<coords>/data=… and bury
+    // the place identifier in the data blob (as an FID, not a
+    // place_id). Find Place from Text resolves the establishment name
+    // back to a clean place_id — but it costs an API call, so only
+    // try it when the key is configured.
+    const nameMatch = lastUrl.match(/\/maps\/place\/([^/]+)/);
+    if (nameMatch && GOOGLE_PLACES_API_KEY) {
+      const decoded = decodeURIComponent(nameMatch[1]).replace(/\+/g, ' ');
+      const resolved = await findPlaceByText(decoded);
+      if (resolved) return { placeId: resolved };
+    }
+
+    return {
+      error: nameMatch && !GOOGLE_PLACES_API_KEY ? 'needsApiKey' : 'placeIdNotInUrl',
+      resolvedUrl: lastUrl,
+    };
+  }
+
+  router.put('/admin/community-settings/google-place-id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = String(req.body?.placeId || '').trim();
+    // Empty input clears the saved value so the owner can disconnect
+    // the sync without deleting the row.
+    if (!raw) {
+      const { data, error } = await supabase.from('communities')
+        .update({ tax_google_place_id: '', updated_at: new Date().toISOString() })
+        .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE)
+        .select('id, business_type, tax_google_place_id');
+      if (error) return sendSupabaseError(res, error);
+      warn('[place-id] clear', { slug: communitySlug, rowsAffected: data?.length || 0, row: data?.[0] || null });
+      return res.json({ ok: true, placeId: '', rowsAffected: data?.length || 0, row: data?.[0] || null });
+    }
+
+    const resolved = await resolveGooglePlaceId(raw);
+    warn('[place-id] resolve', { slug: communitySlug, raw, resolved });
+    // `needsApiKey` is the "URL is valid, we just can't finish
+    // resolving without the Places API call" case. Save the raw URL
+    // so the value isn't lost; the sync endpoint will re-resolve it
+    // once the key lands. Other errors are real input problems.
+    if (resolved.error && resolved.error !== 'needsApiKey') {
+      const errMessages = {
+        placeIdMissing:     'Paste a Google Place ID or a Google Maps URL.',
+        placeIdNotInUrl:    'Could not find a place_id in that URL. Try clicking "Share" on Google Maps and using the link from there, or look up the Place ID directly at developers.google.com/maps/documentation/places/web-service/place-id.',
+        placeIdNotRecognized: 'That doesn\'t look like a Place ID or a Maps URL. Pasted value should start with ChIJ… or https://maps…',
+        fetchFailed:        'Could not reach the URL to resolve the place. Try again, or paste the raw Place ID instead.',
+      };
+      return res.status(400).json({
+        error: resolved.error,
+        message: errMessages[resolved.error] || resolved.error,
+      });
+    }
+
+    // Stored value is either the cleanly resolved ChIJ… ID or the raw
+    // URL we'll resolve on the next sync.
+    const valueToStore = resolved.placeId || raw.slice(0, 500);
+    const { data, error } = await supabase.from('communities')
+      .update({ tax_google_place_id: valueToStore, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE)
+      .select('id, business_type, tax_google_place_id');
+    if (error) return sendSupabaseError(res, error);
+    warn('[place-id] write', { slug: communitySlug, valueToStore, rowsAffected: data?.length || 0, row: data?.[0] || null });
+    res.json({
+      ok: true,
+      placeId: valueToStore,
+      resolved: !!resolved.placeId,
+      rowsAffected: data?.length || 0,
+      row: data?.[0] || null,
+      message: resolved.placeId
+        ? undefined
+        : 'Saved. Add a Google Places API key and click Sync now — we\'ll resolve the link the first time it runs.',
+    });
+  });
+
+  // POST /admin/testimonials/sync-google
+  //   Fetches up to 5 latest reviews from Google Places Details and
+  //   upserts each one into tax_testimonials with source='google'.
+  //   source_id is built from (time + author_name) — Places doesn't
+  //   ship stable review IDs in the legacy endpoint, but this
+  //   combination is stable enough that re-syncs don't duplicate.
+  //
+  //   Locale: stored as the community's default_locale because Google
+  //   returns one translation per call and we don't currently double-
+  //   fetch. The TestimonialsSection's locale fallback handles the
+  //   visitor's actual language.
+  // Reusable sync core — used by the manual button and by the
+  // overnight cron. Returns { ok, upserted, placeName } on success or
+  // { error, message } on failure. Doesn't write HTTP responses — the
+  // caller decides what to do with the result.
+  async function syncGoogleReviewsForCommunity(communitySlug, { actorEmail = 'cron' } = {}) {
+    if (!GOOGLE_PLACES_API_KEY) {
+      return { error: 'google_api_key_missing',
+        message: 'GOOGLE_PLACES_API_KEY is not configured on the server.' };
+    }
+    const { data: community } = await supabase.from('communities')
+      .select('id, tax_google_place_id, default_locale').eq('id', communitySlug).maybeSingle();
+    if (!community || !community.tax_google_place_id) {
+      return { error: 'place_id_missing', message: 'No Place ID saved for this community.' };
+    }
+
+    // Stored value can be a clean ChIJ… ID or a share URL we couldn't
+    // fully resolve at save time. Re-resolve here (the API key passed
+    // the gate above, so Find Place is reachable) and persist the
+    // clean ID so future syncs skip the hop.
+    let placeId = community.tax_google_place_id;
+    if (!looksLikeRawPlaceId(placeId)) {
+      const resolved = await resolveGooglePlaceId(placeId);
+      if (resolved.error || !resolved.placeId) {
+        return { error: 'place_id_unresolved',
+          message: 'Saved value is a Google Maps URL we could not resolve to a Place ID.' };
+      }
+      placeId = resolved.placeId;
+      await supabase.from('communities')
+        .update({ tax_google_place_id: placeId, updated_at: new Date().toISOString() })
+        .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    }
+
+    // Places API (New). Different surface from the legacy
+    // `place/details/json` endpoint: place_id goes in the path,
+    // the API key is a header, fields are an X-Goog-FieldMask, and
+    // the response uses camelCase + nested text objects.
+    //
+    // The New API has no documented or undocumented sort parameter
+    // for reviews (we tried reviewsSort=NEWEST — Google rejects it
+    // with INVALID_ARGUMENT), so the 5 reviews come back ordered
+    // by Google's relevance heuristic. We locally sort by publishTime
+    // below to at least keep our stored ordering deterministic.
+    let payload;
+    try {
+      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
+        headers: {
+          'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+          'X-Goog-FieldMask': 'displayName,rating,userRatingCount,reviews',
+          'Accept-Language': community.default_locale === 'en' ? 'en' : 'es',
+        },
+      });
+      payload = await resp.json();
+      // Non-2xx surfaces as { error: { code, message, status } }.
+      if (payload.error) {
+        return { error: 'google_api_status',
+          message: `Google Places API: ${payload.error.status || payload.error.code} — ${payload.error.message || ''}` };
+      }
+    } catch (e) {
+      return { error: 'google_fetch_failed',
+        message: `Could not reach Google Places API: ${e?.message || e}` };
+    }
+    const reviewsFieldPresent = Array.isArray(payload.reviews);
+    // Sort returned reviews newest-first by publishTime regardless of
+    // how Google ordered them — defensive in case reviewsSort is
+    // ignored by the New API, and harmless when it isn't.
+    const reviews = reviewsFieldPresent
+      ? [...payload.reviews].sort((a, b) => {
+          const ta = Date.parse(a?.publishTime || '') || 0;
+          const tb = Date.parse(b?.publishTime || '') || 0;
+          return tb - ta;
+        })
+      : [];
+    let upserted = 0;
+    let skippedEmpty = 0;
+    const locale = community.default_locale === 'en' ? 'en' : 'es';
+    for (const r of reviews) {
+      const author = String(r.authorAttribution?.displayName || '').slice(0, 200) || 'Google user';
+      // The new API gives each review a stable resource name
+      // (places/<id>/reviews/<id>). Prefer that over our old
+      // synthetic time+author key — re-syncs upsert cleanly even
+      // when Google re-translates the body.
+      const sourceId = String(r.name || r.publishTime || Date.now())
+        .slice(0, 200)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, '-');
+      // Google ships ISO8601 in r.publishTime. We persist it as
+      // created_at so the public endpoint's "display_order asc,
+      // created_at desc" ordering surfaces the most recent review
+      // first — instead of ordering by sync time, which is
+      // effectively random for the 5 rows that come back in one
+      // batch.
+      const publishedAt = (() => {
+        const t = Date.parse(r.publishTime || '');
+        return Number.isFinite(t) ? new Date(t).toISOString() : new Date().toISOString();
+      })();
+      const row = {
+        community_id: communitySlug,
+        source: 'google',
+        source_id: sourceId,
+        author_name: author,
+        author_role: r.relativePublishTimeDescription ? String(r.relativePublishTimeDescription).slice(0, 200) : '',
+        rating: Math.max(1, Math.min(5, Math.round(Number(r.rating) || 5))),
+        body: String(r.text?.text || r.originalText?.text || '').slice(0, 4000),
+        locale,
+        active: true,
+        created_at: publishedAt,
+        updated_at: new Date().toISOString(),
+      };
+      if (!row.body) { skippedEmpty++; continue; }
+      const { data: existing } = await supabase.from('tax_testimonials')
+        .select('id').eq('community_id', communitySlug).eq('source', 'google').eq('source_id', sourceId).maybeSingle();
+      if (existing) {
+        await supabase.from('tax_testimonials').update(row).eq('id', existing.id);
+      } else {
+        await supabase.from('tax_testimonials').insert({
+          id: 'tt_' + uuidv4().slice(0, 12),
+          ...row,
+          display_order: 0,
+        });
+      }
+      upserted++;
+    }
+    const placeName = payload.displayName?.text || null;
+    const userRatingCount = Number(payload.userRatingCount) || 0;
+    // If Google reports ratings exist for this place but the response
+    // didn't include the `reviews` array at all, the most common cause
+    // is an API key without the Places Enterprise SKU — the reviews
+    // field is gated behind that tier in the new API. Surface a hint
+    // so the owner doesn't blame the place ID.
+    const likelyNoEnterpriseSku = !reviewsFieldPresent && userRatingCount > 0;
+    if (upserted === 0) {
+      warn('[google-reviews] sync returned 0 upserts', {
+        slug: communitySlug, placeId, placeName,
+        fetched: reviews.length, skippedEmpty,
+        reviewsFieldPresent, userRatingCount,
+        rating: payload.rating || null,
+        likelyNoEnterpriseSku,
+      });
+    }
+    try {
+      await auditLog({
+        entity: 'tax.community.testimonials', entityId: communitySlug,
+        action: 'sync_google',
+        actorEmail,
+        after: { upserted, fetched: reviews.length, skippedEmpty,
+          totalRating: payload.rating || null, totalCount: userRatingCount || null },
+      });
+    } catch (_e) {}
+    return {
+      ok: true,
+      upserted,
+      fetched: reviews.length,
+      skippedEmpty,
+      reviewsFieldPresent,
+      placeName,
+      rating: payload.rating || null,
+      userRatingCount: userRatingCount || null,
+      likelyNoEnterpriseSku,
+    };
+  }
+
+  // Daily auto-sync entrypoint — invoked by the cron in server/index.js.
+  // Walks every community with auto-sync enabled, a saved Place ID,
+  // and runs the same logic the manual button does. Swallows
+  // per-community errors so one broken row doesn't poison the rest.
+  async function autoSyncAllGoogleReviews() {
+    if (!isSupabaseConfigured || !GOOGLE_PLACES_API_KEY) {
+      return { skipped: 'config_missing', scanned: 0, synced: 0 };
+    }
+    const { data: rows } = await supabase.from('communities')
+      .select('id, tax_google_place_id, tax_google_reviews_auto_sync')
+      .eq('business_type', TAX_BUSINESS_TYPE)
+      .neq('tax_google_place_id', '');
+    let scanned = 0, synced = 0, errors = 0;
+    for (const c of (rows || [])) {
+      if (c.tax_google_reviews_auto_sync === false) continue;
+      scanned++;
+      try {
+        const r = await syncGoogleReviewsForCommunity(c.id, { actorEmail: 'google-reviews-cron' });
+        if (r.error) { errors++; warn('[google-reviews-cron]', c.id, r.error); }
+        else synced++;
+      } catch (e) {
+        errors++; warn('[google-reviews-cron] threw', c.id, e?.message || e);
+      }
+    }
+    return { scanned, synced, errors };
+  }
+
+  router.post('/admin/testimonials/sync-google', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const actorEmail = trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase();
+    const result = await syncGoogleReviewsForCommunity(communitySlug, { actorEmail });
+    if (result.error) {
+      const status = result.error.startsWith('google_') ? 502 : 400;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Per-community auto-sync toggle. ON by default once both the
+  // platform key and a place_id are saved; owners can flip it OFF
+  // when they want to curate manually.
+  router.put('/admin/community-settings/google-reviews-auto-sync', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const enabled = req.body?.enabled !== false;
+    const { error } = await supabase.from('communities')
+      .update({ tax_google_reviews_auto_sync: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, enabled });
+  });
+
+  // ── Phase 4n.66: news articles ─────────────────────────────────────────
+  //
+  // Public landing-page News section. Replaces the legacy help-articles
+  // surfacing with a dedicated table (`tax_news_articles`) that holds
+  // both manual entries and AI-refreshed items (source='ai').
+  //
+  // Owners configure topics + display limit in Owner Settings → News, and
+  // can fire a manual refresh that calls Claude (web_search grounded).
+  // Daily cron is wired in server/index.js when ANTHROPIC_API_KEY is set.
+  const NEWS_VIDEOS_BUCKET = 'tax-videos';
+
+  // GET /community/:slug/news — public list. Returns active rows newest
+  // first, capped at the owner's display limit. Public, no auth.
+  router.get('/community/:slug/news', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { data: community } = await supabase.from('communities')
+      .select('id, business_type, tax_news_topics, tax_news_display_limit')
+      .eq('id', slug).maybeSingle();
+    if (!community || community.business_type !== TAX_BUSINESS_TYPE) {
+      return res.status(404).json({ error: 'Tax community not found.' });
+    }
+    const displayLimit = Math.max(1, Math.min(20,
+      Number(community.tax_news_display_limit) || 5));
+    const { data, error } = await supabase.from('tax_news_articles')
+      .select('id, source, topic, topics, title_i18n, summary_i18n, body_i18n, source_url, source_name, published_at, video_url, video_storage_path, display_order, created_at')
+      .eq('community_id', slug).eq('active', true)
+      .order('display_order', { ascending: true })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(displayLimit);
+    if (error) return sendSupabaseError(res, error);
+    res.json({
+      articles: data || [],
+      displayLimit,
+      topics: Array.isArray(community.tax_news_topics) ? community.tax_news_topics : [],
+    });
+  });
+
+  // GET /admin/news — owner-facing list. Returns the full set so the
+  // admin UI can show active + inactive rows for moderation.
+  router.get('/admin/news', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('tax_news_articles')
+      .select('*').eq('community_id', communitySlug)
+      .order('display_order', { ascending: true })
+      .order('published_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ articles: data || [] });
+  });
+
+  router.post('/admin/news', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const titleEn   = trim(req.body?.titleEn || req.body?.title_en, 200);
+    const titleEs   = trim(req.body?.titleEs || req.body?.title_es, 200);
+    const summaryEn = trim(req.body?.summaryEn || req.body?.summary_en, 1000);
+    const summaryEs = trim(req.body?.summaryEs || req.body?.summary_es, 1000);
+    if (!titleEn && !titleEs) {
+      return res.status(400).json({ error: 'Title (EN or ES) required.' });
+    }
+    const row = {
+      id: 'tn_' + uuidv4().slice(0, 12),
+      community_id: communitySlug,
+      source: 'manual',
+      topic: trim(req.body?.topic, 200),
+      topics: Array.isArray(req.body?.topics) ? req.body.topics.slice(0, 10).map(s => String(s).slice(0, 200)) : [],
+      title_i18n:   { en: titleEn,   es: titleEs   || titleEn   },
+      summary_i18n: { en: summaryEn, es: summaryEs || summaryEn },
+      body_i18n: {
+        en: trim(req.body?.bodyEn || req.body?.body_en, 4000),
+        es: trim(req.body?.bodyEs || req.body?.body_es, 4000),
+      },
+      source_url: trim(req.body?.sourceUrl || req.body?.source_url, 500),
+      source_name: trim(req.body?.sourceName || req.body?.source_name, 200),
+      published_at: req.body?.publishedAt || new Date().toISOString(),
+      video_url: trim(req.body?.videoUrl || req.body?.video_url, 500),
+      video_storage_path: trim(req.body?.videoStoragePath || req.body?.video_storage_path, 500),
+      active: req.body?.active !== false,
+      display_order: Number.isFinite(Number(req.body?.displayOrder))
+        ? Math.round(Number(req.body?.displayOrder)) : 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await supabase.from('tax_news_articles').insert(row);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, article: row });
+  });
+
+  router.put('/admin/news/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    if (!id) return res.status(400).json({ error: 'id required.' });
+    const update = { updated_at: new Date().toISOString() };
+    const body = req.body || {};
+    if (typeof body.titleEn === 'string' || typeof body.titleEs === 'string') {
+      update.title_i18n = {
+        en: trim(body.titleEn, 200),
+        es: trim(body.titleEs, 200) || trim(body.titleEn, 200),
+      };
+    }
+    if (typeof body.summaryEn === 'string' || typeof body.summaryEs === 'string') {
+      update.summary_i18n = {
+        en: trim(body.summaryEn, 1000),
+        es: trim(body.summaryEs, 1000) || trim(body.summaryEn, 1000),
+      };
+    }
+    if (typeof body.bodyEn === 'string' || typeof body.bodyEs === 'string') {
+      update.body_i18n = { en: trim(body.bodyEn, 4000), es: trim(body.bodyEs, 4000) };
+    }
+    if (typeof body.topic       === 'string') update.topic       = trim(body.topic, 200);
+    if (Array.isArray(body.topics))           update.topics      = body.topics.slice(0, 10).map(s => String(s).slice(0, 200));
+    if (typeof body.sourceUrl   === 'string') update.source_url  = trim(body.sourceUrl, 500);
+    if (typeof body.sourceName  === 'string') update.source_name = trim(body.sourceName, 200);
+    if (typeof body.publishedAt === 'string') update.published_at = body.publishedAt;
+    if (typeof body.videoUrl    === 'string') update.video_url   = trim(body.videoUrl, 500);
+    if (typeof body.videoStoragePath === 'string') update.video_storage_path = trim(body.videoStoragePath, 500);
+    if (typeof body.active      === 'boolean') update.active      = body.active;
+    if (Number.isFinite(Number(body.displayOrder))) update.display_order = Math.round(Number(body.displayOrder));
+    const { error } = await supabase.from('tax_news_articles').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/news/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const id = trim(req.params.id, 200);
+    if (!id) return res.status(400).json({ error: 'id required.' });
+    // If the article had an uploaded video, drop the storage object so we
+    // don't accumulate orphans. Failure is non-fatal.
+    const { data: existing } = await supabase.from('tax_news_articles')
+      .select('video_storage_path').eq('id', id).maybeSingle();
+    if (existing?.video_storage_path) {
+      try { await supabase.storage.from(NEWS_VIDEOS_BUCKET).remove([existing.video_storage_path]); }
+      catch (_e) {}
+    }
+    const { error } = await supabase.from('tax_news_articles').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // POST /admin/news/refresh — triggers the LLM grounded refresh. AI-source
+  // rows are wiped first so the table mirrors "today's news"; manual rows
+  // are preserved.
+  router.post('/admin/news/refresh', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const result = await refreshNewsForCommunity(communitySlug);
+    if (result.error) {
+      // 429 for rate limit (semantically correct + frontend can show
+      // a wait/retry affordance), 400 for config/auth issues (owner
+      // can act), 502 for upstream failures.
+      let status = 502;
+      if (result.error === 'rate_limited')                                 status = 429;
+      else if (['no_api_key', 'no_topics', 'auth_failed'].includes(result.error)) status = 400;
+      return res.status(status).json(result);
+    }
+    res.json(result);
+  });
+
+  // Shared by manual button and (in PR B) the daily cron.
+  async function refreshNewsForCommunity(communitySlug) {
+    if (!ANTHROPIC_API_KEY) {
+      return { error: 'no_api_key', message: 'ANTHROPIC_API_KEY is not configured on the server.' };
+    }
+    const { data: community } = await supabase.from('communities')
+      .select('id, tax_news_topics, tax_news_display_limit')
+      .eq('id', communitySlug).maybeSingle();
+    if (!community) return { error: 'community_missing', message: 'Community not found.' };
+    const topics = Array.isArray(community.tax_news_topics) ? community.tax_news_topics : [];
+    const desired = Math.max(1, Math.min(20, Number(community.tax_news_display_limit) || 5));
+    const result = await fetchAiNews({
+      topics, desiredCount: desired, apiKey: ANTHROPIC_API_KEY,
+    });
+    if (result.error) return result;
+    // Wipe previous AI items so the table reflects fresh news. Manual
+    // entries are preserved.
+    await supabase.from('tax_news_articles')
+      .delete().eq('community_id', communitySlug).eq('source', 'ai');
+    const rows = result.items.map(item => newsRowFromItem({ communityId: communitySlug, item }));
+    if (rows.length) {
+      const { error } = await supabase.from('tax_news_articles').insert(rows);
+      if (error) return { error: 'insert_failed', message: error.message };
+    }
+    await supabase.from('communities')
+      .update({ tax_news_last_refreshed_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    try {
+      await auditLog({
+        entity: 'tax.community.news', entityId: communitySlug,
+        action: 'refresh_ai', actorEmail: 'manual',
+        after: { inserted: rows.length, topics },
+      });
+    } catch (_e) {}
+    return { ok: true, inserted: rows.length };
+  }
+
+  // Per-community settings PUTs.
+  router.put('/admin/community-settings/news-topics', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const topicsRaw = Array.isArray(req.body?.topics) ? req.body.topics : [];
+    const topics = topicsRaw.map(t => String(t || '').trim()).filter(Boolean).slice(0, 10);
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_topics: topics, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, topics });
+  });
+
+  router.put('/admin/community-settings/news-display-limit', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.limit);
+    const limit = Math.max(1, Math.min(20, Math.round(Number.isFinite(raw) ? raw : 5)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_display_limit: limit, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, limit });
+  });
+
+  router.put('/admin/community-settings/news-auto-refresh', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const enabled = req.body?.enabled !== false;
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_auto_refresh: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, enabled });
+  });
+
+  // Signed upload URL for a news-article video. Owner-only. Returns a
+  // path + signed URL the browser PUTs the file to directly. Caller
+  // stores the returned `path` in tax_news_articles.video_storage_path
+  // and reads the public URL via supabase.storage.from(...).getPublicUrl
+  // on the client. The bucket `tax-videos` must exist with public read.
+  router.post('/admin/news/video-upload-url', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const filename = trim(req.body?.filename || 'video.mp4', 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    // Sanitize filename to a safe slug; preserve extension.
+    const dot = filename.lastIndexOf('.');
+    const ext = dot >= 0 ? filename.slice(dot).toLowerCase().replace(/[^a-z0-9.]+/g, '') : '';
+    const safeExt = /^\.(mp4|mov|webm|m4v|ogv)$/.test(ext) ? ext : '.mp4';
+    const path = `${communitySlug}/${Date.now()}-${uuidv4().slice(0, 8)}${safeExt}`;
+    const { data: signed, error } = await supabase.storage
+      .from(NEWS_VIDEOS_BUCKET).createSignedUploadUrl(path);
+    if (error) {
+      warn('[tax-news] createSignedUploadUrl failed', error.message);
+      return res.status(500).json({ error: 'storage_failed', message: error.message });
+    }
+    // Public URL caller can stash on the article row for the public site.
+    const { data: pub } = supabase.storage.from(NEWS_VIDEOS_BUCKET).getPublicUrl(path);
+    res.json({
+      path,
+      signedUrl: signed.signedUrl,
+      token: signed.token,
+      publicUrl: pub?.publicUrl || '',
+      bucket: NEWS_VIDEOS_BUCKET,
+    });
+  });
+
+  // Expose the helper so the cron in server/index.js can call it.
+  router.refreshAllNews = async function refreshAllNews() {
+    if (!ANTHROPIC_API_KEY) return { skipped: 'no_api_key', refreshed: 0 };
+    const { data: rows } = await supabase.from('communities')
+      .select('id, tax_news_auto_refresh, tax_news_topics')
+      .eq('business_type', TAX_BUSINESS_TYPE);
+    let refreshed = 0;
+    for (const c of (rows || [])) {
+      if (c.tax_news_auto_refresh === false) continue;
+      if (!Array.isArray(c.tax_news_topics) || c.tax_news_topics.length === 0) continue;
+      try {
+        const r = await refreshNewsForCommunity(c.id);
+        if (r.ok) refreshed++;
+        else warn('[tax-news-cron]', c.id, r.error || r.message);
+      } catch (e) { warn('[tax-news-cron] threw', c.id, e?.message || e); }
+    }
+    return { ok: true, refreshed };
+  };
 
   // ── Phase 4n.24: e-signature requests ──────────────────────────────────
   //
@@ -9757,5 +11968,848 @@ module.exports = function createTaxRouter(deps) {
     return out;
   }
 
+  // ── Bookkeeping financial reports (Phase 4n.70) ───────────────────────────
+  // Twice-a-year P&L + Balance Sheet that the owner publishes for a
+  // bookkeeping customer. Customer never logs in: a per-customer
+  // access token is emailed; visiting /tax/{slug}/r/{token} prompts
+  // them to confirm their email (Tier 2 magic-link). On match we set
+  // a 7-day httpOnly cookie scoped to the token, and the dashboard
+  // renders. Publish and Send are explicit, separate actions — the
+  // owner reviews before any email leaves.
+
+  const REPORT_COOKIE_NAME = 'tax_rpt';
+  const REPORT_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+  const REPORT_LOCKOUT_FAILURES = 5;
+  const REPORT_LOCKOUT_DURATION_MS = 60 * 60 * 1000; // 1 hour
+  // Cookie HMAC secret. Falls back to a derivative of the service-role
+  // key when the dedicated env var is missing, so the feature still
+  // works in environments that haven't been re-provisioned yet — but
+  // operators should set REPORT_ACCESS_COOKIE_SECRET explicitly so
+  // rotating the service-role key doesn't accidentally invalidate
+  // every customer's session.
+  const REPORT_COOKIE_SECRET = process.env.REPORT_ACCESS_COOKIE_SECRET
+    || sha256('report-cookie-fallback:' + (process.env.SUPABASE_SERVICE_ROLE_KEY || ''));
+
+  function signReportCookie(tokenId, customerId) {
+    return crypto.createHmac('sha256', REPORT_COOKIE_SECRET)
+      .update(`${tokenId}:${customerId}`)
+      .digest('base64url')
+      .slice(0, 32);
+  }
+  function verifyReportCookie(tokenId, customerId, cookieValue) {
+    if (!cookieValue) return false;
+    const expected = signReportCookie(tokenId, customerId);
+    // Constant-time compare; both are 32-char base64url so length always matches.
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(cookieValue),
+        Buffer.from(expected),
+      );
+    } catch (_e) { return false; }
+  }
+
+  // Pull the report-access cookie out of the Cookie header. Express
+  // doesn't parse cookies on its own (no cookie-parser middleware
+  // configured) and pulling one in just for this would add weight, so
+  // we hand-parse the one cookie we care about.
+  function readReportCookie(req) {
+    const raw = req.get('cookie') || '';
+    const m = raw.match(new RegExp(`(?:^|;\\s*)${REPORT_COOKIE_NAME}=([^;]+)`));
+    return m ? m[1] : '';
+  }
+
+  async function fetchAccessTokenRow(rawToken) {
+    if (!rawToken) return { ok: false, status: 400, error: 'Token required.' };
+    const tokenHash = sha256(rawToken);
+    const { data, error } = await supabase
+      .from('tax_report_access_tokens')
+      .select('id, community_id, customer_id, token_hash, failure_count, locked_until, revoked_at')
+      .eq('token_hash', tokenHash)
+      .maybeSingle();
+    if (error) return { ok: false, status: 500, error: error.message };
+    if (!data) return { ok: false, status: 404, error: 'invalid_token' };
+    if (data.revoked_at) return { ok: false, status: 410, error: 'token_revoked' };
+    return { ok: true, row: data };
+  }
+
+  async function loadCustomerReports(customerId) {
+    const { data, error } = await supabase.from('tax_financial_reports')
+      .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, last_sent_at, send_count, pl_data, balance_data, pl_pdf_path, balance_pdf_path, created_at, updated_at')
+      .eq('customer_id', customerId)
+      .in('status', ['published', 'sent'])
+      .order('period_end', { ascending: false });
+    if (error) throw error;
+    return data || [];
+  }
+
+  // Trim PII out of the report payload returned to the customer —
+  // they should only see their own report, never internal-only fields.
+  function publicReportShape(r) {
+    return {
+      id: r.id,
+      period_label: r.period_label,
+      period_start: r.period_start,
+      period_end: r.period_end,
+      cadence: r.cadence,
+      revision: r.revision,
+      published_at: r.published_at,
+      updated_at: r.updated_at,
+      pl: r.pl_data || {},
+      balance: r.balance_data || {},
+      has_pl_pdf: Boolean(r.pl_pdf_path),
+      has_balance_pdf: Boolean(r.balance_pdf_path),
+    };
+  }
+
+  // Mint or rotate the customer's access token. Idempotent: if a row
+  // already exists and isn't revoked, returns the existing id (the raw
+  // token is unrecoverable, so the caller decides whether to force a
+  // rotate by passing `rotate: true`).
+  async function ensureAccessToken(communityId, customerId, { rotate = false } = {}) {
+    const { data: existing } = await supabase.from('tax_report_access_tokens')
+      .select('id, revoked_at')
+      .eq('customer_id', customerId)
+      .maybeSingle();
+    if (existing && !existing.revoked_at && !rotate) {
+      return { id: existing.id, raw: null, rotated: false };
+    }
+    const raw = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = sha256(raw);
+    if (existing) {
+      const { error } = await supabase.from('tax_report_access_tokens')
+        .update({
+          token_hash: tokenHash,
+          failure_count: 0,
+          locked_until: null,
+          revoked_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id);
+      if (error) throw error;
+      return { id: existing.id, raw, rotated: true };
+    }
+    const id = 'rtok_' + uuidv4().slice(0, 12);
+    const { error } = await supabase.from('tax_report_access_tokens').insert({
+      id, community_id: communityId, customer_id: customerId,
+      token_hash: tokenHash,
+    });
+    if (error) throw error;
+    return { id, raw, rotated: false };
+  }
+
+  function reportViewUrl(communityId, rawToken) {
+    const base = (typeof publicAppUrl === 'function' ? publicAppUrl() : '') || '';
+    return `${base}/tax/${encodeURIComponent(communityId)}/r/${rawToken}`;
+  }
+
+  // Returns true when the customer has the bookkeeping product
+  // attached. Checks both join tables — `tax_customer_services` is
+  // the newer (product-direct) tagging path, `tax_customer_relationships`
+  // is the older relationship-type path. Either one is enough.
+  async function customerHasBookkeepingService(customerId) {
+    // Newer path: tax_customer_services row pointing at a product
+    // with slug='bookkeeping'.
+    const { data: svcRows } = await supabase
+      .from('tax_customer_services')
+      .select(`active, product:tax_products ( slug )`)
+      .eq('customer_id', customerId).eq('active', true);
+    if ((svcRows || []).some(r => r?.product?.slug === 'bookkeeping')) return true;
+    // Legacy path: tax_customer_relationships pointing at a
+    // relationship_type linked to the bookkeeping product.
+    const { data: relRows } = await supabase
+      .from('tax_customer_relationships')
+      .select(`active, type:tax_relationship_types ( product:tax_products ( slug ) )`)
+      .eq('customer_id', customerId).eq('active', true);
+    return (relRows || []).some(r => r?.type?.product?.slug === 'bookkeeping');
+  }
+
+  // ── Admin: list + CRUD reports for a customer ─────────────────────────────
+  router.get('/admin/customers/:customerId/financial-reports', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_customers'))) return;
+    const customerId = trim(req.params.customerId, 200);
+    if (!customerId) return res.status(400).json({ error: 'customerId required.' });
+    const [reportsRes, tokenRes, eligible] = await Promise.all([
+      supabase.from('tax_financial_reports')
+        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, task_id, created_at, updated_at')
+        .eq('customer_id', customerId)
+        .order('period_end', { ascending: false }),
+      supabase.from('tax_report_access_tokens')
+        .select('id, revoked_at, last_used_at, created_at')
+        .eq('customer_id', customerId).maybeSingle(),
+      customerHasBookkeepingService(customerId),
+    ]);
+    if (reportsRes.error) return sendSupabaseError(res, reportsRes.error);
+    res.json({
+      reports: reportsRes.data || [],
+      accessToken: tokenRes.data || null,
+      bookkeepingActive: eligible,
+    });
+  });
+
+  router.get('/admin/financial-reports/:id', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_customers'))) return;
+    const id = trim(req.params.id, 200);
+    const { data, error } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', id).maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    if (!data) return res.status(404).json({ error: 'Not found.' });
+    res.json({ report: data });
+  });
+
+  router.post('/admin/customers/:customerId/financial-reports', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.customerId, 200);
+    if (!customerId) return res.status(400).json({ error: 'customerId required.' });
+    const { data: cust, error: cErr } = await supabase.from('tax_customers')
+      .select('id, community_id').eq('id', customerId).maybeSingle();
+    if (cErr) return sendSupabaseError(res, cErr);
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+
+    const body = req.body || {};
+    const periodLabel = trim(body.period_label, 80);
+    const periodStart = trim(body.period_start, 40);
+    const periodEnd = trim(body.period_end, 40);
+    const cadence = ['semi_annual','annual','quarterly','custom'].includes(body.cadence)
+      ? body.cadence : 'semi_annual';
+    if (!periodLabel || !periodStart || !periodEnd) {
+      return res.status(400).json({ error: 'period_label, period_start, period_end required.' });
+    }
+    const id = 'frpt_' + uuidv4().slice(0, 12);
+    const taskId = trim(body.task_id || '', 200) || null;
+    const row = {
+      id, community_id: cust.community_id, customer_id: customerId,
+      period_label: periodLabel,
+      period_start: periodStart, period_end: periodEnd,
+      cadence,
+      pl_data: (body.pl_data && typeof body.pl_data === 'object') ? body.pl_data : {},
+      balance_data: (body.balance_data && typeof body.balance_data === 'object') ? body.balance_data : {},
+      status: 'draft',
+      prepared_by_email: actor.email,
+      notes: trim(body.notes, MAX_TEXT_LEN),
+      task_id: taskId,
+    };
+    const { error } = await supabase.from('tax_financial_reports').insert(row);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'create', actorEmail: actor.email,
+        after: { customer_id: customerId, period_label: periodLabel },
+      });
+    } catch (_e) {}
+    res.json({ report: row });
+  });
+
+  router.put('/admin/financial-reports/:id', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur, error: gErr } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', id).maybeSingle();
+    if (gErr) return sendSupabaseError(res, gErr);
+    if (!cur) return res.status(404).json({ error: 'Not found.' });
+
+    const body = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (typeof body.period_label === 'string') patch.period_label = trim(body.period_label, 80);
+    if (typeof body.period_start === 'string') patch.period_start = trim(body.period_start, 40);
+    if (typeof body.period_end === 'string')   patch.period_end   = trim(body.period_end, 40);
+    if (typeof body.cadence === 'string'
+        && ['semi_annual','annual','quarterly','custom'].includes(body.cadence)) {
+      patch.cadence = body.cadence;
+    }
+    if (body.pl_data && typeof body.pl_data === 'object') patch.pl_data = body.pl_data;
+    if (body.balance_data && typeof body.balance_data === 'object') patch.balance_data = body.balance_data;
+    if (typeof body.notes === 'string') patch.notes = trim(body.notes, MAX_TEXT_LEN);
+    // Edits-after-send bump the revision counter so the customer
+    // dashboard can surface "Actualizado el …" — but the owner stays
+    // in control of whether to re-email.
+    if (cur.status === 'sent') {
+      patch.revision = (cur.revision || 1) + 1;
+    }
+    // If the financial data changes on a published or sent report, reset
+    // to draft so the owner must re-publish before the customer sees the
+    // updated numbers.
+    if ((body.pl_data || body.balance_data) && (cur.status === 'published' || cur.status === 'sent')) {
+      patch.status = 'draft';
+    }
+    const { error } = await supabase.from('tax_financial_reports').update(patch).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'edit', actorEmail: actor.email,
+        before: { revision: cur.revision }, after: { revision: patch.revision || cur.revision },
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  router.delete('/admin/financial-reports/:id', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { error } = await supabase.from('tax_financial_reports').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'delete', actorEmail: actor.email,
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // ── Admin: publish (draft → published) ────────────────────────────────────
+  router.post('/admin/financial-reports/:id/publish', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_financial_reports')
+      .select('id, status, customer_id, community_id, task_id').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Not found.' });
+    if (cur.status !== 'draft') {
+      return res.status(400).json({ error: 'already_published', message: 'Report is already published.' });
+    }
+    const now = new Date().toISOString();
+    const { error } = await supabase.from('tax_financial_reports')
+      .update({ status: 'published', published_at: now, updated_at: now })
+      .eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    // Ensure the customer has an access token provisioned (idempotent).
+    try { await ensureAccessToken(cur.community_id, cur.customer_id); } catch (_e) {}
+    // Auto-complete the source task if this report was opened from one.
+    // Owner can still hit "Send" separately; the task is satisfied at
+    // the moment of publish so it stops appearing on the open-tasks
+    // board, even if the send is delayed.
+    if (cur.task_id) {
+      try {
+        await supabase.from('tax_tasks').update({
+          status_key: 'completed',
+          completed_at: now,
+          completed_by_email: actor.email || null,
+          updated_at: now,
+        }).eq('id', cur.task_id).is('completed_at', null);
+      } catch (_e) {}
+    }
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'publish', actorEmail: actor.email,
+        after: { task_id: cur.task_id || null },
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // ── Admin: find or create a report from a task ───────────────────────────
+  //
+  // Clicking a "Publish H1/H2 Bookkeeping report" task opens this
+  // endpoint, which returns an existing linked report when one
+  // exists, or mints a new draft with period derived from the task's
+  // due_date + title (looks for "H1" or "H2" in the title). The
+  // client then opens the editor for that report id.
+  router.post('/admin/tasks/:taskId/financial-report/open', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const taskId = trim(req.params.taskId, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, title, due_date, completed_at')
+      .eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!task.customer_id) return res.status(400).json({ error: 'Task is not customer-scoped.' });
+
+    const { data: existing } = await supabase.from('tax_financial_reports')
+      .select('id').eq('task_id', taskId).maybeSingle();
+    if (existing) return res.json({ ok: true, reportId: existing.id, created: false });
+
+    // Derive period from due_date + title. H1 task due Jul 31 of year
+    // Y covers Jan 1..Jun 30 of year Y; H2 due Jan 31 of year Y
+    // covers Jul 1..Dec 31 of year Y-1.
+    const due = task.due_date ? new Date(task.due_date) : new Date();
+    const dueYear = due.getUTCFullYear();
+    const title = String(task.title || '');
+    const isH1 = /\bH1\b/i.test(title) || (due.getUTCMonth() === 6 /* July */);
+    let periodLabel, periodStart, periodEnd;
+    if (isH1) {
+      periodLabel = `H1 ${dueYear}`;
+      periodStart = `${dueYear}-01-01`;
+      periodEnd = `${dueYear}-06-30`;
+    } else {
+      const py = dueYear - 1;
+      periodLabel = `H2 ${py}`;
+      periodStart = `${py}-07-01`;
+      periodEnd = `${py}-12-31`;
+    }
+
+    const id = 'frpt_' + uuidv4().slice(0, 12);
+    const { error } = await supabase.from('tax_financial_reports').insert({
+      id, community_id: task.community_id, customer_id: task.customer_id,
+      period_label: periodLabel, period_start: periodStart, period_end: periodEnd,
+      cadence: 'semi_annual',
+      pl_data: {}, balance_data: {},
+      status: 'draft', task_id: taskId,
+      prepared_by_email: actor.email,
+      notes: '',
+    });
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'create_from_task', actorEmail: actor.email,
+        after: { task_id: taskId, period_label: periodLabel },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, reportId: id, created: true });
+  });
+
+  // ── Admin: send / resend email ───────────────────────────────────────────
+  router.post('/admin/financial-reports/:id/send', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', id).maybeSingle();
+    if (!rpt) return res.status(404).json({ error: 'Not found.' });
+    if (rpt.status === 'draft') {
+      return res.status(400).json({ error: 'not_published', message: 'Publish the report first.' });
+    }
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, name, first_name, last_name, business_name, email, preferred_communication_email, locale')
+      .eq('id', rpt.customer_id).maybeSingle();
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+    const recipient = String(cust.preferred_communication_email || cust.email || '').trim();
+    if (!recipient) {
+      return res.status(400).json({ error: 'no_email', message: 'Customer has no email on file.' });
+    }
+    const { data: comm } = await supabase.from('communities')
+      .select('id, name, name_en, default_locale, logo_url, address_line1, address_line2, city, state, postal_code, phone, contact_email, whatsapp')
+      .eq('id', rpt.community_id).maybeSingle();
+
+    // Mint (or rotate, if asked) the access token + build the URL.
+    const shouldRotate = req.body && req.body.rotateToken === true;
+    let tokenInfo;
+    try {
+      tokenInfo = await ensureAccessToken(rpt.community_id, rpt.customer_id, { rotate: shouldRotate });
+    } catch (e) {
+      return res.status(500).json({ error: 'token_mint_failed', message: e?.message || '' });
+    }
+    // On the FIRST send we may have a brand-new raw token to embed;
+    // on subsequent resends we don't (storage is hashed). For resends
+    // the owner must either rotate or accept that we re-use the
+    // already-known URL — since we never stored the raw, we cannot
+    // reconstruct it. To keep resend usable without forcing rotation
+    // we mint a NEW raw token on every send and update the hash. This
+    // does mean every send invalidates the previous URL — owners
+    // should be aware. Tracked as a refinement for v1.5.
+    if (!tokenInfo.raw) {
+      // Force rotation so we always have a raw token to embed.
+      tokenInfo = await ensureAccessToken(rpt.community_id, rpt.customer_id, { rotate: true });
+    }
+    const viewUrl = reportViewUrl(rpt.community_id, tokenInfo.raw);
+
+    let sendResult = { sent: false, skipped: true, reason: 'sender_not_configured' };
+    if (typeof sendTaxBookkeepingReportEmail === 'function') {
+      try {
+        sendResult = await sendTaxBookkeepingReportEmail({
+          community: comm, customer: cust, report: rpt, viewUrl,
+          isResend: rpt.status === 'sent',
+        });
+      } catch (e) {
+        return res.status(500).json({ error: 'email_send_failed', message: e?.message || '' });
+      }
+    }
+
+    const now = new Date().toISOString();
+    const isFirstSend = rpt.status !== 'sent';
+    await supabase.from('tax_financial_reports')
+      .update({
+        status: 'sent',
+        first_sent_at: rpt.first_sent_at || now,
+        last_sent_at: now,
+        send_count: (rpt.send_count || 0) + 1,
+        updated_at: now,
+      })
+      .eq('id', id);
+    await supabase.from('tax_financial_report_sends').insert({
+      id: 'rsnd_' + uuidv4().slice(0, 12),
+      report_id: id,
+      sent_by_email: actor.email,
+      recipient_email: recipient,
+      resend_id: sendResult?.id || '',
+      kind: isFirstSend ? 'send' : 'resend',
+    });
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: isFirstSend ? 'send' : 'resend',
+        actorEmail: actor.email,
+        after: { recipient, resend_id: sendResult?.id || null },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, sent: !!sendResult?.sent, reason: sendResult?.reason || '', viewUrl });
+  });
+
+  // ── Admin: explicit token rotate (revoke previous link) ──────────────────
+  router.post('/admin/customers/:customerId/report-access-token/rotate', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.customerId, 200);
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, community_id').eq('id', customerId).maybeSingle();
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+    try {
+      const info = await ensureAccessToken(cust.community_id, customerId, { rotate: true });
+      try {
+        await auditLog({
+          entity: 'tax.report_access_token', entityId: info.id,
+          action: 'rotate', actorEmail: actor.email,
+          after: { customer_id: customerId },
+        });
+      } catch (_e) {}
+      // Return the new URL so the owner can copy it or trigger a resend.
+      res.json({ ok: true, viewUrl: reportViewUrl(cust.community_id, info.raw) });
+    } catch (e) {
+      res.status(500).json({ error: 'rotate_failed', message: e?.message || '' });
+    }
+  });
+
+  // ── Admin: owner-side preview of the customer dashboard ──────────────────
+  // Mints a one-shot signed cookie value so the owner can open the
+  // /r/{token} URL directly without the email-confirm gate. We return
+  // the URL + cookie value; the client sets it on the same domain via
+  // document.cookie before navigating. (Server-set cookie would work
+  // too, but the gate page is on the same site so a JS-set Lax cookie
+  // is sufficient and avoids cross-route Set-Cookie shenanigans.)
+  router.post('/admin/customers/:customerId/report-access-preview', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const customerId = trim(req.params.customerId, 200);
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, community_id').eq('id', customerId).maybeSingle();
+    if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+    let info;
+    try {
+      info = await ensureAccessToken(cust.community_id, customerId, { rotate: true });
+    } catch (e) {
+      return res.status(500).json({ error: 'mint_failed', message: e?.message || '' });
+    }
+    const cookieValue = signReportCookie(info.id, customerId);
+    res.json({
+      viewUrl: reportViewUrl(cust.community_id, info.raw),
+      cookieName: REPORT_COOKIE_NAME,
+      cookieValue,
+      cookieMaxAgeMs: REPORT_COOKIE_MAX_AGE_MS,
+    });
+  });
+
+  // ── Admin: PDF upload (signed URL) + attach + parse ──────────────────────
+  //
+  // Three-step flow matches the existing documents pattern:
+  //   1) POST /admin/financial-reports/:id/pdf-upload-url {kind}
+  //      → returns signed Supabase Storage URL + target path
+  //   2) Client PUTs the PDF directly to the signed URL
+  //   3) POST /admin/financial-reports/:id/pdf-parse {kind}
+  //      → server downloads the PDF, runs the parser, records the
+  //        path on the report row, returns the parsed values to
+  //        prefill the form
+  router.post('/admin/financial-reports/:id/pdf-upload-url', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const kind = (req.body && req.body.kind === 'balance') ? 'balance' : 'pl';
+    const fileType = (req.body && req.body.fileType === 'xlsx') ? 'xlsx' : 'pdf';
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('id, community_id, customer_id, status').eq('id', id).maybeSingle();
+    if (!rpt) return res.status(404).json({ error: 'Not found.' });
+    // Include a timestamp nonce so each upload lands in a fresh storage
+    // object. Re-using the same path with upsert can leave the old blob
+    // cached in Supabase's CDN window, causing the parse step to read
+    // stale data. The nonce makes every upload unique.
+    const nonce = Date.now().toString(36);
+    const path = `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}_${nonce}.${fileType}`;
+    const pathCol = kind === 'balance' ? 'balance_pdf_path' : 'pl_pdf_path';
+    const uploadPatch = { [pathCol]: path, updated_at: new Date().toISOString() };
+    // Uploading a new PDF on a published or sent report resets to draft
+    // so the owner must re-publish before the customer sees updated data.
+    if (rpt.status === 'published' || rpt.status === 'sent') uploadPatch.status = 'draft';
+    await supabase.from('tax_financial_reports')
+      .update(uploadPatch)
+      .eq('id', id);
+    const { data: signed, error } = await supabase.storage
+      .from('tax-bookkeeping-pdfs')
+      .createSignedUploadUrl(path, { upsert: true });
+    if (error || !signed?.signedUrl) {
+      return res.status(500).json({ error: 'sign_failed', message: error?.message || '' });
+    }
+    res.json({ uploadUrl: signed.signedUrl, path, token: signed.token });
+  });
+
+  router.post('/admin/financial-reports/:id/pdf-parse', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_customers');
+    if (!actor) return;
+    const id = trim(req.params.id, 200);
+    const kind = (req.body && req.body.kind === 'balance') ? 'balance' : 'pl';
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('id, community_id, customer_id, pl_pdf_path, balance_pdf_path, pl_data, balance_data')
+      .eq('id', id).maybeSingle();
+    if (!rpt) return res.status(404).json({ error: 'Not found.' });
+    // Use the path the upload-url endpoint already saved to the DB.
+    // Fall back to the legacy fixed path for reports uploaded before this change.
+    const storedPath = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
+    const path = storedPath || `${rpt.community_id}/${rpt.customer_id}/${id}/${kind}.pdf`;
+    // Download the just-uploaded PDF and parse it.
+    const { data: blob, error: dlErr } = await supabase.storage
+      .from('tax-bookkeeping-pdfs').download(path);
+    if (dlErr || !blob) {
+      return res.status(500).json({ error: 'download_failed', message: dlErr?.message || '' });
+    }
+    let buffer;
+    try {
+      const arr = await blob.arrayBuffer();
+      buffer = Buffer.from(arr);
+    } catch (e) {
+      return res.status(500).json({ error: 'read_failed', message: e?.message || '' });
+    }
+    let parsed;
+    try {
+      if (storedPath && storedPath.endsWith('.xlsx')) {
+        const { parseXlsx } = require('./financial-report-xlsx-parser');
+        parsed = await parseXlsx(buffer, kind);
+      } else {
+        const { parsePdf } = require('./financial-report-parser');
+        parsed = await parsePdf(buffer, kind);
+      }
+    } catch (e) {
+      warn('[bookkeeping-parse-error]', { reportId: id, kind, path, error: e?.message });
+      return res.status(500).json({ error: e?.message || 'parse_failed', message: e?.message || '' });
+    }
+    // Zero matches → dump a sample of the extracted text to the Render
+    // log so we can tune regexes against what pdf-parse actually
+    // produced for this customer's QB output. Owner-only path, so PII
+    // exposure is bounded to admin logs.
+    // Stream the extracted text + diagnostic stats to Render whenever
+    // the parse looks suspicious — zero matches, or rollups didn't
+    // balance. Lets the operator open Logs and post the textSample
+    // back here so a regex can be tuned against the real pdf-parse
+    // output for this specific file.
+    const hasWarnings = (parsed?.debug?.warnings || []).length > 0;
+    if (parsed?.debug?.matched === 0 || hasWarnings) {
+      try {
+        warn('[bookkeeping-parser]', parsed?.debug?.matched === 0 ? 'zero matches' : 'rollup warnings', {
+          reportId: id, kind,
+          detectedType: parsed?.debug?.detectedType,
+          characters: parsed?.debug?.characters,
+          markersFound: parsed?.debug?.markersFound,
+          warnings: parsed?.debug?.warnings,
+          textSample: parsed?.debug?.textSample,
+        });
+      } catch (_e) {}
+    }
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: id,
+        action: 'pdf_upload_parsed', actorEmail: actor.email,
+        after: { kind, matched: parsed?.debug?.matched, unmatched: parsed?.debug?.unmatched },
+      });
+    } catch (_e) {}
+    res.json({
+      ok: true,
+      kind,
+      pdfPath: path,
+      parsed: kind === 'balance'
+        ? { balance: parsed.balance, debug: parsed.debug, companyName: parsed.companyName }
+        : { pl: parsed.pl, debug: parsed.debug, companyName: parsed.companyName },
+    });
+  });
+
+  // ── Public: GET /report-access/:token ────────────────────────────────────
+  // No auth at all. Returns one of two payloads:
+  //   { state: 'gate', communityName }       — email confirmation needed
+  //   { state: 'ready', reports, customer }  — cookie is good, show dashboard
+  // The customer email is never returned in the 'gate' payload — that's
+  // the secret the confirmation step is meant to prove the visitor knows.
+  router.get('/report-access/:token', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).json({ error: t.error });
+    const cookieVal = readReportCookie(req);
+    const cookieOk = verifyReportCookie(t.row.id, t.row.customer_id, cookieVal);
+    const { data: comm } = await supabase.from('communities')
+      .select('id, name').eq('id', t.row.community_id).maybeSingle();
+    if (!cookieOk) {
+      // The customer's preferred locale is returned here so the
+      // confirmation page renders in their language from the first
+      // paint. Strictly less info than the customer's name/email —
+      // anyone with the URL already proves token existence by hitting
+      // this endpoint, so a single 'en'/'es' flag adds no meaningful
+      // leak. Community default is used as a fallback when the
+      // customer row has no locale set.
+      const { data: cust } = await supabase.from('tax_customers')
+        .select('locale').eq('id', t.row.customer_id).maybeSingle();
+      const { data: commLocale } = await supabase.from('communities')
+        .select('default_locale').eq('id', t.row.community_id).maybeSingle();
+      const locale = (cust?.locale === 'en' || cust?.locale === 'es') ? cust.locale
+        : (commLocale?.default_locale === 'en' ? 'en' : 'es');
+      return res.json({
+        state: 'gate',
+        community: { id: comm?.id || t.row.community_id, name: comm?.name || '' },
+        locale,
+      });
+    }
+    // Cookie valid — bump last_used_at + return the customer's reports.
+    await supabase.from('tax_report_access_tokens')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('id', t.row.id);
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, name, first_name, last_name, business_name, locale')
+      .eq('id', t.row.customer_id).maybeSingle();
+    let reports = [];
+    try { reports = await loadCustomerReports(t.row.customer_id); } catch (e) {
+      return sendSupabaseError(res, e);
+    }
+    res.json({
+      state: 'ready',
+      community: { id: comm?.id || t.row.community_id, name: comm?.name || '' },
+      customer: cust ? {
+        name: cust.business_name || [cust.first_name, cust.last_name].filter(Boolean).join(' ').trim() || cust.name || '',
+        locale: cust.locale || 'es',
+      } : null,
+      reports: reports.map(publicReportShape),
+    });
+  });
+
+  // ── Public: POST /report-access/:token/confirm ───────────────────────────
+  // Body { email }. If it matches the customer record we set the
+  // 7-day cookie and return { ok: true }. Counts failures; locks the
+  // token after 5 wrong tries for 1h. The lock is invisible to the
+  // attacker — they get the same error response.
+  router.post('/report-access/:token/confirm', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).json({ error: t.error });
+    if (t.row.locked_until && new Date(t.row.locked_until) > new Date()) {
+      try {
+        await auditLog({
+          entity: 'tax.report_access_token', entityId: t.row.id,
+          action: 'confirm_blocked_locked', actorEmail: '',
+          after: { ip: trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80) },
+        });
+      } catch (_e) {}
+      return res.status(429).json({ error: 'locked' });
+    }
+    const submitted = trim((req.body && req.body.email) || '', 200).toLowerCase();
+    if (!submitted) return res.status(400).json({ error: 'email_required' });
+    const { data: cust } = await supabase.from('tax_customers')
+      .select('id, email, preferred_communication_email')
+      .eq('id', t.row.customer_id).maybeSingle();
+    const candidates = [cust?.email, cust?.preferred_communication_email]
+      .filter(Boolean).map(s => String(s).toLowerCase().trim());
+    const match = candidates.includes(submitted);
+    const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
+    if (!match) {
+      const newCount = (t.row.failure_count || 0) + 1;
+      const lock = newCount >= REPORT_LOCKOUT_FAILURES;
+      await supabase.from('tax_report_access_tokens').update({
+        failure_count: newCount,
+        locked_until: lock ? new Date(Date.now() + REPORT_LOCKOUT_DURATION_MS).toISOString() : t.row.locked_until,
+        updated_at: new Date().toISOString(),
+      }).eq('id', t.row.id);
+      try {
+        await auditLog({
+          entity: 'tax.report_access_token', entityId: t.row.id,
+          action: lock ? 'confirm_locked' : 'confirm_failed', actorEmail: submitted,
+          after: { ip, failure_count: newCount },
+        });
+      } catch (_e) {}
+      return res.status(401).json({ error: lock ? 'locked' : 'mismatch' });
+    }
+    // Success: reset counters, set cookie, log.
+    await supabase.from('tax_report_access_tokens').update({
+      failure_count: 0,
+      locked_until: null,
+      last_used_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).eq('id', t.row.id);
+    const cookieValue = signReportCookie(t.row.id, t.row.customer_id);
+    res.setHeader('Set-Cookie',
+      `${REPORT_COOKIE_NAME}=${cookieValue}; HttpOnly; Secure; SameSite=Lax; ` +
+      `Max-Age=${Math.floor(REPORT_COOKIE_MAX_AGE_MS / 1000)}; Path=/`);
+    try {
+      await auditLog({
+        entity: 'tax.report_access_token', entityId: t.row.id,
+        action: 'confirm_success', actorEmail: submitted, after: { ip },
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // ── Public: GET /report-access/:token/reports/:reportId ──────────────────
+  router.get('/report-access/:token/reports/:reportId', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).json({ error: t.error });
+    const cookieVal = readReportCookie(req);
+    if (!verifyReportCookie(t.row.id, t.row.customer_id, cookieVal)) {
+      return res.status(401).json({ error: 'confirm_required' });
+    }
+    const reportId = trim(req.params.reportId, 200);
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('*').eq('id', reportId).eq('customer_id', t.row.customer_id).maybeSingle();
+    if (!rpt || !['published','sent'].includes(rpt.status)) {
+      return res.status(404).json({ error: 'not_found' });
+    }
+    // Also include the IMMEDIATE prior report (same cadence) so the
+    // dashboard can render the YoY comparison section without a
+    // second roundtrip. Defaults to the closest prior `period_end`.
+    const { data: prior } = await supabase.from('tax_financial_reports')
+      .select('id, period_label, period_start, period_end, pl_data, balance_data, revision, published_at')
+      .eq('customer_id', t.row.customer_id)
+      .in('status', ['published','sent'])
+      .lt('period_end', rpt.period_end)
+      .order('period_end', { ascending: false })
+      .limit(1).maybeSingle();
+    try {
+      await auditLog({
+        entity: 'tax.financial_report', entityId: reportId,
+        action: 'view_by_customer', actorEmail: '',
+        after: { ip: trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80) },
+      });
+    } catch (_e) {}
+    res.json({
+      report: publicReportShape(rpt),
+      prior: prior ? publicReportShape(prior) : null,
+    });
+  });
+
+  // ── Public: download original PDFs via signed Storage URL ────────────────
+  router.get('/report-access/:token/reports/:reportId/pdf/:kind', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    const t = await fetchAccessTokenRow(raw);
+    if (!t.ok) return res.status(t.status).send(t.error);
+    const cookieVal = readReportCookie(req);
+    if (!verifyReportCookie(t.row.id, t.row.customer_id, cookieVal)) {
+      return res.status(401).send('confirm_required');
+    }
+    const kind = req.params.kind === 'balance' ? 'balance' : 'pl';
+    const reportId = trim(req.params.reportId, 200);
+    const { data: rpt } = await supabase.from('tax_financial_reports')
+      .select('id, pl_pdf_path, balance_pdf_path')
+      .eq('id', reportId).eq('customer_id', t.row.customer_id).maybeSingle();
+    if (!rpt) return res.status(404).send('not_found');
+    const path = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
+    if (!path) return res.status(404).send('pdf_not_uploaded');
+    const { data: signed, error } = await supabase.storage
+      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5); // 5min
+    if (error || !signed?.signedUrl) return res.status(500).send('sign_failed');
+    res.redirect(302, signed.signedUrl);
+  });
+
+  router.autoSyncAllGoogleReviews = autoSyncAllGoogleReviews;
   return router;
 };

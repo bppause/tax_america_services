@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import VideoEmbed from './VideoEmbed';
 import { useLandingCopy } from '../lib/landingCopy';
+import LeadChatWidget from './LeadChatWidget';
 
 const ICON_LETTER = {
   receipt: 'IR', briefcase: 'BT', 'id-card': 'ID', book: 'BK', wallet: 'PR',
@@ -14,7 +15,7 @@ const ICON_LETTER = {
 // this service" CTA. Earlier inline-list variant was rolled back per
 // the owner request — full descriptions live behind a click again so
 // the landing page stays scannable.
-export default function ServicesGrid({ products, onRequestService }) {
+export default function ServicesGrid({ products, community, onRequestService }) {
   const { locale, t } = useT();
   const { pick } = useLandingCopy();
   const [openId, setOpenId] = useState(null);
@@ -25,11 +26,46 @@ export default function ServicesGrid({ products, onRequestService }) {
     if (typeof onRequestService === 'function') onRequestService(slug);
   };
 
+  // Auto-open service modal when URL hash matches #service-{slug}
+  // (e.g. links from WhatsApp messages or the PDF brochure).
+  useEffect(() => {
+    const hash = window.location.hash; // e.g. "#service-business-tax-prep"
+    if (!hash.startsWith('#service-')) return;
+    const slug = hash.slice('#service-'.length);
+    const match = products.find(p => p.slug === slug);
+    if (match) setOpenId(match.id);
+  }, [products]);
+
+  const aiLabel = locale === 'es'
+    ? 'Preguntas? Habla con nuestro asistente de IA'
+    : 'Questions? Chat with our AI assistant';
+
   return (
     <section className="tax-section" id="services">
       <div className="tax-container">
         <h2>{pick('services.heading')}</h2>
         <p className="tax-section__lede">{pick('services.subheading')}</p>
+
+        {/* AI agent availability banner */}
+        {community && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
+            border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)',
+            borderRadius: 10, padding: '10px 16px', marginBottom: 24,
+            fontSize: 14,
+          }}>
+            <span style={{ fontSize: 20 }}>🤖</span>
+            <span>
+              <strong>{locale === 'es' ? '¿Tienes preguntas sobre nuestros servicios?' : 'Have questions about our services?'}</strong>
+              {' '}
+              {locale === 'es'
+                ? 'Nuestro asistente de IA puede responderte al instante — solo haz clic en cualquier servicio y elige la pestaña "Preguntar al asistente".'
+                : 'Our AI assistant can answer them instantly — click any service card and open the "Ask AI assistant" tab, or use the chat button below.'}
+            </span>
+          </div>
+        )}
+
         <div className="tax-services-grid">
           {products.map(p => {
             const name = pickI18n(p.name_i18n, locale).value;
@@ -37,10 +73,23 @@ export default function ServicesGrid({ products, onRequestService }) {
             const categoryLabel = t(`services.category.${p.category}`);
             return (
               <button type="button" key={p.id}
+                      id={`service-${p.slug}`}
                       className="tax-service-card tax-service-card--button"
                       onClick={() => setOpenId(p.id)}
                       aria-label={t('services.card.openAria', { name })}>
-                <div className="tax-service-card__icon">{ICON_LETTER[p.icon] || '•'}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div className="tax-service-card__icon">{ICON_LETTER[p.icon] || '•'}</div>
+                  {community && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, letterSpacing: '.4px',
+                      background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+                      color: 'var(--tax-brand-primary)', borderRadius: 20,
+                      padding: '2px 8px', whiteSpace: 'nowrap',
+                    }}>
+                      🤖 {locale === 'es' ? 'IA disponible' : 'AI Q&A'}
+                    </span>
+                  )}
+                </div>
                 <span className="tax-service-card__category">{categoryLabel}</span>
                 <h3>{name}</h3>
                 <p>{desc}</p>
@@ -57,6 +106,8 @@ export default function ServicesGrid({ products, onRequestService }) {
           product={open}
           locale={locale}
           t={t}
+          community={community}
+          products={products}
           onClose={() => setOpenId(null)}
           onRequest={() => onRequest(open.slug)}
         />
@@ -65,8 +116,9 @@ export default function ServicesGrid({ products, onRequestService }) {
   );
 }
 
-function ServiceDetailModal({ product, locale, t, onClose, onRequest }) {
+function ServiceDetailModal({ product, locale, t, community, products, onClose, onRequest }) {
   const closeRef = useRef(null);
+  const [tab, setTab] = useState('info'); // 'info' | 'chat'
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -93,41 +145,86 @@ function ServiceDetailModal({ product, locale, t, onClose, onRequest }) {
     return '';
   }).filter(Boolean);
 
+  const tabLabel = {
+    info: locale === 'es' ? 'Información' : 'About',
+    chat: locale === 'es' ? 'Preguntar al asistente' : 'Ask AI assistant',
+  };
+
   return (
     <div className="tax-modal" role="dialog" aria-modal="true" aria-labelledby="svcmodal-title"
          onClick={onClose}>
       <div className="tax-modal__panel" onClick={e => e.stopPropagation()}>
         <button type="button" ref={closeRef} className="tax-modal__close"
                 onClick={onClose} aria-label={t('services.modal.close')}>×</button>
-        {videoUrl && <VideoEmbed url={videoUrl} title={name} />}
         <span className="tax-service-card__category">{categoryLabel}</span>
         <h3 id="svcmodal-title" className="tax-modal__title">{name}</h3>
-        <p className="tax-modal__desc">{desc}</p>
-        {longDesc && (
-          <div className="tax-modal__longdesc">
-            {longDesc.split(/\n{2,}/).map((para, i) => (
-              <p key={i}>{para}</p>
+
+        {/* Tab bar */}
+        {community && (
+          <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--tax-border)' }}>
+            {['info', 'chat'].map(tabKey => (
+              <button key={tabKey} type="button"
+                onClick={() => setTab(tabKey)}
+                style={{
+                  padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                  background: 'transparent', borderBottom: tab === tabKey ? '2px solid var(--tax-brand-primary, #1d3a6d)' : '2px solid transparent',
+                  color: tab === tabKey ? 'var(--tax-brand-primary, #1d3a6d)' : 'var(--tax-muted)',
+                  marginBottom: -1,
+                }}>
+                {tabLabel[tabKey]}
+              </button>
             ))}
           </div>
         )}
-        {requiresLabels.length > 0 && (
-          <div className="tax-modal__section">
-            <h4>{t('services.modal.requires')}</h4>
-            <ul>
-              {requiresLabels.map((r, i) => <li key={i}>{r}</li>)}
-            </ul>
+
+        {tab === 'info' && (
+          <>
+            {videoUrl && <VideoEmbed url={videoUrl} title={name} />}
+            <p className="tax-modal__desc">{desc}</p>
+            {longDesc && (
+              <div className="tax-modal__longdesc">
+                {longDesc.split(/\n{2,}/).map((para, i) => (
+                  <p key={i}>{para}</p>
+                ))}
+              </div>
+            )}
+            {requiresLabels.length > 0 && (
+              <div className="tax-modal__section">
+                <h4>{t('services.modal.requires')}</h4>
+                <ul>
+                  {requiresLabels.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              </div>
+            )}
+            <div className="tax-modal__actions">
+              {community && (
+                <button type="button" className="tax-btn tax-btn--ghost"
+                        onClick={() => setTab('chat')}
+                        style={{ color: 'var(--tax-brand-primary, #1d3a6d)' }}>
+                  {locale === 'es' ? '¿Tienes preguntas? Pregunta al asistente →' : 'Have questions? Ask AI →'}
+                </button>
+              )}
+              <button type="button" className="tax-btn tax-btn--primary"
+                      onClick={onRequest}>
+                {t('services.modal.requestCta')}
+              </button>
+              <button type="button" className="tax-btn tax-btn--ghost"
+                      onClick={onClose} style={{ color: 'var(--tax-text)' }}>
+                {t('services.modal.close')}
+              </button>
+            </div>
+          </>
+        )}
+
+        {tab === 'chat' && community && (
+          <div style={{ height: 440 }}>
+            <LeadChatWidget
+              community={community}
+              products={products}
+              preselectedProduct={product}
+            />
           </div>
         )}
-        <div className="tax-modal__actions">
-          <button type="button" className="tax-btn tax-btn--primary"
-                  onClick={onRequest}>
-            {t('services.modal.requestCta')}
-          </button>
-          <button type="button" className="tax-btn tax-btn--ghost"
-                  onClick={onClose} style={{ color: 'var(--tax-text)' }}>
-            {t('services.modal.close')}
-          </button>
-        </div>
       </div>
     </div>
   );

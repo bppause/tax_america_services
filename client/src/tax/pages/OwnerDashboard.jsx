@@ -74,6 +74,19 @@ export default function OwnerDashboard() {
              href={`${base}/progress`} />
       </div>
 
+      {/* Mobile quick-actions: one-tap list shown only on narrow screens.
+          On wider screens the full UrgentTasks + NewLeads grid is sufficient. */}
+      <MobileQuickActions
+        urgentTasks={data.urgentTasks || []}
+        newLeads={data.newLeads || []}
+        isAdmin={isAdmin}
+        base={base}
+        community={community}
+        auth={auth}
+        locale={locale}
+        t={t}
+      />
+
       <div style={{
         display: 'grid', gap: 16,
         gridTemplateColumns: isAdmin
@@ -93,6 +106,139 @@ export default function OwnerDashboard() {
         )}
       </div>
     </EmployeeShell>
+  );
+}
+
+// Visible only on narrow screens (≤640 px). Shows the most urgent tasks
+// and newest leads in a single tap-friendly list with one-tap status
+// updates so the owner can work their queue from a phone without
+// navigating into the full task or leads editor.
+function MobileQuickActions({ urgentTasks, newLeads, isAdmin, base, community, auth, locale, t }) {
+  const [taskStatuses, setTaskStatuses] = useState({});
+  const [busy, setBusy] = useState({});
+  const es = locale === 'es';
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const markTask = async (taskId, status) => {
+    if (busy[taskId]) return;
+    setBusy(b => ({ ...b, [taskId]: true }));
+    try {
+      await taxApi.adminUpdateTask(auth, taskId, { status });
+      setTaskStatuses(s => ({ ...s, [taskId]: status }));
+    } catch (_e) { /* fail silently — user can retry */ }
+    finally { setBusy(b => ({ ...b, [taskId]: false })); }
+  };
+
+  if (urgentTasks.length === 0 && (!isAdmin || newLeads.length === 0)) return null;
+
+  return (
+    <div className="tax-mobile-quick-actions" style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
+                    color: 'var(--tax-muted)', marginBottom: 8 }}>
+        {es ? "Acción rápida — hoy" : "Quick actions — today"}
+      </div>
+
+      {urgentTasks.map(task => {
+        const status = taskStatuses[task.id] || task.status;
+        const done = status === 'done' || status === 'complete';
+        const isOverdue = task.due_date && task.due_date < today;
+        const custName = task.customer?.business_name
+          || displayPersonName(task.customer)
+          || task.customer?.email || '';
+        return (
+          <div key={task.id} style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            padding: '10px 12px', background: '#fff',
+            border: `1px solid ${isOverdue && !done ? '#fca5a5' : 'var(--tax-border)'}`,
+            borderRadius: 8, marginBottom: 6,
+            opacity: done ? .5 : 1,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {task.title}
+              </div>
+              {custName && (
+                <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>{custName}</div>
+              )}
+              {isOverdue && !done && (
+                <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 600, marginTop: 2 }}>
+                  {es ? 'Vencido' : 'Overdue'}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              {!done && (
+                <button type="button" disabled={busy[task.id]}
+                  onClick={() => markTask(task.id, 'done')}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                    background: '#dcfce7', color: '#166534', border: '1px solid #bbf7d0', cursor: 'pointer',
+                  }}>
+                  {es ? '✓ Hecho' : '✓ Done'}
+                </button>
+              )}
+              <a href={`${base}/tasks?edit=${encodeURIComponent(task.id)}`}
+                 style={{
+                   padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                   background: 'var(--tax-bg-alt)', color: 'var(--tax-text)',
+                   border: '1px solid var(--tax-border)', textDecoration: 'none',
+                 }}>
+                {es ? 'Ver' : 'View'}
+              </a>
+            </div>
+          </div>
+        );
+      })}
+
+      {isAdmin && newLeads.slice(0, 3).map(lead => {
+        const waDigits = String(lead.whatsapp || lead.phone || '').replace(/^\+/, '').replace(/\D+/g, '');
+        const waHref = waDigits ? `https://wa.me/${waDigits}?text=${encodeURIComponent(
+          es
+            ? `Hola ${lead.first_name || lead.name}, soy de ${community?.name || ''}. Vi tu solicitud de información. ¿Tienes unos minutos para hablar?`
+            : `Hi ${lead.first_name || lead.name}, this is ${community?.name || ''}. I saw your inquiry. Do you have a few minutes to chat?`
+        )}` : null;
+        return (
+          <div key={lead.id} style={{
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+            padding: '10px 12px', background: '#fff',
+            border: '1px solid #bbf7d0',
+            borderRadius: 8, marginBottom: 6,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{lead.name}</div>
+              <div style={{ fontSize: 11, color: '#166534', fontWeight: 600, marginTop: 2 }}>
+                {es ? '🆕 Nuevo prospecto' : '🆕 New lead'}
+              </div>
+              {(lead.product_slugs || []).length > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
+                  {(lead.product_slugs || []).join(', ')}
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              {waHref && (
+                <a href={waHref} target="_blank" rel="noopener noreferrer"
+                   style={{
+                     padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                     background: '#25d366', color: '#fff', textDecoration: 'none',
+                   }}>
+                  💬
+                </a>
+              )}
+              <a href={`${base}/leads?lead=${encodeURIComponent(lead.id)}`}
+                 style={{
+                   padding: '5px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                   background: 'var(--tax-bg-alt)', color: 'var(--tax-text)',
+                   border: '1px solid var(--tax-border)', textDecoration: 'none',
+                 }}>
+                {es ? 'Ver' : 'View'}
+              </a>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

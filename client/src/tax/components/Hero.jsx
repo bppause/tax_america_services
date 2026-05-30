@@ -37,6 +37,11 @@ export default function Hero({ community }) {
           )}
           <a className="tax-btn tax-btn--ghost" href="#services">{pick('hero.cta_secondary')}</a>
         </div>
+        <p style={{ marginTop: 16, fontSize: 14, opacity: .8 }}>
+          {locale === 'es'
+            ? '🤖 ¿Tienes preguntas? Nuestro asistente de IA responde al instante — haz clic en cualquier servicio o usa el botón de chat.'
+            : '🤖 Have questions? Our AI assistant answers instantly — click any service or use the chat button.'}
+        </p>
       </div>
     </section>
   );

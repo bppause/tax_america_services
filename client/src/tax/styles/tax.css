@@ -506,3 +506,14 @@
     width: 100%;
   }
 }
+
+@keyframes tax-pulse-label {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .85; transform: scale(1.03); }
+}
+
+/* Mobile quick-actions panel: visible only on narrow screens */
+.tax-mobile-quick-actions { display: none; }
+@media (max-width: 640px) {
+  .tax-mobile-quick-actions { display: block; }
+}

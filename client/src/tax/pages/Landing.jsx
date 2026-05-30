@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { hasSavedLocale, useT } from '../i18n';
 import { taxApi } from '../api';
 import Header from '../components/Header';
+import LeadChatWidget from '../components/LeadChatWidget';
 import Hero from '../components/Hero';
 import ServicesGrid from '../components/ServicesGrid';
 import TeamSection from '../components/TeamSection';
+import TestimonialsSection from '../components/TestimonialsSection';
 import FaqsSection from '../components/FaqsSection';
-import ArticlesSection from '../components/ArticlesSection';
+import NewsSection from '../components/NewsSection';
 import About from '../components/About';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
@@ -33,6 +35,18 @@ export default function Landing({ communitySlug }) {
   // modal. Passed down to LeadForm so the chip is pre-checked when the
   // visitor lands at the contact form.
   const [pendingService, setPendingService] = useState(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  // Testimonials lifted to Landing so the Reviews nav link can hide
+  // itself when there are zero rows (instead of linking to a section
+  // that self-hides — a scroll-to-nothing surprise). Also captures
+  // the owner's configured display limit so the section knows how
+  // many cards to render without a second roundtrip.
+  const [testimonials, setTestimonials] = useState(null);
+  const [testimonialsLimit, setTestimonialsLimit] = useState(null);
+  // News articles: same lift-up pattern so the News nav link can hide
+  // itself when the feed is empty.
+  const [news, setNews] = useState(null);
+  const [newsLimit, setNewsLimit] = useState(null);
 
   const onRequestService = (slug) => {
     setPendingService(slug);
@@ -55,6 +69,30 @@ export default function Landing({ communitySlug }) {
         const notFound = err?.status === 404;
         setState({ kind: notFound ? 'not-found' : 'error', data: null, error: err?.message || '' });
       });
+    return () => { cancelled = true; };
+  }, [communitySlug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    taxApi.getCommunityTestimonials(communitySlug)
+      .then(d => {
+        if (cancelled) return;
+        setTestimonials(d.testimonials || []);
+        setTestimonialsLimit(d.displayLimit || null);
+      })
+      .catch(() => !cancelled && setTestimonials([]));
+    return () => { cancelled = true; };
+  }, [communitySlug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    taxApi.getCommunityNews(communitySlug)
+      .then(d => {
+        if (cancelled) return;
+        setNews(d.articles || []);
+        setNewsLimit(d.displayLimit || null);
+      })
+      .catch(() => !cancelled && setNews([]));
     return () => { cancelled = true; };
   }, [communitySlug]);
 
@@ -111,6 +149,8 @@ export default function Landing({ communitySlug }) {
   const sections = {
     services: (products || []).length > 0,
     team: true,
+    reviews: Array.isArray(testimonials) && testimonials.length > 0,
+    news: Array.isArray(news) && news.length > 0,
     faqs: true,
     about: true,
     contact: true,
@@ -121,14 +161,71 @@ export default function Landing({ communitySlug }) {
       <div className="tax-app" style={brandStyle}>
         <Header community={community} sections={sections} />
         <Hero community={community} />
-        <ServicesGrid products={products} onRequestService={onRequestService} />
+        <ServicesGrid products={products} community={community} onRequestService={onRequestService} />
         <TeamSection communitySlug={communitySlug} />
-        <ArticlesSection communitySlug={communitySlug} />
+        <TestimonialsSection communitySlug={communitySlug}
+                             rows={testimonials}
+                             displayLimit={testimonialsLimit} />
+        <NewsSection communitySlug={communitySlug}
+                     articles={news} displayLimit={newsLimit} />
         <FaqsSection communitySlug={communitySlug} />
         <About />
         <Contact community={community} products={products}
                  initialProductSlug={pendingService} />
         <Footer community={community} />
+
+        {/* Floating AI chat button */}
+        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1200, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+          {!chatOpen && (
+            <span style={{
+              background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
+              fontSize: 12, fontWeight: 700, padding: '5px 12px',
+              borderRadius: 20, whiteSpace: 'nowrap',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+              animation: 'tax-pulse-label 2s ease-in-out infinite',
+            }}>
+              {locale === 'es' ? '🤖 Pregunta al asistente de IA' : '🤖 Ask our AI assistant'}
+            </span>
+          )}
+          <button type="button"
+            onClick={() => setChatOpen(o => !o)}
+            aria-label={locale === 'es' ? 'Abrir asistente virtual' : 'Open AI assistant'}
+            style={{
+              width: 56, height: 56, borderRadius: '50%',
+              background: 'var(--tax-brand-primary, #1d3a6d)',
+              color: '#fff', border: 'none', cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+              fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+            {chatOpen ? '×' : '💬'}
+          </button>
+        </div>
+
+        {chatOpen && (
+          <div style={{
+            position: 'fixed', bottom: 90, right: 24, zIndex: 1200,
+            width: 360, maxWidth: 'calc(100vw - 32px)',
+            height: 520, maxHeight: 'calc(100vh - 110px)',
+            background: '#fff', border: '1px solid var(--tax-border)',
+            borderRadius: 14, boxShadow: '0 8px 32px rgba(0,0,0,0.16)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              padding: '12px 16px', background: 'var(--tax-brand-primary, #1d3a6d)',
+              color: '#fff', fontWeight: 600, fontSize: 14, display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <span>{locale === 'es' ? 'Asistente virtual' : 'AI Assistant'}</span>
+              <button type="button" onClick={() => setChatOpen(false)}
+                style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
+                ×
+              </button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', padding: 12 }}>
+              <LeadChatWidget community={community} products={products} />
+            </div>
+          </div>
+        )}
       </div>
     </LandingCopyProvider>
   );

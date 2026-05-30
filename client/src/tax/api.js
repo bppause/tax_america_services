@@ -57,13 +57,31 @@ function adminAuthHeaders(auth) {
   return hdrs;
 }
 
-async function request(method, path, body, auth, { admin } = {}) {
+async function request(method, path, body, auth, { admin, timeoutMs } = {}) {
   const headers = admin ? adminAuthHeaders(auth) : authHeaders(auth);
-  const res = await fetch(BASE + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...headers },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  // Optional timeout — most endpoints don't need one, but long-running
+  // server work (LLM calls) should fail fast on the client so the UI
+  // can show a useful error instead of leaving a button "Loading…".
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller ? controller.signal : undefined,
+    });
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    if (e?.name === 'AbortError') {
+      const err = new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+      err.timeout = true;
+      throw err;
+    }
+    throw e;
+  }
+  if (timer) clearTimeout(timer);
   const text = await res.text();
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch (_e) { parsed = { raw: text }; }
@@ -81,8 +99,12 @@ export const taxApi = {
   getCommunity(slug)              { return request('GET',  `/community/${encodeURIComponent(slug)}`); },
   getCommunityFaqs(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/faqs`); },
   getCommunityArticles(slug)      { return request('GET',  `/community/${encodeURIComponent(slug)}/articles`); },
+  getCommunityNews(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/news`); },
+  getCommunityDeadlines(slug)     { return request('GET',  `/community/${encodeURIComponent(slug)}/deadlines`); },
+  getCommunityTestimonials(slug)  { return request('GET',  `/community/${encodeURIComponent(slug)}/testimonials`); },
   getCommunityTeam(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/team`); },
   submitLead(payload)             { return request('POST', '/leads', payload); },
+  chatWithAi(payload)             { return request('POST', '/leads/chat', payload, null, { timeoutMs: 30000 }); },
   getResponse(token)              { return request('GET',  `/respond/${encodeURIComponent(token)}`); },
   submitResponse(token, payload)  { return request('POST', `/respond/${encodeURIComponent(token)}`, payload); },
 
@@ -212,6 +234,12 @@ export const taxApi = {
   adminEmployeePhotoUploadUrl(auth, id, payload) {
     return request('POST', `/admin/employees/${encodeURIComponent(id)}/photo/upload-url`, payload, auth, { admin: true });
   },
+  adminLogoUploadUrl(auth, payload) {
+    return request('POST', '/admin/community/logo/upload-url', payload, auth, { admin: true });
+  },
+  adminUpdateCommunityLogo(auth, payload) {
+    return request('PUT', '/admin/community/logo', payload, auth, { admin: true });
+  },
 
   adminListEmailTemplates(auth, communitySlug)  { return request('GET',  `/admin/email-templates?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
   adminUpdateEmailTemplate(auth, key, lang, payload) { return request('PUT', `/admin/email-templates/${encodeURIComponent(key)}/${encodeURIComponent(lang)}`, payload, auth, { admin: true }); },
@@ -234,6 +262,67 @@ export const taxApi = {
   adminGetCustomerActivity(auth, customerId, limit = 100) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/activity?limit=${limit}`, undefined, auth, { admin: true }); },
   adminUndoCustomerActivity(auth, customerId, auditId) { return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/activity/undo`, { auditId }, auth, { admin: true }); },
   getEmployeeTriage(auth, windowDays = 7) { return request('GET', `/employee/triage?windowDays=${windowDays}`, undefined, auth); },
+
+  // Phase 4n.55: time tracking on tasks. The list/start/stop/add/edit/delete
+  // endpoints below all sit under the standard employee-auth surface so the
+  // header timer pill and the task-editor section can share one wrapper.
+  adminListTaskTimeEntries(auth, taskId)             { return request('GET',    `/admin/tasks/${encodeURIComponent(taskId)}/time-entries`, undefined, auth); },
+  adminStartTaskTimer(auth, taskId, payload = {})    { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/time-entries/start`, payload, auth); },
+  adminStopTaskTimer(auth, taskId, payload = {})     { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/time-entries/stop`, payload, auth); },
+  adminAddTaskTimeEntry(auth, taskId, payload)       { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/time-entries`, payload, auth); },
+  adminUpdateTimeEntry(auth, entryId, payload)       { return request('PUT',    `/admin/time-entries/${encodeURIComponent(entryId)}`, payload, auth); },
+  adminDeleteTimeEntry(auth, entryId)                { return request('DELETE', `/admin/time-entries/${encodeURIComponent(entryId)}`, undefined, auth); },
+  getMyRunningTimer(auth)                            { return request('GET',    '/admin/employees/me/running-timer', undefined, auth); },
+
+  // Phase 4n.56: task review queue.
+  adminReviewTask(auth, taskId, payload)             { return request('POST', `/admin/tasks/${encodeURIComponent(taskId)}/review`, payload, auth); },
+  adminListAwaitingReview(auth)                      { return request('GET',  '/admin/tasks/awaiting-review', undefined, auth); },
+
+  // Phase 4n.57: saved searches / smart lists. Params is opaque
+  // client-defined JSON — each page (Tasks/Customers/Leads) decides
+  // what filter shape it persists.
+  adminListSavedSearches(auth, scope)                { return request('GET',    `/admin/saved-searches?scope=${encodeURIComponent(scope || '')}`, undefined, auth); },
+  adminCreateSavedSearch(auth, payload)              { return request('POST',   '/admin/saved-searches', payload, auth); },
+  adminUpdateSavedSearch(auth, id, payload)          { return request('PUT',    `/admin/saved-searches/${encodeURIComponent(id)}`, payload, auth); },
+  adminDeleteSavedSearch(auth, id)                   { return request('DELETE', `/admin/saved-searches/${encodeURIComponent(id)}`, undefined, auth); },
+
+  // Phase 4n.60: testimonials admin.
+  adminListTestimonials(auth, communitySlug)         { return request('GET',    `/admin/testimonials?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminCreateTestimonial(auth, payload)              { return request('POST',   '/admin/testimonials', payload, auth, { admin: true }); },
+  adminUpdateTestimonial(auth, id, payload)          { return request('PUT',    `/admin/testimonials/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
+  adminDeleteTestimonial(auth, id)                   { return request('DELETE', `/admin/testimonials/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminSetTestimonialsDisplayLimit(auth, payload)    { return request('PUT',    '/admin/community-settings/testimonials-display-limit', payload, auth, { admin: true }); },
+
+  // Phase 4n.66: news articles
+  adminListNews(auth, communitySlug)                 { return request('GET',    `/admin/news?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminCreateNews(auth, payload)                     { return request('POST',   '/admin/news', payload, auth, { admin: true }); },
+  adminUpdateNews(auth, id, payload)                 { return request('PUT',    `/admin/news/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
+  adminDeleteNews(auth, id)                          { return request('DELETE', `/admin/news/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  // Wraps an LLM round-trip server-side; cap the client wait to 120s
+  // so the button can recover and surface an error if Render's proxy
+  // drops the connection on a slow Anthropic call.
+  adminRefreshNews(auth, payload)                    { return request('POST',   '/admin/news/refresh', payload, auth, { admin: true, timeoutMs: 120_000 }); },
+  adminSetNewsTopics(auth, payload)                  { return request('PUT',    '/admin/community-settings/news-topics', payload, auth, { admin: true }); },
+  adminSetNewsDisplayLimit(auth, payload)            { return request('PUT',    '/admin/community-settings/news-display-limit', payload, auth, { admin: true }); },
+  adminSetNewsAutoRefresh(auth, payload)             { return request('PUT',    '/admin/community-settings/news-auto-refresh', payload, auth, { admin: true }); },
+  adminGetNewsVideoUploadUrl(auth, payload)          { return request('POST',   '/admin/news/video-upload-url', payload, auth, { admin: true }); },
+
+  // Phase 4n.67: auto-FAQ regenerate for an existing service.
+  adminRegenerateProductFaqs(auth, productId)        { return request('POST',   `/admin/products/${encodeURIComponent(productId)}/regenerate-faqs`, {}, auth, { admin: true }); },
+
+  // Phase 4n.63: Google Places reviews sync.
+  adminGetGoogleReviewsState(auth, communitySlug)    { return request('GET',  `/admin/testimonials/google?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminSetGooglePlaceId(auth, payload)               { return request('PUT',  '/admin/community-settings/google-place-id', payload, auth, { admin: true }); },
+  adminSyncGoogleReviews(auth, payload)              { return request('POST', '/admin/testimonials/sync-google', payload, auth, { admin: true }); },
+  adminSetGoogleAutoSync(auth, payload)              { return request('PUT',  '/admin/community-settings/google-reviews-auto-sync', payload, auth, { admin: true }); },
+
+  // Phase 4n.58: workload heatmap.
+  adminGetWorkload(auth, opts = {}) {
+    const qs = new URLSearchParams();
+    if (opts.start) qs.set('start', opts.start);
+    if (opts.days)  qs.set('days',  String(opts.days));
+    return request('GET', `/admin/workload?${qs.toString()}`, undefined, auth);
+  },
 
   // Phase 4n.24: signature requests
   adminListSignatureRequests(auth, customerId) { return request('GET', `/admin/customers/${encodeURIComponent(customerId)}/signature-requests`, undefined, auth, { admin: true }); },
@@ -272,6 +361,16 @@ export const taxApi = {
   },
   adminListAutoTasks(auth, productId) {
     return request('GET', `/admin/products/${encodeURIComponent(productId)}/auto-tasks`, undefined, auth, { admin: true });
+  },
+  // Phase 4n.62: auto-task suggestion catalog.
+  adminListAutoTaskTemplates(auth, productId) {
+    return request('GET', `/admin/products/${encodeURIComponent(productId)}/auto-task-templates`, undefined, auth, { admin: true });
+  },
+  adminEnableAutoTaskTemplate(auth, productId, key) {
+    return request('POST', `/admin/products/${encodeURIComponent(productId)}/auto-task-templates/${encodeURIComponent(key)}/enable`, {}, auth, { admin: true });
+  },
+  adminDisableAutoTaskTemplate(auth, productId, key) {
+    return request('POST', `/admin/products/${encodeURIComponent(productId)}/auto-task-templates/${encodeURIComponent(key)}/disable`, {}, auth, { admin: true });
   },
   adminReplaceAutoTasks(auth, productId, autoTasks) {
     return request('PUT', `/admin/products/${encodeURIComponent(productId)}/auto-tasks`, { autoTasks }, auth, { admin: true });
@@ -312,6 +411,9 @@ export const taxApi = {
   },
   adminSetTaskLookahead(auth, payload) {
     return request('PUT', '/admin/community-settings/task-lookahead-months', payload, auth, { admin: true });
+  },
+  adminSetCalendarHorizon(auth, payload) {
+    return request('PUT', '/admin/community-settings/calendar-horizon', payload, auth, { admin: true });
   },
   adminSetTaskThresholds(auth, payload) {
     return request('PUT', '/admin/community-settings/task-thresholds', payload, auth, { admin: true });
@@ -361,6 +463,10 @@ export const taxApi = {
   },
   adminCreateTask(auth, payload)              { return request('POST',   '/admin/tasks', payload, auth); },
   adminUpdateTask(auth, id, payload)          { return request('PATCH',  `/admin/tasks/${encodeURIComponent(id)}`, payload, auth); },
+  adminGetWhatsappTemplate(auth, communitySlug) { return request('GET', `/admin/whatsapp-template?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminSaveWhatsappTemplate(auth, payload)     { return request('PUT',  '/admin/whatsapp-template', payload, auth, { admin: true }); },
+  adminTranslateText(auth, payload)           { return request('POST',   '/admin/translate', payload, auth); },
+  adminFillMissingTranslations(auth)          { return request('POST',   '/admin/tasks/fill-missing-translations', {}, auth); },
   adminBulkUpdateTasks(auth, payload)         { return request('PATCH',  '/admin/tasks/bulk', payload, auth); },
   adminDeleteTask(auth, id)                   { return request('DELETE', `/admin/tasks/${encodeURIComponent(id)}`, undefined, auth); },
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
@@ -417,4 +523,26 @@ export const taxApi = {
   platformVerify(auth)                         { return request('POST', '/platform/auth/verify', {}, auth, { admin: true }); },
   platformListCommunities(auth)                { return request('GET',  '/platform/communities', undefined, auth, { admin: true }); },
   platformCreateCommunity(auth, payload)       { return request('POST', '/platform/communities', payload, auth, { admin: true }); },
+
+  // Phase 4n.70: bookkeeping financial reports (admin side).
+  adminListFinancialReports(auth, customerId)             { return request('GET',    `/admin/customers/${encodeURIComponent(customerId)}/financial-reports`, undefined, auth, { admin: true }); },
+  adminGetFinancialReport(auth, id)                       { return request('GET',    `/admin/financial-reports/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminCreateFinancialReport(auth, customerId, payload)   { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/financial-reports`, payload, auth, { admin: true }); },
+  adminUpdateFinancialReport(auth, id, payload)           { return request('PUT',    `/admin/financial-reports/${encodeURIComponent(id)}`, payload, auth, { admin: true }); },
+  adminDeleteFinancialReport(auth, id)                    { return request('DELETE', `/admin/financial-reports/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
+  adminPublishFinancialReport(auth, id)                   { return request('POST',   `/admin/financial-reports/${encodeURIComponent(id)}/publish`, {}, auth, { admin: true }); },
+  adminSendFinancialReport(auth, id, opts = {})           { return request('POST',   `/admin/financial-reports/${encodeURIComponent(id)}/send`, opts, auth, { admin: true }); },
+  adminRotateReportAccessToken(auth, customerId)          { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/report-access-token/rotate`, {}, auth, { admin: true }); },
+  adminPreviewReportAccess(auth, customerId)              { return request('POST',   `/admin/customers/${encodeURIComponent(customerId)}/report-access-preview`, {}, auth, { admin: true }); },
+  adminOpenReportForTask(auth, taskId)                    { return request('POST',   `/admin/tasks/${encodeURIComponent(taskId)}/financial-report/open`, {}, auth, { admin: true }); },
+  adminFinancialReportUploadUrl(auth, reportId, kind, fileType) { return request('POST', `/admin/financial-reports/${encodeURIComponent(reportId)}/pdf-upload-url`, { kind, fileType }, auth, { admin: true }); },
+  adminFinancialReportParse(auth, reportId, kind)         { return request('POST',   `/admin/financial-reports/${encodeURIComponent(reportId)}/pdf-parse`, { kind }, auth, { admin: true }); },
+
+  // Phase 4n.70: bookkeeping financial reports (public, token-gated).
+  // No auth headers — server gates via signed token in the URL + an
+  // httpOnly cookie set on confirm. Same-origin fetch sends cookies
+  // by default, so no extra options are needed.
+  getReportAccess(token)                                  { return request('GET',  `/report-access/${encodeURIComponent(token)}`); },
+  confirmReportAccess(token, email)                       { return request('POST', `/report-access/${encodeURIComponent(token)}/confirm`, { email }); },
+  getReportAccessReport(token, reportId)                  { return request('GET',  `/report-access/${encodeURIComponent(token)}/reports/${encodeURIComponent(reportId)}`); },
 };

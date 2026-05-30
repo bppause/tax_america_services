@@ -2694,6 +2694,9 @@ end $$;
 alter table public.communities
   add column if not exists calendly_url text not null default '';
 
+alter table public.communities
+  add column if not exists website_url text not null default '';
+
 -- Owner-customizable copy for the public landing page. JSONB shape:
 --   { "<i18n.key>": { "en": "...", "es": "..." }, ... }
 -- Empty / missing values fall back to the platform i18n defaults so the
@@ -2827,3 +2830,484 @@ alter table public.communities
   add column if not exists tax_email_from_name_en     text not null default '',
   add column if not exists tax_email_from_address     text not null default '',
   add column if not exists tax_email_from_address_en  text not null default '';
+
+-- Per-task time tracking (Phase 4n.55). Each row is one start/stop
+-- interval an employee logged against a task — running timers leave
+-- ended_at null, completed timers carry the elapsed seconds. The
+-- partial index on (employee_id) where ended_at is null lets the
+-- start endpoint look up "is this employee currently tracking time?"
+-- cheaply without a sequential scan, and enforces the
+-- one-running-timer-per-employee invariant at the app layer.
+create table if not exists public.tax_task_time_entries (
+  id               text primary key,
+  community_id     text not null references public.communities(id) on delete cascade,
+  task_id          text not null references public.tax_tasks(id)   on delete cascade,
+  employee_id      text not null references public.tax_employees(id) on delete restrict,
+  started_at       timestamptz not null,
+  ended_at         timestamptz,
+  duration_seconds int,
+  note             text not null default '',
+  billable         boolean not null default true,
+  created_at       timestamptz not null default now(),
+  updated_at       timestamptz not null default now()
+);
+create index if not exists idx_tax_time_task     on public.tax_task_time_entries(task_id);
+create index if not exists idx_tax_time_employee on public.tax_task_time_entries(employee_id, started_at desc);
+create unique index if not exists idx_tax_time_running_one_per_employee
+  on public.tax_task_time_entries(employee_id) where ended_at is null;
+alter table public.tax_task_time_entries disable row level security;
+
+-- Task dependencies + review queue (Phase 4n.56).
+--
+-- blocked_by_task_id: when set, the PATCH endpoint refuses to flip
+-- this task into a terminal status until the blocker is completed.
+-- Self-FK with on-delete-set-null so deleting the blocker doesn't
+-- cascade-delete the dependent.
+--
+-- requires_review + reviewer_employee_id: when true, completing the
+-- task lands it in pending-review state instead of done. The
+-- designated reviewer (or any admin) calls POST /admin/tasks/:id/review
+-- with approve/reject to either complete the task or kick it back to
+-- the preparer with a note. Partial index makes the "what's waiting
+-- on my review" query cheap.
+alter table public.tax_tasks
+  add column if not exists blocked_by_task_id       text references public.tax_tasks(id)     on delete set null,
+  add column if not exists requires_review          boolean not null default false,
+  add column if not exists reviewer_employee_id     text references public.tax_employees(id) on delete set null,
+  add column if not exists pending_review_at        timestamptz,
+  add column if not exists reviewed_at              timestamptz,
+  add column if not exists reviewed_by_employee_id  text references public.tax_employees(id) on delete set null,
+  add column if not exists review_note              text not null default '';
+
+-- Bilingual task titles. Stores { "en": "...", "es": "..." } so
+-- employee-facing UI can show the title in the viewing employee's
+-- preferred language. `title` is kept as the canonical fallback.
+alter table public.tax_tasks
+  add column if not exists title_i18n jsonb not null default '{}'::jsonb;
+create index if not exists idx_tax_tasks_blocked_by
+  on public.tax_tasks(blocked_by_task_id);
+create index if not exists idx_tax_tasks_pending_review
+  on public.tax_tasks(community_id, reviewer_employee_id)
+  where pending_review_at is not null and reviewed_at is null;
+
+-- Smart lists / saved searches (Phase 4n.57).
+--
+-- Each row is one employee's named filter preset on a scope
+-- (tasks / customers / leads). Params is opaque JSON owned by the
+-- client — it captures whatever the relevant page understands
+-- (status chips, due window, customer-type chip, assigned-to, free-
+-- text query). Server doesn't introspect the shape; it just stores
+-- + returns. is_pinned surfaces the view in a compact top bar
+-- and on the Today dashboard.
+create table if not exists public.tax_saved_searches (
+  id            text primary key,
+  community_id  text not null references public.communities(id)  on delete cascade,
+  employee_id   text not null references public.tax_employees(id) on delete cascade,
+  scope         text not null check (scope in ('tasks','customers','leads')),
+  name          text not null,
+  params        jsonb not null default '{}'::jsonb,
+  is_pinned     boolean not null default false,
+  display_order int not null default 0,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create index if not exists idx_tax_saved_searches_owner
+  on public.tax_saved_searches(employee_id, scope, display_order);
+alter table public.tax_saved_searches disable row level security;
+
+-- Tax calendar deadlines (Phase 4n.59).
+--
+-- Powers the public /tax/<slug>/calendar page. Each row is one
+-- recurring or one-time deadline ('annual' with month+day, or
+-- 'one_time' with a fixed date). entity_types narrows the audience
+-- (individual / business / both), jurisdiction labels the source
+-- (federal / state name / custom). The owner can edit/extend the list
+-- per community; the seed below carries the common federal calendar
+-- so a fresh practice has something live from day one.
+create table if not exists public.tax_calendar_deadlines (
+  id            text primary key,
+  community_id  text not null references public.communities(id) on delete cascade,
+  slug          text not null,
+  title_i18n    jsonb not null default '{}'::jsonb,
+  description_i18n jsonb not null default '{}'::jsonb,
+  recurrence    text not null check (recurrence in ('annual','one_time')),
+  month         smallint,
+  day           smallint,
+  date          date,
+  entity_types  text[] not null default '{}',
+  jurisdiction  text not null default 'federal',
+  product_slug  text,
+  display_order int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now(),
+  unique (community_id, slug)
+);
+create index if not exists idx_tax_deadlines_community
+  on public.tax_calendar_deadlines(community_id, active, display_order);
+alter table public.tax_calendar_deadlines disable row level security;
+
+insert into public.tax_calendar_deadlines
+  (id, community_id, slug, title_i18n, description_i18n, recurrence, month, day, entity_types, jurisdiction, product_slug, display_order)
+values
+  ('tax-america-services:q4-estimated-tax', 'tax-america-services', 'q4-estimated-tax',
+    '{"en":"Q4 estimated tax payment","es":"Pago de impuesto estimado del 4T"}'::jsonb,
+    '{"en":"Final quarterly estimated tax payment for the prior tax year.","es":"Pago final del impuesto estimado trimestral del año fiscal anterior."}'::jsonb,
+    'annual', 1, 15, '{"individual","business"}', 'federal', null, 10),
+  ('tax-america-services:w2-1099-recipient', 'tax-america-services', 'w2-1099-recipient',
+    '{"en":"W-2 and 1099-NEC to recipients","es":"W-2 y 1099-NEC a los destinatarios"}'::jsonb,
+    '{"en":"Employers and payers must furnish W-2s to employees and 1099-NECs to non-employee contractors.","es":"Los empleadores y pagadores deben entregar los W-2 a empleados y los 1099-NEC a contratistas."}'::jsonb,
+    'annual', 1, 31, '{"business"}', 'federal', 'payroll', 20),
+  ('tax-america-services:1099-irs-paper', 'tax-america-services', '1099-irs-paper',
+    '{"en":"Paper-filed 1099s to the IRS","es":"1099 en papel ante el IRS"}'::jsonb,
+    '{"en":"Information returns (1099-MISC, etc.) filed on paper.","es":"Declaraciones informativas (1099-MISC, etc.) presentadas en papel."}'::jsonb,
+    'annual', 2, 28, '{"business"}', 'federal', null, 30),
+  ('tax-america-services:s-corp-partnership', 'tax-america-services', 's-corp-partnership',
+    '{"en":"S-Corp (1120-S) and Partnership (1065) returns","es":"Declaraciones S-Corp (1120-S) y de Sociedades (1065)"}'::jsonb,
+    '{"en":"File the return or request a six-month extension on Form 7004.","es":"Presentar la declaración o solicitar una extensión de seis meses con el Formulario 7004."}'::jsonb,
+    'annual', 3, 15, '{"business"}', 'federal', 'business-tax', 40),
+  ('tax-america-services:1099-irs-efile', 'tax-america-services', '1099-irs-efile',
+    '{"en":"E-filed 1099s to the IRS","es":"1099 electrónicos ante el IRS"}'::jsonb,
+    '{"en":"Information returns (1099-MISC, etc.) filed electronically.","es":"Declaraciones informativas (1099-MISC, etc.) presentadas electrónicamente."}'::jsonb,
+    'annual', 3, 31, '{"business"}', 'federal', null, 50),
+  ('tax-america-services:individual-1040', 'tax-america-services', 'individual-1040',
+    '{"en":"Individual income tax (1040)","es":"Impuesto sobre la renta personal (1040)"}'::jsonb,
+    '{"en":"File the return or request a six-month extension on Form 4868.","es":"Presentar la declaración o solicitar una extensión de seis meses con el Formulario 4868."}'::jsonb,
+    'annual', 4, 15, '{"individual"}', 'federal', 'individual-tax', 60),
+  ('tax-america-services:c-corp-1120', 'tax-america-services', 'c-corp-1120',
+    '{"en":"C-Corp (1120) return","es":"Declaración C-Corp (1120)"}'::jsonb,
+    '{"en":"File the return or request a six-month extension on Form 7004.","es":"Presentar la declaración o solicitar una extensión de seis meses con el Formulario 7004."}'::jsonb,
+    'annual', 4, 15, '{"business"}', 'federal', 'business-tax', 70),
+  ('tax-america-services:q1-estimated-tax', 'tax-america-services', 'q1-estimated-tax',
+    '{"en":"Q1 estimated tax payment","es":"Pago de impuesto estimado del 1T"}'::jsonb,
+    '{"en":"First quarterly estimated tax payment for the current year.","es":"Primer pago trimestral de impuesto estimado del año en curso."}'::jsonb,
+    'annual', 4, 15, '{"individual","business"}', 'federal', null, 80),
+  ('tax-america-services:nonprofit-990', 'tax-america-services', 'nonprofit-990',
+    '{"en":"Nonprofit (990 series)","es":"Sin fines de lucro (serie 990)"}'::jsonb,
+    '{"en":"Annual information return for tax-exempt organizations.","es":"Declaración informativa anual para organizaciones exentas de impuestos."}'::jsonb,
+    'annual', 5, 15, '{"business"}', 'federal', null, 90),
+  ('tax-america-services:q2-estimated-tax', 'tax-america-services', 'q2-estimated-tax',
+    '{"en":"Q2 estimated tax payment","es":"Pago de impuesto estimado del 2T"}'::jsonb,
+    '{"en":"Second quarterly estimated tax payment.","es":"Segundo pago trimestral de impuesto estimado."}'::jsonb,
+    'annual', 6, 15, '{"individual","business"}', 'federal', null, 100),
+  ('tax-america-services:q3-estimated-tax', 'tax-america-services', 'q3-estimated-tax',
+    '{"en":"Q3 estimated tax payment","es":"Pago de impuesto estimado del 3T"}'::jsonb,
+    '{"en":"Third quarterly estimated tax payment.","es":"Tercer pago trimestral de impuesto estimado."}'::jsonb,
+    'annual', 9, 15, '{"individual","business"}', 'federal', null, 110),
+  ('tax-america-services:s-corp-partnership-extended', 'tax-america-services', 's-corp-partnership-extended',
+    '{"en":"Extended S-Corp and Partnership returns","es":"Declaraciones extendidas S-Corp y de Sociedades"}'::jsonb,
+    '{"en":"Final deadline for entities that filed Form 7004 in March.","es":"Plazo final para entidades que presentaron Formulario 7004 en marzo."}'::jsonb,
+    'annual', 9, 15, '{"business"}', 'federal', 'business-tax', 120),
+  ('tax-america-services:individual-1040-extended', 'tax-america-services', 'individual-1040-extended',
+    '{"en":"Extended individual return (1040)","es":"Declaración individual extendida (1040)"}'::jsonb,
+    '{"en":"Final deadline for individuals who filed Form 4868 in April.","es":"Plazo final para personas que presentaron Formulario 4868 en abril."}'::jsonb,
+    'annual', 10, 15, '{"individual"}', 'federal', 'individual-tax', 130),
+  ('tax-america-services:c-corp-1120-extended', 'tax-america-services', 'c-corp-1120-extended',
+    '{"en":"Extended C-Corp return (1120)","es":"Declaración C-Corp extendida (1120)"}'::jsonb,
+    '{"en":"Final deadline for C-Corps that filed Form 7004 in April.","es":"Plazo final para C-Corps que presentaron Formulario 7004 en abril."}'::jsonb,
+    'annual', 10, 15, '{"business"}', 'federal', 'business-tax', 140),
+  ('tax-america-services:fbar-fincen', 'tax-america-services', 'fbar-fincen',
+    '{"en":"FBAR / FinCEN 114","es":"FBAR / FinCEN 114"}'::jsonb,
+    '{"en":"Foreign Bank Account Report due (automatic extension to October 15).","es":"Reporte de cuentas bancarias en el extranjero (extensión automática al 15 de octubre)."}'::jsonb,
+    'annual', 4, 15, '{"individual","business"}', 'federal', null, 65)
+on conflict (id) do nothing;
+
+-- Testimonials / customer reviews (Phase 4n.60).
+--
+-- Each row is one testimonial shown in the public Reviews section.
+-- Source = 'local' for owner-authored entries; 'google' is reserved
+-- for the future Google Places API sync, which will upsert by
+-- (source, source_id) so a re-sync doesn't duplicate. Locale lets
+-- the public page filter to the visitor's language (with a fallback
+-- when the count is too low).
+create table if not exists public.tax_testimonials (
+  id            text primary key,
+  community_id  text not null references public.communities(id) on delete cascade,
+  source        text not null default 'local' check (source in ('local','google')),
+  source_id     text,
+  author_name   text not null,
+  author_role   text not null default '',
+  rating        smallint not null default 5 check (rating between 1 and 5),
+  body          text not null,
+  locale        text not null default 'en' check (locale in ('en','es')),
+  display_order int not null default 0,
+  active        boolean not null default true,
+  created_at    timestamptz not null default now(),
+  updated_at    timestamptz not null default now()
+);
+create unique index if not exists idx_tax_testimonials_source
+  on public.tax_testimonials(community_id, source, source_id)
+  where source_id is not null;
+create index if not exists idx_tax_testimonials_community
+  on public.tax_testimonials(community_id, active, display_order);
+alter table public.tax_testimonials disable row level security;
+
+-- Google Place ID for the future reviews-sync job. Owners paste their
+-- Place ID in Owner Settings; the cron-ish syncer hits the Places
+-- Details endpoint, transforms each review into a tax_testimonials
+-- row with source='google', and upserts on (community_id, source,
+-- source_id). Empty = no sync configured.
+alter table public.communities
+  add column if not exists tax_google_place_id text not null default '';
+
+-- Auto-task templates marker (Phase 4n.62).
+--
+-- template_key links a tax_service_auto_tasks row back to the
+-- hardcoded suggestion that spawned it. The owner can still edit
+-- any field freely after enabling — template_key is only used to
+-- mark the suggestion as "enabled" in the picker and to support
+-- one-click disable (server deletes rows by template_key, not by
+-- a fuzzy title match).
+alter table public.tax_service_auto_tasks
+  add column if not exists template_key text;
+create index if not exists idx_tax_service_auto_tasks_template
+  on public.tax_service_auto_tasks(product_id, template_key) where template_key is not null;
+
+-- Connecticut state deadlines for the public tax calendar.
+-- Idempotent: on conflict (id) do nothing keeps re-runs safe.
+--
+-- Sales tax: quarterly filers are due the last day of the month
+-- following the quarter end (Apr 30 / Jul 31 / Oct 31 / Jan 31).
+-- Each quarter ships as its own annual row so the calendar's
+-- "next occurrence" computation handles year rollover cleanly.
+--
+-- Property tax: the Personal Property Declaration is due Nov 1
+-- each year (most CT towns; check the local Assessor for a 30-day
+-- extension). The actual property tax bills land in July and
+-- January (most towns; some use Aug/Feb instead).
+insert into public.tax_calendar_deadlines
+  (id, community_id, slug, title_i18n, description_i18n, recurrence, month, day, entity_types, jurisdiction, product_slug, display_order)
+values
+  ('tax-america-services:ct-sales-tax-q1', 'tax-america-services', 'ct-sales-tax-q1',
+    '{"en":"CT sales tax — Q1 (Jan–Mar)","es":"Impuesto sobre ventas de CT — 1T (ene–mar)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the January–March quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre enero–marzo, presentada ante el DRS."}'::jsonb,
+    'annual', 4, 30, '{"business"}', 'Connecticut', 'sales-tax', 200),
+  ('tax-america-services:ct-sales-tax-q2', 'tax-america-services', 'ct-sales-tax-q2',
+    '{"en":"CT sales tax — Q2 (Apr–Jun)","es":"Impuesto sobre ventas de CT — 2T (abr–jun)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the April–June quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre abril–junio, presentada ante el DRS."}'::jsonb,
+    'annual', 7, 31, '{"business"}', 'Connecticut', 'sales-tax', 210),
+  ('tax-america-services:ct-sales-tax-q3', 'tax-america-services', 'ct-sales-tax-q3',
+    '{"en":"CT sales tax — Q3 (Jul–Sep)","es":"Impuesto sobre ventas de CT — 3T (jul–sep)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the July–September quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre julio–septiembre, presentada ante el DRS."}'::jsonb,
+    'annual', 10, 31, '{"business"}', 'Connecticut', 'sales-tax', 220),
+  ('tax-america-services:ct-sales-tax-q4', 'tax-america-services', 'ct-sales-tax-q4',
+    '{"en":"CT sales tax — Q4 (Oct–Dec)","es":"Impuesto sobre ventas de CT — 4T (oct–dic)"}'::jsonb,
+    '{"en":"Quarterly Connecticut sales and use tax return for the October–December quarter, filed with the Department of Revenue Services.","es":"Declaración trimestral de impuesto sobre ventas y uso de Connecticut por el trimestre octubre–diciembre, presentada ante el DRS."}'::jsonb,
+    'annual', 1, 31, '{"business"}', 'Connecticut', 'sales-tax', 230),
+  ('tax-america-services:ct-personal-property-declaration', 'tax-america-services', 'ct-personal-property-declaration',
+    '{"en":"CT business personal property declaration","es":"Declaración de propiedad personal del negocio (CT)"}'::jsonb,
+    '{"en":"Annual personal property declaration filed with your local Connecticut municipality assessor. Most towns allow a written 30-day extension to December 1 on request.","es":"Declaración anual de propiedad personal presentada ante el asesor del municipio de Connecticut. La mayoría permite una extensión escrita de 30 días hasta el 1 de diciembre."}'::jsonb,
+    'annual', 11, 1, '{"business"}', 'Connecticut', 'property-tax', 240),
+  ('tax-america-services:ct-property-tax-jul', 'tax-america-services', 'ct-property-tax-jul',
+    '{"en":"CT property tax — first installment","es":"Impuesto predial de CT — primera cuota"}'::jsonb,
+    '{"en":"First installment of Connecticut real and personal property tax (most municipalities — confirm with your local town tax collector).","es":"Primera cuota del impuesto predial e impuesto sobre propiedad personal de Connecticut (la mayoría de los municipios — confirma con el cobrador local)."}'::jsonb,
+    'annual', 7, 1, '{"business"}', 'Connecticut', 'property-tax', 250),
+  ('tax-america-services:ct-property-tax-jan', 'tax-america-services', 'ct-property-tax-jan',
+    '{"en":"CT property tax — second installment","es":"Impuesto predial de CT — segunda cuota"}'::jsonb,
+    '{"en":"Second installment of Connecticut real and personal property tax (most municipalities — confirm with your local town tax collector).","es":"Segunda cuota del impuesto predial e impuesto sobre propiedad personal de Connecticut (la mayoría de los municipios — confirma con el cobrador local)."}'::jsonb,
+    'annual', 1, 1, '{"business"}', 'Connecticut', 'property-tax', 260)
+on conflict (id) do nothing;
+
+-- Tax calendar lookahead horizon (Phase 4n.64).
+--
+-- Controls how far into the future the public /tax/<slug>/calendar
+-- page expands recurring deadlines. Owner-configurable from Owner
+-- Settings → Tax calendar. Default 18 months covers the full filing
+-- cycle (current year + the following one) so visitors landing in
+-- the December gap still see January, March, and April obligations.
+alter table public.communities
+  add column if not exists tax_calendar_horizon_months smallint not null default 18;
+do $$ begin
+  alter table public.communities add constraint tax_calendar_horizon_months_chk
+    check (tax_calendar_horizon_months between 1 and 36);
+exception when duplicate_object then null; end $$;
+
+-- Per-community auto-sync toggle for Google reviews (Phase 4n.65).
+-- ON by default once the platform key + community place_id are both
+-- configured. The daily cron silently no-ops on communities where
+-- this is false, the place_id is unset, or the env key is missing.
+alter table public.communities
+  add column if not exists tax_google_reviews_auto_sync boolean not null default true;
+
+-- How many reviews the public landing TestimonialsSection shows.
+-- Owner-tunable from the Testimonials admin card. Default 9 (3x3 grid).
+-- Ordering is display_order asc, created_at desc — so a manually
+-- pinned order still wins, but the default (all rows at display_order=0)
+-- falls through to most-recent-first.
+alter table public.communities
+  add column if not exists tax_testimonials_display_limit smallint not null default 9;
+do $$ begin
+  alter table public.communities add constraint tax_testimonials_display_limit_chk
+    check (tax_testimonials_display_limit between 1 and 30);
+exception when duplicate_object then null; end $$;
+
+-- ── Phase 4n.66: news articles ──────────────────────────────────────────────
+--
+-- Replaces the legacy "help articles surfacing on the landing page" model
+-- with a dedicated news/articles table. Owners configure topics
+-- (defaults: IRS news / Federal tax / Connecticut tax) and either:
+--   a) hit "Refresh now" / let the daily cron call Claude (with web_search)
+--      to produce up-to-date bilingual summaries grounded in real sources.
+--   b) manually add their own articles with a video URL or an uploaded video.
+--
+-- Display limit defaults to 5 (a tight, scannable news strip) and is
+-- owner-configurable 1-20.
+create table if not exists public.tax_news_articles (
+  id                  text primary key,
+  community_id        text not null references public.communities(id) on delete cascade,
+  source              text not null default 'manual'
+                       check (source in ('manual','ai')),
+  topic               text not null default '',
+  topics              jsonb not null default '[]'::jsonb,
+  title_i18n          jsonb not null default '{}'::jsonb,
+  summary_i18n        jsonb not null default '{}'::jsonb,
+  body_i18n           jsonb not null default '{}'::jsonb,
+  source_url          text not null default '',
+  source_name         text not null default '',
+  published_at        timestamptz,
+  video_url           text not null default '',
+  video_storage_path  text not null default '',
+  active              boolean not null default true,
+  display_order       int not null default 0,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now()
+);
+create index if not exists tax_news_articles_community_idx
+  on public.tax_news_articles(community_id, active, display_order, published_at desc);
+
+-- Per-community news settings.
+--   tax_news_topics: jsonb array of strings the LLM refresh uses as the
+--     topic filter. Default seeds three: IRS news, federal updates, CT updates.
+--   tax_news_display_limit: how many cards the public News section shows.
+--   tax_news_auto_refresh: when true the daily cron asks Claude for fresh
+--     items; when false only manual edits update the table.
+alter table public.communities
+  add column if not exists tax_news_topics jsonb not null default
+    '["IRS news","Federal tax updates","Connecticut tax updates"]'::jsonb;
+alter table public.communities
+  add column if not exists tax_news_display_limit smallint not null default 5;
+do $$ begin
+  alter table public.communities add constraint tax_news_display_limit_chk
+    check (tax_news_display_limit between 1 and 20);
+exception when duplicate_object then null; end $$;
+alter table public.communities
+  add column if not exists tax_news_auto_refresh boolean not null default true;
+alter table public.communities
+  add column if not exists tax_news_last_refreshed_at timestamptz;
+
+-- New relationship types covering services that lacked one (Phase 4n.66).
+-- Existing ones (LLC, S-Corp, payroll, etc.) already have FAQs; these
+-- three close the coverage gap for the public site's service grid.
+insert into public.tax_relationship_types (id, category, slug, name_i18n, description_i18n, display_order) values
+  ('business.property_tax',  'business', 'property_tax',  '{"en":"Property Tax","es":"Impuesto Predial"}'::jsonb,
+    '{"en":"Real-estate property tax assessment review, appeals, and annual filings.","es":"Revisión de avalúos, apelaciones y declaraciones anuales del impuesto predial."}'::jsonb, 80),
+  ('business.annual_report', 'business', 'annual_report', '{"en":"Annual Report","es":"Reporte Anual"}'::jsonb,
+    '{"en":"Annual report filings with the Secretary of State to keep your entity in good standing.","es":"Presentación del reporte anual ante la Secretaría de Estado para mantener su entidad en regla."}'::jsonb, 90),
+  ('business.workers_comp',  'business', 'workers_comp',  '{"en":"Workers'' Compensation Audit","es":"Auditoría de Compensación Laboral"}'::jsonb,
+    '{"en":"Annual workers'' compensation premium audit support — payroll classification, audit packet preparation, and dispute response.","es":"Apoyo en la auditoría anual de compensación laboral — clasificación de nómina, preparación del paquete de auditoría y respuesta a disputas."}'::jsonb, 95)
+on conflict (id) do nothing;
+
+-- ── SEED: default FAQs for services missing coverage (Phase 4n.66) ──────────
+insert into public.tax_relationship_default_faqs (id, relationship_type_id, display_order, question_i18n, answer_i18n, source_note) values
+  -- Partnership 1065
+  ('business.partnership_1065.q1', 'business.partnership_1065', 10,
+    '{"en":"What is a partnership tax return (Form 1065)?","es":"¿Qué es una declaración de sociedad (Formulario 1065)?"}'::jsonb,
+    '{"en":"Form 1065 is the U.S. Return of Partnership Income. It is an informational return — the partnership itself does not pay federal income tax. Instead, each partner receives a Schedule K-1 showing their share of income, deductions, and credits, which flows through to their personal return.","es":"El Formulario 1065 es la Declaración del Ingreso de Sociedades de EE. UU. Es una declaración informativa — la sociedad en sí no paga impuesto federal sobre la renta. Cada socio recibe un Anexo K-1 con su parte de los ingresos, deducciones y créditos, que se reporta en su declaración personal."}'::jsonb,
+    'IRS.gov — About Form 1065'),
+  ('business.partnership_1065.q2', 'business.partnership_1065', 20,
+    '{"en":"When is Form 1065 due?","es":"¿Cuándo vence el Formulario 1065?"}'::jsonb,
+    '{"en":"Form 1065 is due on the 15th day of the 3rd month after the partnership''s tax year ends — March 15 for calendar-year partnerships. A six-month extension to September 15 is available with Form 7004.","es":"El Formulario 1065 vence el día 15 del tercer mes después del cierre del año fiscal de la sociedad — el 15 de marzo para sociedades con año calendario. Una prórroga de seis meses hasta el 15 de septiembre se solicita con el Formulario 7004."}'::jsonb,
+    'IRS.gov — Form 1065 instructions'),
+  ('business.partnership_1065.q3', 'business.partnership_1065', 30,
+    '{"en":"What is a Schedule K-1?","es":"¿Qué es el Anexo K-1?"}'::jsonb,
+    '{"en":"Schedule K-1 (Form 1065) reports each partner''s share of the partnership''s income, deductions, credits, and other items. Partners use it to prepare their personal returns and must receive their K-1 by the partnership''s filing deadline.","es":"El Anexo K-1 (Formulario 1065) reporta la parte de cada socio en los ingresos, deducciones, créditos y otros conceptos de la sociedad. Los socios lo usan para preparar su declaración personal y deben recibirlo antes de la fecha límite de presentación de la sociedad."}'::jsonb,
+    'IRS.gov — Schedule K-1 (Form 1065)'),
+
+  -- Property tax
+  ('business.property_tax.q1', 'business.property_tax', 10,
+    '{"en":"What is property tax and who has to pay it?","es":"¿Qué es el impuesto predial y quién debe pagarlo?"}'::jsonb,
+    '{"en":"Property tax is a recurring tax levied by local governments (city, town, or county) on the assessed value of real estate you own — residential, commercial, or vacant land. In Connecticut, municipalities set their own mill rate, and bills are issued annually or in two installments.","es":"El impuesto predial es un impuesto recurrente que cobran los gobiernos locales (ciudad, pueblo o condado) sobre el valor tasado de los bienes raíces que usted posee — residenciales, comerciales o terrenos sin construir. En Connecticut, cada municipio fija su propia tasa (mill rate) y las facturas se emiten anualmente o en dos cuotas."}'::jsonb,
+    'CT.gov — Office of Policy and Management: Property Tax'),
+  ('business.property_tax.q2', 'business.property_tax', 20,
+    '{"en":"How do I appeal my property tax assessment?","es":"¿Cómo puedo apelar la valoración de mi propiedad?"}'::jsonb,
+    '{"en":"After receiving your assessment notice you have a limited window — typically until February 20 in Connecticut — to file a written appeal with the local Board of Assessment Appeals. We help prepare comparable-sales evidence, attend the hearing, and pursue Superior Court appeal if the BAA result is unfavorable.","es":"Tras recibir el aviso de valoración tiene un plazo limitado — generalmente hasta el 20 de febrero en Connecticut — para presentar una apelación por escrito ante la Junta Local de Apelaciones de Valoración. Le ayudamos a preparar evidencia de ventas comparables, asistir a la audiencia y continuar con una apelación ante el Tribunal Superior si el resultado de la junta no le favorece."}'::jsonb,
+    'CT.gov — Board of Assessment Appeals'),
+  ('business.property_tax.q3', 'business.property_tax', 30,
+    '{"en":"Is property tax deductible on my federal return?","es":"¿Es deducible el impuesto predial en mi declaración federal?"}'::jsonb,
+    '{"en":"Property tax paid on real estate you own may be deductible as an itemized deduction on Schedule A, subject to the combined state and local tax (SALT) cap of $10,000 per return. Business-property taxes are deducted as a business expense on Schedule C, E, or the entity''s return.","es":"El impuesto predial pagado sobre bienes raíces que usted posee puede deducirse como deducción detallada en el Anexo A, sujeto al límite combinado de impuestos estatales y locales (SALT) de $10,000 por declaración. Los impuestos prediales de propiedades comerciales se deducen como gasto en el Anexo C, E o en la declaración de la entidad."}'::jsonb,
+    'IRS.gov — Topic No. 503, Deductible Taxes'),
+
+  -- Annual report
+  ('business.annual_report.q1', 'business.annual_report', 10,
+    '{"en":"What is an annual report?","es":"¿Qué es el reporte anual?"}'::jsonb,
+    '{"en":"An annual report is a state-mandated filing that updates the Secretary of State on your entity''s basic information — address, registered agent, officers or members. Most states require it every year (Connecticut), every two years, or on the anniversary of formation. Missing the filing can lead to administrative dissolution.","es":"El reporte anual es una presentación obligatoria ante la Secretaría de Estado que actualiza la información básica de su entidad — dirección, agente registrado, funcionarios o miembros. La mayoría de los estados lo exigen cada año (Connecticut), cada dos años o en el aniversario de la constitución. No presentarlo puede llevar a la disolución administrativa."}'::jsonb,
+    'CT.gov — Secretary of the State: Business Services'),
+  ('business.annual_report.q2', 'business.annual_report', 20,
+    '{"en":"When is the Connecticut annual report due?","es":"¿Cuándo vence el reporte anual de Connecticut?"}'::jsonb,
+    '{"en":"For Connecticut LLCs, LPs, and LLPs the annual report is due between January 1 and March 31 each year, with a $80 filing fee. Corporations file on the anniversary month of their formation. Filing is done online at CT.gov; we track the deadline and file on your behalf.","es":"Para LLCs, LPs y LLPs de Connecticut el reporte anual vence entre el 1 de enero y el 31 de marzo de cada año, con una tarifa de $80. Las corporaciones presentan en el mes aniversario de su constitución. La presentación se hace en línea en CT.gov; nosotros monitoreamos el plazo y lo presentamos por usted."}'::jsonb,
+    'CT.gov — Filing Annual Reports'),
+  ('business.annual_report.q3', 'business.annual_report', 30,
+    '{"en":"What happens if I miss the annual report deadline?","es":"¿Qué pasa si pierdo la fecha del reporte anual?"}'::jsonb,
+    '{"en":"After the deadline your entity falls into not-in-good-standing status. If you remain delinquent for an extended period, the state can administratively dissolve the entity — losing your limited-liability protection. Reinstatement is possible but adds late fees and paperwork. We send reminders 60, 30, and 7 days before the due date.","es":"Tras el plazo, su entidad queda en estado no-en-regla. Si la mora se prolonga, el estado puede disolver administrativamente la entidad — perdiendo su protección de responsabilidad limitada. La reinstalación es posible pero implica multas y trámites adicionales. Enviamos recordatorios 60, 30 y 7 días antes del vencimiento."}'::jsonb,
+    'CT.gov — Administrative Dissolution'),
+
+  -- Workers comp audit
+  ('business.workers_comp.q1', 'business.workers_comp', 10,
+    '{"en":"What is a workers'' compensation audit?","es":"¿Qué es una auditoría de compensación laboral?"}'::jsonb,
+    '{"en":"At the end of each policy year your workers'' compensation insurer audits the actual payroll for the period. They compare projected vs. actual wages by employee classification to compute the true premium owed. You may end up paying additional premium, receiving a refund, or owing nothing.","es":"Al cierre de cada año de póliza, su aseguradora de compensación laboral audita la nómina real del periodo. Comparan las nóminas proyectadas contra las reales por clasificación de empleados para calcular la prima realmente adeudada. Puede terminar pagando una prima adicional, recibir un reembolso o no deber nada."}'::jsonb,
+    'NCCI — Premium Audit'),
+  ('business.workers_comp.q2', 'business.workers_comp', 20,
+    '{"en":"What documents are needed for the audit?","es":"¿Qué documentos se necesitan para la auditoría?"}'::jsonb,
+    '{"en":"Typical requests include payroll registers and quarterly Form 941s, federal/state unemployment tax reports, 1099-NEC forms for contractors, certificates of insurance for subcontractors, and the general ledger if available. We compile a clean audit packet so the auditor isn''t reclassifying workers based on missing paperwork.","es":"Los documentos solicitados generalmente incluyen registros de nómina y Formularios 941 trimestrales, reportes federales y estatales de impuesto al desempleo, Formularios 1099-NEC de contratistas, certificados de seguro de subcontratistas y el libro mayor si está disponible. Preparamos un paquete de auditoría completo para que el auditor no reclasifique trabajadores por documentación faltante."}'::jsonb,
+    'NCCI — Audit Documentation'),
+  ('business.workers_comp.q3', 'business.workers_comp', 30,
+    '{"en":"Can I dispute the audit findings?","es":"¿Puedo disputar los resultados de la auditoría?"}'::jsonb,
+    '{"en":"Yes. If you disagree with the auditor''s classifications or payroll totals you can file a dispute within the time window your policy specifies (often 60 to 90 days). Common issues are subcontractor misclassification, overtime double-counted, and clerical worker premiums applied to office staff. We handle the rebuttal and supporting documentation.","es":"Sí. Si no está de acuerdo con las clasificaciones o totales de nómina del auditor puede presentar una disputa dentro del plazo que indique su póliza (a menudo 60 a 90 días). Los problemas comunes son la mala clasificación de subcontratistas, las horas extras contadas dos veces y la aplicación de primas de trabajador de oficina al personal administrativo. Nos encargamos de la refutación y la documentación de soporte."}'::jsonb,
+    'NCCI — Disputing Audit Results')
+on conflict (id) do nothing;
+
+-- ── Phase 4n.67: fresh staff/admin help articles for recent features ────────
+insert into public.tax_help_articles (id, audience, relationship_type_id, category, display_order, title_i18n, body_i18n) values
+
+  -- ── News section ───────────────────────────────────────────────────────────
+  ('help.admin.news.overview', 'employee', null, 'admin', 1000,
+    '{"en":"News on the public landing","es":"Noticias en la página pública"}'::jsonb,
+    '{"en":"The News section on your public landing page (the strip below Reviews) is driven by tax_news_articles, managed at Owner → News.\n\nTwo kinds of rows live there:\n• AI rows (source=ai) — generated by Claude on demand or by the daily cron, grounded in real-time web search of IRS / federal / Connecticut tax sources.\n• Manual rows (source=manual) — anything you write yourself: announcements, deadline reminders, evergreen guides, video walkthroughs.\n\nThe public site shows the most recent rows up to the configured display limit (default 5). Each refresh wipes only AI rows; manual rows are preserved.","es":"La sección Noticias en su página pública (la franja debajo de Reseñas) se alimenta de tax_news_articles, administrada en Propietario → Noticias.\n\nViven allí dos tipos de filas:\n• Filas IA (source=ai) — generadas por Claude a demanda o por el cron diario, ancladas en búsqueda web en tiempo real de fuentes del IRS, federales y de Connecticut.\n• Filas manuales (source=manual) — todo lo que usted escriba: anuncios, recordatorios de plazos, guías permanentes, video-tutoriales.\n\nEl sitio público muestra las filas más recientes hasta el límite configurado (predeterminado 5). Cada actualización borra solo filas IA; las manuales se conservan."}'::jsonb),
+
+  ('help.admin.news.topics_limit', 'employee', null, 'admin', 1010,
+    '{"en":"Configuring news topics and display limit","es":"Configurar temas y límite de noticias"}'::jsonb,
+    '{"en":"At Owner → News there are three knobs that drive what the daily AI refresh produces:\n\n• Topics — chip list, up to 10 entries. Each topic becomes a category the LLM searches for. Default: IRS news / Federal tax updates / Connecticut tax updates. Add or remove topics as your practice evolves.\n• Show on landing page — how many cards the public site renders (1-20, default 5). Lowering this hides older items without deleting them.\n• Refresh automatically each day — when on, the server cron fires the same refresh once every 24 hours.\n\nClick Save settings after any change. Topics are the strongest lever — pick narrow specific ones (e.g., \"Sales tax updates Connecticut\") for sharper results.","es":"En Propietario → Noticias hay tres ajustes que dirigen lo que produce la actualización diaria de IA:\n\n• Temas — lista de chips, hasta 10 entradas. Cada tema es una categoría que el modelo busca. Predeterminado: Noticias del IRS / Actualizaciones federales / Actualizaciones de Connecticut. Agregue o quite temas según evolucione su práctica.\n• Mostrar en página pública — cuántas tarjetas muestra el sitio público (1-20, predeterminado 5). Bajarlo oculta artículos antiguos sin borrarlos.\n• Actualizar automáticamente cada día — cuando está activo, el cron del servidor dispara la misma actualización cada 24 horas.\n\nHaga clic en Guardar ajustes tras cualquier cambio. Los temas son la palanca más fuerte — elija específicos (ej., \"Impuesto sobre ventas Connecticut\") para resultados más afilados."}'::jsonb),
+
+  ('help.admin.news.manual_video', 'employee', null, 'admin', 1020,
+    '{"en":"Add a manual news article with a video","es":"Agregar un artículo manual con video"}'::jsonb,
+    '{"en":"Manual news articles are the place for evergreen content with video — guides, walkthroughs, announcements. They persist across AI refreshes.\n\n1. Owner → News → + Add article.\n2. Fill in title and 2-3 sentence summary in English AND Spanish. Optional longer body for an expand-to-read view.\n3. Topic field can be anything — match one of your configured topics, or invent a label like \"Guide\" or \"Walkthrough\".\n4. For video: paste a URL (YouTube, Vimeo, or a direct .mp4) OR click Choose File to upload an MP4 directly. Uploads go to the tax-videos Supabase Storage bucket and are public-readable.\n5. Active stays on by default. Click Create article.\n\nThe article shows up in the public News section immediately. To edit or hide later, find it in the Current news list and use the Edit/Hide buttons.","es":"Los artículos manuales son el lugar para contenido permanente con video — guías, tutoriales, anuncios. Persisten entre actualizaciones de IA.\n\n1. Propietario → Noticias → + Agregar artículo.\n2. Complete título y resumen de 2-3 oraciones en inglés Y español. Cuerpo más largo opcional para una vista expandida.\n3. El campo Tema puede ser cualquier cosa — empareje con uno de sus temas configurados, o invente una etiqueta como \"Guía\" o \"Tutorial\".\n4. Para video: pegue una URL (YouTube, Vimeo, o un .mp4 directo) O haga clic en Elegir archivo para subir un MP4 directamente. Las subidas van al bucket de Supabase Storage tax-videos con lectura pública.\n5. Activo queda encendido por defecto. Haga clic en Crear artículo.\n\nEl artículo aparece en la sección Noticias del sitio público de inmediato. Para editar u ocultar después, búsquelo en la lista Noticias actuales y use los botones Editar/Ocultar."}'::jsonb),
+
+  -- ── Reviews / testimonials ────────────────────────────────────────────────
+  ('help.admin.reviews.overview', 'employee', null, 'admin', 1030,
+    '{"en":"Reviews & testimonials on the public site","es":"Reseñas y testimonios en el sitio público"}'::jsonb,
+    '{"en":"The Reviews section on your landing page (visible iff at least one row exists) renders cards from tax_testimonials, managed under Settings → Reviews & testimonials.\n\nTwo sources:\n• Manual — you (or any admin) writes the quote and attributes it to the customer. Fastest way to seed early reviews.\n• Google — pull live reviews from your Google Place via Settings → Reviews → ⚙ Advanced → Google Reviews. Each row gets a small \"Google\" badge on the public card.\n\nDisplay count is configurable 1-30 (default 9). Sort order: display_order asc → created_at desc, so you can pin specific reviews to the top by setting their Display order, while the rest fall through to most-recent-first.","es":"La sección Reseñas en su página pública (visible solo si existe al menos una fila) muestra tarjetas de tax_testimonials, administrada en Configuración → Reseñas y testimonios.\n\nDos fuentes:\n• Manual — usted (o cualquier admin) escribe la cita y la atribuye al cliente. La forma más rápida de sembrar reseñas iniciales.\n• Google — traiga reseñas en vivo de su Place de Google mediante Configuración → Reseñas → ⚙ Avanzado → Google Reviews. Cada fila recibe un pequeño distintivo \"Google\" en la tarjeta pública.\n\nEl conteo de visualización es configurable 1-30 (predeterminado 9). Orden: display_order asc → created_at desc, así puede fijar reseñas específicas arriba con el Orden de visualización, y el resto cae a las más recientes primero."}'::jsonb),
+
+  ('help.admin.reviews.google_sync', 'employee', null, 'admin', 1040,
+    '{"en":"Google Reviews sync — Place ID and Refresh","es":"Sincronización de Google Reviews — Place ID y actualización"}'::jsonb,
+    '{"en":"To pull live Google reviews, the platform needs a Google Places API key (GOOGLE_PLACES_API_KEY env var on Render) and your community needs a Place ID saved.\n\nSetup:\n1. Owner → Settings → Reviews & testimonials → ⚙ Advanced → expand Google Reviews.\n2. Paste either your raw ChIJ… Place ID, or a Google Maps share URL (https://maps.app.goo.gl/…). The server follows redirects and extracts the ID for you.\n3. Save Place ID.\n4. Click Sync now — the panel shows how many reviews Google returned and how many were imported.\n5. Turn on Sync new reviews automatically to let the daily cron keep the list fresh.\n\nIf Sync now returns 0 reviews and your place has ratings, the diagnostic message will say so — most commonly it means the Places Enterprise SKU is not enabled on the Google Cloud project that owns the API key.","es":"Para traer reseñas de Google en vivo, la plataforma necesita una API key de Google Places (variable de entorno GOOGLE_PLACES_API_KEY en Render) y su oficina necesita un Place ID guardado.\n\nConfiguración:\n1. Propietario → Configuración → Reseñas y testimonios → ⚙ Avanzado → expanda Google Reviews.\n2. Pegue su Place ID ChIJ… directo, o una URL de Google Maps compartida (https://maps.app.goo.gl/…). El servidor sigue las redirecciones y extrae el ID.\n3. Guardar Place ID.\n4. Haga clic en Sincronizar ahora — el panel muestra cuántas reseñas devolvió Google y cuántas se importaron.\n5. Active Sincronizar nuevas reseñas automáticamente para que el cron diario mantenga la lista fresca.\n\nSi Sincronizar ahora devuelve 0 reseñas y su lugar tiene calificaciones, el mensaje diagnóstico lo indicará — generalmente significa que el SKU Enterprise de Places no está habilitado en el proyecto de Google Cloud dueño de la API key."}'::jsonb),
+
+  -- ── Auto-FAQs ──────────────────────────────────────────────────────────────
+  ('help.admin.autofaqs', 'employee', null, 'admin', 1050,
+    '{"en":"Auto-FAQs when you add or remove a service","es":"FAQs automáticos al agregar o quitar un servicio"}'::jsonb,
+    '{"en":"When you create a new service in Owner → Services, the server fires a fire-and-forget call to Claude that drafts 4 bilingual FAQs based on the service''s own name and descriptions. The FAQs appear under the service''s name on the public FAQs section within ~10 seconds. You don''t wait — the Create button returns instantly.\n\nWhen you delete a service, any community-scoped relationship type that was auto-linked to that service is marked inactive — its FAQs disappear from the public site without a hard delete. If you recreate the service later, the FAQs can be regenerated.\n\nTo redo the FAQs for an existing service (e.g., after editing its description), open the service editor and click ✨ Regenerate FAQs. The old auto-FAQs are wiped and replaced. Manual FAQs in other categories are never touched.\n\nThis requires ANTHROPIC_API_KEY to be configured on the server. Without it, the create still succeeds and FAQs are simply skipped.","es":"Cuando crea un servicio nuevo en Propietario → Servicios, el servidor dispara una llamada en segundo plano a Claude que redacta 4 FAQs bilingües basadas en el nombre y descripciones del servicio. Las FAQs aparecen bajo el nombre del servicio en la sección pública de FAQs en ~10 segundos. Usted no espera — el botón Crear regresa al instante.\n\nCuando elimina un servicio, cualquier tipo de relación con alcance de oficina auto-vinculado a ese servicio se marca como inactivo — sus FAQs desaparecen del sitio público sin un borrado físico. Si recrea el servicio después, los FAQs se pueden regenerar.\n\nPara rehacer los FAQs de un servicio existente (por ejemplo, tras editar su descripción), abra el editor del servicio y haga clic en ✨ Regenerar preguntas frecuentes. Los FAQ automáticos antiguos se borran y reemplazan. Los FAQ manuales en otras categorías nunca se tocan.\n\nEsto requiere que ANTHROPIC_API_KEY esté configurado en el servidor. Sin él, la creación tiene éxito y los FAQs simplemente se omiten."}'::jsonb),
+
+  -- ── Channels reference ────────────────────────────────────────────────────
+  ('help.admin.video_channels', 'employee', null, 'admin', 1060,
+    '{"en":"Where can I share videos with the public?","es":"¿Dónde puedo compartir videos con el público?"}'::jsonb,
+    '{"en":"There are four places an owner can attach video content. Only three reach the public landing:\n\n• Owner → News (manual article) — public News section. Supports URL embeds (YouTube/Vimeo/MP4) AND direct MP4 upload to Supabase Storage. Best for evergreen video guides and announcements.\n• Owner → Services (edit service → Video URL) — plays inside the service detail modal when a visitor clicks a service card. URL embed only.\n• Owner → FAQs (edit FAQ → Video URL) — plays inside the expanded FAQ accordion on the public landing. URL embed only.\n• Owner → Help articles — has a Video URL field, but these articles only appear in the customer/employee portal Help pages, NOT on the public landing.\n\nWhen in doubt: use News with a manual article. It''s the most flexible channel and supports both URL and upload.","es":"Hay cuatro lugares donde el propietario puede adjuntar contenido de video. Solo tres llegan al sitio público:\n\n• Propietario → Noticias (artículo manual) — sección pública de Noticias. Soporta URL embebida (YouTube/Vimeo/MP4) Y subida directa de MP4 a Supabase Storage. Lo mejor para guías permanentes y anuncios.\n• Propietario → Servicios (editar servicio → URL de video) — se reproduce en el modal de detalle del servicio cuando el visitante hace clic en una tarjeta. Solo URL embebida.\n• Propietario → FAQs (editar FAQ → URL de video) — se reproduce dentro del FAQ expandido en el sitio público. Solo URL embebida.\n• Propietario → Artículos de ayuda — tiene un campo URL de video, pero estos artículos solo aparecen en las páginas de Ayuda del portal de clientes/empleados, NO en el sitio público.\n\nEn caso de duda: use Noticias con un artículo manual. Es el canal más flexible y soporta tanto URL como subida."}'::jsonb),
+
+  ('help.admin.articles_vs_news', 'employee', null, 'admin', 1070,
+    '{"en":"Help articles vs News — what goes where","es":"Artículos de ayuda vs Noticias — qué va dónde"}'::jsonb,
+    '{"en":"Two admin pages look similar but feed different audiences:\n\n• Owner → Help articles (tax_help_articles) — surfaces on the customer portal Help page (/portal/help) and the employee portal Help page (/employee/help). Audience filter (Customer / Staff) controls which portal sees each row. NOT shown on the public landing.\n• Owner → News (tax_news_articles) — surfaces on the public landing News section only. Mix of AI-refreshed rows and manual entries. Visible to anyone visiting the site.\n\nIf a customer doesn''t need to be logged in to see it, write it in News. If it''s an internal walkthrough for your team, or a how-to for signed-in customers (\"How to upload a document in the portal\"), write it in Help articles with the appropriate audience.","es":"Dos páginas de administración se ven similares pero alimentan audiencias distintas:\n\n• Propietario → Artículos de ayuda (tax_help_articles) — aparecen en la página de Ayuda del portal del cliente (/portal/help) y la del portal de empleados (/employee/help). El filtro de audiencia (Cliente / Personal) controla qué portal ve cada fila. NO se muestran en el sitio público.\n• Propietario → Noticias (tax_news_articles) — aparecen solo en la sección pública de Noticias. Mezcla de filas refrescadas por IA y entradas manuales. Visibles a cualquiera que visite el sitio.\n\nSi un cliente NO necesita iniciar sesión para verlo, escríbalo en Noticias. Si es un tutorial interno para su equipo, o un cómo-hacer para clientes ya autenticados (\"Cómo subir un documento en el portal\"), escríbalo en Artículos de ayuda con la audiencia apropiada."}'::jsonb)
+
+on conflict (id) do nothing;
+
+-- AI chat: store the pre-sales Q&A transcript so the owner sees exactly
+-- what the lead asked and was told before they reached out.
+alter table public.tax_leads
+  add column if not exists ai_conversation jsonb;
