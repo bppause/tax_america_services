@@ -380,13 +380,27 @@ module.exports = function createTaxRouter(deps) {
 
     const [{ data: community, error: cErr }, { data: products }] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, name_en, phone, whatsapp, contact_email, address_line1, address_line2, city, state, postal_code, country')
+        .select('id, name, name_en, logo_url, brand_primary_color, brand_secondary_color, phone, whatsapp, contact_email, address_line1, address_line2, city, state, postal_code, country')
         .eq('id', slug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle(),
       supabase.from('tax_products')
         .select('slug, category, display_order, name_i18n, description_i18n, long_description_i18n')
         .eq('community_id', slug).eq('enabled', true).order('display_order', { ascending: true }),
     ]);
     if (cErr || !community) return res.status(404).json({ error: 'Community not found.' });
+
+    // Fetch logo as buffer (PNG/JPEG only; SVG silently skipped).
+    let logoBuffer = null;
+    if (community.logo_url) {
+      try {
+        const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(5000) });
+        if (lr.ok) {
+          const ct = lr.headers.get('content-type') || '';
+          if (ct.includes('png') || ct.includes('jpeg') || ct.includes('jpg') || ct.includes('gif')) {
+            logoBuffer = Buffer.from(await lr.arrayBuffer());
+          }
+        }
+      } catch (_) { /* logo unavailable — continue without it */ }
+    }
 
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({
@@ -402,15 +416,20 @@ module.exports = function createTaxRouter(deps) {
     res.setHeader('Cache-Control', 'public, max-age=300');
     doc.pipe(res);
 
-    // ── Layout constants ───────────────────────────────────────────────────
-    const PW      = doc.page.width;   // 595.28
+    // ── Brand colors (fall back to professional defaults) ──────────────────
+    const BRAND   = community.brand_primary_color   || '#1e40af';
+    const ACCENT  = community.brand_secondary_color || '#93c5fd';
+    const PW      = doc.page.width;   // 595.28 pts
     const MARGIN  = 50;
-    const CW      = PW - MARGIN * 2;  // content width
-    const BRAND   = '#1e40af';
+    const CW      = PW - MARGIN * 2;
     const DARK    = '#1e293b';
     const MUTED   = '#64748b';
     const RULE    = '#e2e8f0';
     const WHITE   = '#ffffff';
+
+    const LOGO_H   = 70;  // max logo height in header
+    const LOGO_W   = 130; // max logo width in header
+    const HEADER_H = logoBuffer ? 130 : 110;
 
     const pickL = (obj) => (obj?.[lang] || obj?.en || obj?.es || '');
 
@@ -421,19 +440,35 @@ module.exports = function createTaxRouter(deps) {
     const publicUrl = `${process.env.PUBLIC_APP_URL || ''}/tax/${slug}`;
 
     // ── Header band ────────────────────────────────────────────────────────
-    doc.rect(0, 0, PW, 120).fill(BRAND);
+    doc.rect(0, 0, PW, HEADER_H).fill(BRAND);
 
-    doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(24)
-       .text(bizName, MARGIN, 30, { width: CW });
-
-    const tagline = lang === 'es'
-      ? 'Firma bilingue especializada en servicios tributarios y contables'
-      : 'Bilingual tax & accounting firm — professional, accurate, on time';
-    doc.font('Helvetica').fontSize(12).fillColor('#bfdbfe')
-       .text(tagline, MARGIN, 72, { width: CW });
+    if (logoBuffer) {
+      // Logo left, name/tagline right
+      try {
+        doc.image(logoBuffer, MARGIN, 20, { fit: [LOGO_W, LOGO_H], align: 'left', valign: 'center' });
+      } catch (_) { /* unsupported format — skip logo */ }
+      const textX = MARGIN + LOGO_W + 16;
+      const textW = CW - LOGO_W - 16;
+      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(20)
+         .text(bizName, textX, 28, { width: textW });
+      const tagline = lang === 'es'
+        ? 'Firma bilingue especializada en servicios tributarios y contables'
+        : 'Bilingual tax & accounting firm — professional, accurate, on time';
+      doc.font('Helvetica').fontSize(11).fillColor(ACCENT)
+         .text(tagline, textX, 64, { width: textW });
+    } else {
+      // Name + tagline full-width
+      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(24)
+         .text(bizName, MARGIN, 28, { width: CW });
+      const tagline = lang === 'es'
+        ? 'Firma bilingue especializada en servicios tributarios y contables'
+        : 'Bilingual tax & accounting firm — professional, accurate, on time';
+      doc.font('Helvetica').fontSize(12).fillColor(ACCENT)
+         .text(tagline, MARGIN, 68, { width: CW });
+    }
 
     // ── Intro ──────────────────────────────────────────────────────────────
-    doc.y = 140;
+    doc.y = HEADER_H + 22;
     const intro = lang === 'es'
       ? `Somos su aliado de confianza para el manejo de sus obligaciones fiscales y financieras en los Estados Unidos. Con un equipo bilingue con experiencia, ofrecemos atencion de calidad a personas naturales y empresas — con precision, confidencialidad y trato personalizado.`
       : `We are your trusted partner for tax and financial obligations in the United States. With an experienced bilingual team, we deliver quality service to individuals and businesses — accurate, confidential, and always on time.`;
@@ -458,7 +493,7 @@ module.exports = function createTaxRouter(deps) {
       one_off:   { es: 'Servicio unico',           en: 'One-time service' },
     };
 
-    const FOOTER_RESERVE = 80; // keep space for footer band
+    const FOOTER_RESERVE = 50;
 
     for (const p of (products || [])) {
       const pname  = pickL(p.name_i18n);
@@ -467,7 +502,6 @@ module.exports = function createTaxRouter(deps) {
       const catLbl = CAT[p.category]?.[lang] || '';
       if (!pname) continue;
 
-      // Rough height estimate: 60 pts min per service block
       if (doc.y > doc.page.height - FOOTER_RESERVE - 70) {
         doc.addPage({ size: 'A4', margin: 0 });
         doc.y = MARGIN;
@@ -477,7 +511,7 @@ module.exports = function createTaxRouter(deps) {
       doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK)
          .text(pname, MARGIN, doc.y, { continued: false, width: CW });
 
-      // Category tag inline
+      // Category tag (right-aligned, same line)
       if (catLbl) {
         const tagY = doc.y - doc.currentLineHeight() - 1;
         doc.font('Helvetica').fontSize(8.5).fillColor(MUTED)
@@ -498,8 +532,8 @@ module.exports = function createTaxRouter(deps) {
         doc.moveDown(0.25);
       }
 
-      // Service deep-link
-      const svcUrl = `${publicUrl}#service-${p.slug}`;
+      // Deep-link to service card on the website
+      const svcUrl   = `${publicUrl}#service-${p.slug}`;
       const linkLabel = lang === 'es' ? `Mas informacion: ${svcUrl}` : `Learn more: ${svcUrl}`;
       doc.font('Helvetica').fontSize(9).fillColor(BRAND)
          .text(linkLabel, MARGIN, doc.y, { width: CW });
@@ -542,16 +576,12 @@ module.exports = function createTaxRouter(deps) {
       doc.moveDown(0.5);
     }
 
-    // ── Footer band (bottom of last page) ─────────────────────────────────
-    const BAND_H = 40;
+    // ── Footer band ────────────────────────────────────────────────────────
+    const BAND_H  = 40;
     const footerY = doc.page.height - BAND_H;
     doc.rect(0, footerY, PW, BAND_H).fill(BRAND);
-
-    const footerText = lang === 'es'
-      ? `${bizName}  |  ${publicUrl}`
-      : `${bizName}  |  ${publicUrl}`;
     doc.font('Helvetica').fontSize(9.5).fillColor(WHITE)
-       .text(footerText, MARGIN, footerY + 13, { width: CW, align: 'center' });
+       .text(`${bizName}  |  ${publicUrl}`, MARGIN, footerY + 13, { width: CW, align: 'center' });
 
     doc.end();
   });
