@@ -60,7 +60,7 @@ export default function OwnerServicesAdmin() {
               {products.map(p => (
                 <ServiceRow key={p.id} product={p} auth={auth}
                             community={community} relTypes={relTypes}
-                            employees={employees}
+                            employees={employees} allProducts={products}
                             onChange={load} locale={locale} t={t} />
               ))}
             </div>}
@@ -211,7 +211,7 @@ function AddServiceLauncher({ community, auth, onAdded, t }) {
   );
 }
 
-function ServiceRow({ product: p, auth, community, relTypes, employees = [], onChange, locale, t }) {
+function ServiceRow({ product: p, auth, community, relTypes, employees = [], allProducts = [], onChange, locale, t }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -352,7 +352,7 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], onC
       {editing ? (
         <ProductEditor product={p} auth={auth}
                        community={community} relTypes={relTypes}
-                       employees={employees}
+                       employees={employees} allProducts={allProducts}
                        onDone={() => { setEditing(false); onChange(); }}
                        onCancel={() => setEditing(false)} t={t} />
       ) : (
@@ -489,17 +489,29 @@ const CERT_LIBRARY = [
 ];
 
 // Score a credential for a given service slug + category.
-// 2 = primary suggestion (slug match), 1 = category match, 0 = general.
-function certScore(cert, slug, category) {
-  if (cert.slugs?.includes(slug))         return 2;
-  if (cert.categories?.includes(category)) return 1;
+// 2 = primary suggestion (slug match for an existing service), 1 = category match, 0 = general.
+// activeSlugSet and activeCategorySet are derived from the community's actual product list so
+// that suggestions reflect services that actually exist (or have been added/removed).
+function certScore(cert, slug, category, activeSlugSet, activeCategorySet) {
+  if (cert.slugs?.includes(slug) && activeSlugSet.has(slug)) return 2;
+  if (cert.categories?.includes(category) && activeCategorySet.has(category)) return 1;
   return 0;
 }
 
-function CertificationsEditor({ certifications, setCertifications, certInput, setCertInput, slug, category, t }) {
-  const suggested = CERT_LIBRARY.filter(c => certScore(c, slug, category) === 2);
-  const related   = CERT_LIBRARY.filter(c => certScore(c, slug, category) === 1);
-  const general   = CERT_LIBRARY.filter(c => certScore(c, slug, category) === 0);
+function CertificationsEditor({ certifications, setCertifications, certInput, setCertInput, slug, category, allProducts, t }) {
+  const activeSlugSet = React.useMemo(
+    () => new Set((allProducts || []).map(p => p.slug)),
+    [allProducts],
+  );
+  const activeCategorySet = React.useMemo(
+    () => new Set((allProducts || []).map(p => p.category).filter(Boolean)),
+    [allProducts],
+  );
+
+  const score = (c) => certScore(c, slug, category, activeSlugSet, activeCategorySet);
+  const suggested = CERT_LIBRARY.filter(c => score(c) === 2);
+  const related   = CERT_LIBRARY.filter(c => score(c) === 1);
+  const general   = CERT_LIBRARY.filter(c => score(c) === 0);
 
   // Render sections only when they have entries. "General" collapses behind
   // a disclosure toggle so the list doesn't feel overwhelming for services
@@ -626,7 +638,7 @@ function CertificationsEditor({ certifications, setCertifications, certInput, se
   );
 }
 
-function ProductEditor({ product: p, auth, community, relTypes = [], employees = [], onDone, onCancel, t }) {
+function ProductEditor({ product: p, auth, community, relTypes = [], employees = [], allProducts = [], onDone, onCancel, t }) {
   const [nameEn, setNameEn] = useState(p.name_i18n?.en || '');
   const [nameEs, setNameEs] = useState(p.name_i18n?.es || '');
   const [descEn, setDescEn] = useState(p.description_i18n?.en || '');
@@ -806,6 +818,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         setCertInput={setCertInput}
         slug={p.slug}
         category={p.category}
+        allProducts={allProducts}
         t={t}
       />
 
