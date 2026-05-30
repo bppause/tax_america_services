@@ -30,11 +30,24 @@ export default function LeadChatWidget({ community, products, preselectedProduct
   const [input, setInput]         = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [err, setErr]             = useState('');
+  // Restore saved contact info from a previous session on this device.
+  const STORAGE_KEY = 'tax_ai_contact_v1';
+  const savedContact = (() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
+  })();
+
   const [form, setForm]           = useState({
-    firstName: '', lastName: '', email: '', phone: '',
-    customerType: 'individual', company: '', website: '',
+    firstName:    savedContact?.firstName    || '',
+    lastName:     savedContact?.lastName     || '',
+    email:        savedContact?.email        || '',
+    phone:        savedContact?.phone        || '',
+    customerType: savedContact?.customerType || 'individual',
+    company:      savedContact?.company      || '',
+    website: '',
   });
   const [formErrs, setFormErrs] = useState({});
+  // true when saved info was found and the lead hasn't cleared it yet.
+  const [usingRemembered, setUsingRemembered] = useState(!!savedContact);
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
 
@@ -158,11 +171,29 @@ export default function LeadChatWidget({ community, products, preselectedProduct
         aiConversation: messages.filter((_m, i) => !(i === 0 && messages[0].role === 'assistant')),
         message: '',
       });
+      // Persist contact info so returning users don't have to re-type it.
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({
+          firstName:    form.firstName.trim(),
+          lastName:     form.lastName.trim(),
+          email:        form.email.trim().toLowerCase(),
+          phone:        form.phone.trim(),
+          customerType: form.customerType,
+          company:      form.company.trim(),
+        }));
+      } catch { /* ignore storage errors */ }
       setPhase('done');
     } catch (e) {
       setErr(e?.message || t('error.generic'));
       setPhase('contact');
     }
+  };
+
+  const clearRemembered = () => {
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    setUsingRemembered(false);
+    setForm({ firstName: '', lastName: '', email: '', phone: '', customerType: 'individual', company: '', website: '' });
+    setFormErrs({});
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -322,6 +353,25 @@ export default function LeadChatWidget({ community, products, preselectedProduct
               </div>
             </div>
             <div style={{ padding: 14 }}>
+            {usingRemembered && (
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 8,
+                padding: '8px 12px', marginBottom: 12, gap: 8,
+              }}>
+                <span style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>
+                  👋 {es ? `Bienvenido/a de nuevo, ${form.firstName}!` : `Welcome back, ${form.firstName}!`}
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>
+                    {es ? 'Tu información está pre-llenada.' : 'Your info is pre-filled.'}
+                  </span>
+                </span>
+                <button type="button" onClick={clearRemembered}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12,
+                           color: '#166534', textDecoration: 'underline', whiteSpace: 'nowrap', padding: 0 }}>
+                  {es ? '¿No eres tú?' : 'Not you?'}
+                </button>
+              </div>
+            )}
             <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14 }}>
               {es ? '¿Cómo te contactamos?' : 'How should we reach you?'}
             </div>

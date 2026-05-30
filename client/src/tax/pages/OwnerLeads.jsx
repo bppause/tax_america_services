@@ -252,18 +252,19 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               background: b.bg, color: b.fg, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
             }}>{statusLabel(lead.status, t)}</span>
             {lead.source === 'returning_customer' ? (
-              <span title="This email is already associated with a customer in your portal" style={{
-                marginLeft: 6, padding: '1px 8px', borderRadius: 999,
-                background: '#fffbeb', color: '#92400e',
-                border: '1px solid #f59e0b',
-                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
-              }}>↩ Existing customer</span>
+              <span title="This email is already linked to an existing customer"
+                style={{
+                  marginLeft: 6, padding: '2px 9px', borderRadius: 999,
+                  background: '#fffbeb', color: '#92400e',
+                  border: '1.5px solid #f59e0b',
+                  fontSize: 11, fontWeight: 800, letterSpacing: '.03em',
+                }}>↩ Returning customer</span>
             ) : (
               <span style={{
-                marginLeft: 6, padding: '1px 8px', borderRadius: 999,
-                background: '#f0fdf4', color: '#166534',
-                border: '1px solid #86efac',
-                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
+                marginLeft: 6, padding: '2px 9px', borderRadius: 999,
+                background: '#f0fdf4', color: '#15803d',
+                border: '1.5px solid #86efac',
+                fontSize: 11, fontWeight: 800, letterSpacing: '.03em',
               }}>★ New lead</span>
             )}
             {lead.preferred_locale && (
@@ -294,6 +295,27 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
 
       {expanded && (
         <div style={{ marginTop: 12, padding: 12, background: 'var(--tax-bg-alt)', borderRadius: 8 }}>
+          {lead.source === 'returning_customer' && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
+              background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 8,
+              padding: '10px 14px', marginBottom: 12,
+            }}>
+              <div style={{ fontSize: 13, color: '#92400e', fontWeight: 600 }}>
+                ↩ Existing customer inquiry
+                <span style={{ fontWeight: 400, marginLeft: 8 }}>
+                  This person's email is already registered as a customer in your portal.
+                </span>
+              </div>
+              {lead.converted_customer_id && (
+                <a href={`/tax/${communitySlug}/employee/customers/${encodeURIComponent(lead.converted_customer_id)}`}
+                   className="tax-btn tax-btn--ghost tax-btn--sm"
+                   style={{ color: '#92400e', borderColor: '#f59e0b', background: '#fff', whiteSpace: 'nowrap' }}>
+                  View customer record →
+                </a>
+              )}
+            </div>
+          )}
           {lead.message && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
