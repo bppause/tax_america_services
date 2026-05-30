@@ -876,7 +876,10 @@ module.exports = function createTaxRouter(deps) {
       product_slug: productSlug,
       product_slugs: productSlugs,
       message,
-      ai_conversation: aiConversation,
+      // Only include ai_conversation when present — column may not yet
+      // exist on older deployments. Run the migration in schema.sql to
+      // add it: ALTER TABLE tax_leads ADD COLUMN ai_conversation jsonb;
+      ...(aiConversation ? { ai_conversation: aiConversation } : {}),
       preferred_locale: preferredLocale,
       status: 'new',
       source: aiConversation ? 'ai_chat' : 'landing',

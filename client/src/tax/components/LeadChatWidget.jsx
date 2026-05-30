@@ -172,11 +172,13 @@ export default function LeadChatWidget({ community, products, preselectedProduct
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 340 }}>
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 4px' }}>
+          {/* Practice identity header */}
+          <PracticeHeader community={community} />
           {/* AI-style opening bubble */}
           <ChatBubble role="assistant" content={
             es
-              ? `¡Hola! Soy el asistente virtual de ${community.name}.\n\n¿Sobre qué servicio(s) tienes preguntas? Selecciona uno o varios y te ayudaré al instante.`
-              : `Hi! I'm the AI assistant for ${community.name}.\n\nWhich service(s) do you have questions about? Select one or more and I'll answer them right away.`
+              ? `¡Hola! Soy el asistente virtual de **${community.name}**.\n\n¿Sobre qué servicio(s) tienes preguntas? Selecciona uno o varios y te ayudaré al instante.`
+              : `Hi! I'm the AI assistant for **${community.name}**.\n\nWhich service(s) do you have questions about? Select one or more and I'll answer them right away.`
           } />
 
           {/* Service chip grid */}
@@ -302,7 +304,24 @@ export default function LeadChatWidget({ community, products, preselectedProduct
 
         {/* Contact mini-form */}
         {(phase === 'contact' || phase === 'submitting') && (
-          <div style={{ border: '1px solid var(--tax-border)', borderRadius: 10, padding: 16, background: 'var(--tax-bg-alt)' }}>
+          <div style={{ border: '1px solid var(--tax-border)', borderRadius: 10, overflow: 'hidden', background: 'var(--tax-bg-alt)' }}>
+            {/* Who they're connecting with */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '12px 14px', background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
+            }}>
+              {community.logo_url && (
+                <img src={community.logo_url} alt={community.name}
+                  style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'contain', background: '#fff', padding: 2 }} />
+              )}
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{community.name}</div>
+                <div style={{ fontSize: 11, opacity: .85 }}>
+                  {es ? 'Te responderemos por email o WhatsApp' : 'We\'ll reply via email or WhatsApp'}
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: 14 }}>
             <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14 }}>
               {es ? '¿Cómo te contactamos?' : 'How should we reach you?'}
             </div>
@@ -337,8 +356,9 @@ export default function LeadChatWidget({ community, products, preselectedProduct
               style={{ width: '100%', marginTop: 4 }}>
               {phase === 'submitting'
                 ? (es ? 'Enviando…' : 'Sending…')
-                : (es ? 'Conectar con el equipo →' : 'Connect with the team →')}
+                : (es ? `Conectar con ${community.name} →` : `Connect with ${community.name} →`)}
             </button>
+            </div>{/* /padding wrapper */}
           </div>
         )}
 
@@ -417,6 +437,34 @@ function Field({ label, value, onChange, err, type = 'text', style }) {
           borderRadius: 6, font: 'inherit', fontSize: 14, boxSizing: 'border-box',
         }} />
       {err && <div style={{ fontSize: 11, color: 'var(--tax-error, #c0392b)', marginTop: 2 }}>{err}</div>}
+    </div>
+  );
+}
+
+// Small branded header shown at the top of the picker so the lead
+// immediately knows whose assistant they're talking to.
+function PracticeHeader({ community }) {
+  if (!community) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '8px 12px', marginBottom: 10,
+      background: 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)',
+      border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 18%, #fff)',
+      borderRadius: 8,
+    }}>
+      {community.logo_url && (
+        <img src={community.logo_url} alt={community.name}
+          style={{ width: 28, height: 28, objectFit: 'contain', borderRadius: 4 }} />
+      )}
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--tax-brand-primary, #1d3a6d)' }}>
+          {community.name}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--tax-muted)' }}>
+          🤖 AI assistant · powered by Claude
+        </div>
+      </div>
     </div>
   );
 }
