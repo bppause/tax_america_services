@@ -126,6 +126,7 @@ function buildNavLinks(sections, t, overrides = {}) {
   ];
   if (!sections || sections.team !== false) out.push({ href: '#team', label: t('nav.team') });
   if (overrides.schedule) out.push(overrides.schedule);
+  if (has('reviews')) out.push({ href: '#testimonials', label: t('nav.reviews') });
   if (has('news')) out.push({ href: '#news', label: t('nav.news') });
   if (has('articles')) out.push({ href: '#articles', label: t('nav.articles') });
   if (has('calendar') && slug) out.push({ href: `/tax/${slug}/calendar`, label: t('nav.calendar') });
