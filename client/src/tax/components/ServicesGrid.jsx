@@ -37,6 +37,7 @@ export default function ServicesGrid({ products, onRequestService }) {
             const categoryLabel = t(`services.category.${p.category}`);
             return (
               <button type="button" key={p.id}
+                      id={`service-${p.slug}`}
                       className="tax-service-card tax-service-card--button"
                       onClick={() => setOpenId(p.id)}
                       aria-label={t('services.card.openAria', { name })}>
