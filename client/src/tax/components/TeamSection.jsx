@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 import { displayPersonName } from '../lib/personName';
 import { useLandingCopy } from '../lib/landingCopy';
+import CertBadge from './CertBadge';
 
 // Meet-the-team section on the public landing page. Renders only the
 // employees the owner has opted into the homepage (show_on_homepage =
@@ -99,12 +100,7 @@ export default function TeamSection({ communitySlug }) {
                 )}
                 {certs.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                    {certs.map((c, i) => (
-                      <span key={i} style={{
-                        fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 999,
-                        background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
-                      }}>🏅 {c}</span>
-                    ))}
+                    {certs.map((c, i) => <CertBadge key={i} label={c} />)}
                   </div>
                 )}
                 {experience && (

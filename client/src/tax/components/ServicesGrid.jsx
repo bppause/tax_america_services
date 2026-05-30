@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import VideoEmbed from './VideoEmbed';
 import { useLandingCopy } from '../lib/landingCopy';
 import LeadChatWidget from './LeadChatWidget';
+import CertBadge from './CertBadge';
 
 const ICON_LETTER = {
   receipt: 'IR', briefcase: 'BT', 'id-card': 'ID', book: 'BK', wallet: 'PR',
@@ -95,11 +96,7 @@ export default function ServicesGrid({ products, community, onRequestService }) 
                 {Array.isArray(p.certifications) && p.certifications.length > 0 && (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
                     {p.certifications.map((c, i) => (
-                      <span key={i} style={{
-                        fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999,
-                        background: '#fef3c7', color: '#92400e',
-                        border: '1px solid #f59e0b', whiteSpace: 'nowrap',
-                      }}>🏅 {c}</span>
+                      <CertBadge key={i} label={c} />
                     ))}
                   </div>
                 )}
@@ -200,10 +197,7 @@ function ServiceDetailModal({ product, locale, t, community, products, onClose, 
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                   {product.certifications.map((c, i) => (
-                    <span key={i} style={{
-                      fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999,
-                      background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
-                    }}>🏅 {c}</span>
+                    <CertBadge key={i} label={c} />
                   ))}
                 </div>
               </div>
