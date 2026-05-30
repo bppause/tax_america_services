@@ -3175,7 +3175,8 @@ module.exports = function createTaxRouter(deps) {
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
         address_line1, address_line2, city, state, postal_code, country,
-        default_locale, calendly_url, website_url, landing_copy_i18n
+        default_locale, calendly_url, website_url, logo_url, brand_primary_color, brand_secondary_color,
+        landing_copy_i18n
       `)
       .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle();
     if (error) return sendSupabaseError(res, error);
