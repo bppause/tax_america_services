@@ -225,8 +225,8 @@ export default function OwnerWhatsApp() {
 
           {/* ── Left: template editor ── */}
           <div>
-            {/* Locale tabs */}
-            <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+            {/* Locale tabs + top copy button */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 18, alignItems: 'center', flexWrap: 'wrap' }}>
               {['es', 'en'].map(lang => (
                 <button key={lang} type="button"
                         className={`tax-btn ${msgLocale === lang ? 'tax-btn--primary' : 'tax-btn--ghost'}`}
@@ -234,6 +234,22 @@ export default function OwnerWhatsApp() {
                   {lang === 'es' ? 'Español' : 'English'}
                 </button>
               ))}
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+                {dirty && (
+                  <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                          onClick={save} disabled={saving}>
+                    {saving ? t('owner.whatsapp.saving') : t('owner.whatsapp.save')}
+                  </button>
+                )}
+                {saveOk && !dirty && (
+                  <span style={{ fontSize: 12, color: 'var(--tax-success, #16a34a)', fontWeight: 600 }}>✓ {t('owner.whatsapp.saved')}</span>
+                )}
+                <button type="button"
+                        className={`tax-btn tax-btn--sm ${copied ? 'tax-btn--ghost' : 'tax-btn--primary'}`}
+                        onClick={copy} disabled={!message}>
+                  {copied ? `✓ ${t('owner.whatsapp.copied')}` : t('owner.whatsapp.copy')}
+                </button>
+              </div>
             </div>
 
             {/* Editable sections */}
