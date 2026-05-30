@@ -36,11 +36,36 @@ export default function ServicesGrid({ products, community, onRequestService }) 
     if (match) setOpenId(match.id);
   }, [products]);
 
+  const aiLabel = locale === 'es'
+    ? 'Preguntas? Habla con nuestro asistente de IA'
+    : 'Questions? Chat with our AI assistant';
+
   return (
     <section className="tax-section" id="services">
       <div className="tax-container">
         <h2>{pick('services.heading')}</h2>
         <p className="tax-section__lede">{pick('services.subheading')}</p>
+
+        {/* AI agent availability banner */}
+        {community && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
+            border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)',
+            borderRadius: 10, padding: '10px 16px', marginBottom: 24,
+            fontSize: 14,
+          }}>
+            <span style={{ fontSize: 20 }}>🤖</span>
+            <span>
+              <strong>{locale === 'es' ? '¿Tienes preguntas sobre nuestros servicios?' : 'Have questions about our services?'}</strong>
+              {' '}
+              {locale === 'es'
+                ? 'Nuestro asistente de IA puede responderte al instante — solo haz clic en cualquier servicio y elige la pestaña "Preguntar al asistente".'
+                : 'Our AI assistant can answer them instantly — click any service card and open the "Ask AI assistant" tab, or use the chat button below.'}
+            </span>
+          </div>
+        )}
+
         <div className="tax-services-grid">
           {products.map(p => {
             const name = pickI18n(p.name_i18n, locale).value;
@@ -52,7 +77,19 @@ export default function ServicesGrid({ products, community, onRequestService }) 
                       className="tax-service-card tax-service-card--button"
                       onClick={() => setOpenId(p.id)}
                       aria-label={t('services.card.openAria', { name })}>
-                <div className="tax-service-card__icon">{ICON_LETTER[p.icon] || '•'}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div className="tax-service-card__icon">{ICON_LETTER[p.icon] || '•'}</div>
+                  {community && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, letterSpacing: '.4px',
+                      background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+                      color: 'var(--tax-brand-primary)', borderRadius: 20,
+                      padding: '2px 8px', whiteSpace: 'nowrap',
+                    }}>
+                      🤖 {locale === 'es' ? 'IA disponible' : 'AI Q&A'}
+                    </span>
+                  )}
+                </div>
                 <span className="tax-service-card__category">{categoryLabel}</span>
                 <h3>{name}</h3>
                 <p>{desc}</p>

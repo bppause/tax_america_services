@@ -175,19 +175,31 @@ export default function Landing({ communitySlug }) {
         <Footer community={community} />
 
         {/* Floating AI chat button */}
-        <button type="button"
-          onClick={() => setChatOpen(o => !o)}
-          aria-label={locale === 'es' ? 'Abrir asistente virtual' : 'Open AI assistant'}
-          style={{
-            position: 'fixed', bottom: 24, right: 24, zIndex: 1200,
-            width: 56, height: 56, borderRadius: '50%',
-            background: 'var(--tax-brand-primary, #1d3a6d)',
-            color: '#fff', border: 'none', cursor: 'pointer',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
-            fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-          {chatOpen ? '×' : '💬'}
-        </button>
+        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1200, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+          {!chatOpen && (
+            <span style={{
+              background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
+              fontSize: 12, fontWeight: 700, padding: '5px 12px',
+              borderRadius: 20, whiteSpace: 'nowrap',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+              animation: 'tax-pulse-label 2s ease-in-out infinite',
+            }}>
+              {locale === 'es' ? '🤖 Pregunta al asistente de IA' : '🤖 Ask our AI assistant'}
+            </span>
+          )}
+          <button type="button"
+            onClick={() => setChatOpen(o => !o)}
+            aria-label={locale === 'es' ? 'Abrir asistente virtual' : 'Open AI assistant'}
+            style={{
+              width: 56, height: 56, borderRadius: '50%',
+              background: 'var(--tax-brand-primary, #1d3a6d)',
+              color: '#fff', border: 'none', cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+              fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+            {chatOpen ? '×' : '💬'}
+          </button>
+        </div>
 
         {chatOpen && (
           <div style={{

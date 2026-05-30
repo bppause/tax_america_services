@@ -596,11 +596,12 @@ module.exports = function createTaxRouter(deps) {
         ty += longLines * 13 + 6;
       }
 
-      // Learn-more link
+      // Learn-more link — use a PDF hyperlink annotation so the URL
+      // doesn't print as raw text (unreadable long strings in the PDF).
       const svcUrl    = `${publicUrl}#service-${p.slug}`;
-      const learnMore = lang === 'es' ? `Mas informacion: ${svcUrl}` : `Learn more: ${svcUrl}`;
+      const learnMoreLabel = lang === 'es' ? 'Más información →' : 'Learn more →';
       doc.font('Helvetica').fontSize(8.5).fillColor(BRAND)
-         .text(learnMore, textX, ty, { width: CARD_INNER });
+         .text(learnMoreLabel, textX, ty, { width: CARD_INNER, link: svcUrl, underline: true });
 
       doc.y = cardY + estH + 10;
     }
