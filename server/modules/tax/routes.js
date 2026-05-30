@@ -388,21 +388,16 @@ module.exports = function createTaxRouter(deps) {
     ]);
     if (cErr || !community) return res.status(404).json({ error: 'Community not found.' });
 
-    // Fetch logo buffer — accept PNG/JPEG by content-type OR file extension.
+    // Fetch logo and convert to PNG via sharp (handles PNG, JPEG, WebP, SVG, etc.).
     let logoBuffer = null;
     if (community.logo_url) {
       try {
         const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(6000) });
         if (lr.ok) {
-          const ct  = (lr.headers.get('content-type') || '').toLowerCase();
-          const url = community.logo_url.toLowerCase().split('?')[0];
-          const isRaster = ct.includes('image/png') || ct.includes('image/jpeg') ||
-                           ct.includes('image/jpg') || ct.includes('image/gif')  ||
-                           url.endsWith('.png') || url.endsWith('.jpg') ||
-                           url.endsWith('.jpeg') || url.endsWith('.gif');
-          if (isRaster) logoBuffer = Buffer.from(await lr.arrayBuffer());
+          const raw = Buffer.from(await lr.arrayBuffer());
+          logoBuffer = await require('sharp')(raw).png().toBuffer();
         }
-      } catch (_) { /* unavailable — continue without logo */ }
+      } catch (_) { /* unavailable or unsupported format — continue without logo */ }
     }
 
     const PDFDocument = require('pdfkit');
