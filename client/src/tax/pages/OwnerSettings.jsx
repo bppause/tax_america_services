@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import enBundle from '../i18n/en.json';
 import esBundle from '../i18n/es.json';
@@ -430,6 +430,9 @@ export default function OwnerSettings() {
       <SettingsGroupHeader
         label={t('owner.settings.group.publicSite.label')}
         hint={t('owner.settings.group.publicSite.hint')} />
+
+      <CommunityBrandingSection settings={settings} auth={auth} community={community}
+                               t={t} onSaved={load} />
 
       <CommunityContactSection settings={settings} auth={auth} community={community}
                                t={t} onSaved={load} />
@@ -1234,6 +1237,87 @@ function NewStatusForm({ auth, community, onCreated, onCancel, t }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// Logo uploader — file picker → signed URL PUT → community logo_url update.
+function CommunityBrandingSection({ settings, auth, community, t, onSaved }) {
+  const inputRef  = useRef(null);
+  const [busy,    setBusy]    = useState(false);
+  const [msg,     setMsg]     = useState({ kind: 'idle', text: '' });
+  const [preview, setPreview] = useState(settings?.logo_url || '');
+
+  useEffect(() => { setPreview(settings?.logo_url || ''); }, [settings]);
+
+  const onPick = () => inputRef.current?.click();
+
+  const onChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setMsg({ kind: 'error', text: t('owner.settings.branding.logoTooBig') }); return;
+    }
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      const r = await taxApi.adminLogoUploadUrl(auth, {
+        communitySlug: community.id,
+        fileName: file.name, mimeType: file.type, sizeBytes: file.size,
+      });
+      const put = await fetch(r.signedUrl, {
+        method: 'PUT', body: file,
+        headers: { 'content-type': file.type, 'x-upsert': 'true' },
+      });
+      if (!put.ok) throw new Error(`Upload failed (${put.status})`);
+      const busted = r.publicUrl + (r.publicUrl.includes('?') ? '&' : '?') + 'v=' + Date.now();
+      await taxApi.adminUpdateCommunityLogo(auth, { communitySlug: community.id, logoUrl: r.publicUrl });
+      setPreview(busted);
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      onSaved();
+    } catch (ex) {
+      setMsg({ kind: 'error', text: ex?.message || t('owner.settings.branding.logoFailed') });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <CollapsibleSection
+      storageKey="branding"
+      defaultOpen={true}
+      title={t('owner.settings.branding.title')}
+      subtitle={t('owner.settings.branding.subtitle')}>
+
+      {msg.text && (
+        <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ marginBottom: 12 }}>{msg.text}</div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+        {/* Logo preview */}
+        <div style={{
+          width: 200, height: 80, border: '1px solid var(--tax-border)', borderRadius: 8,
+          background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          overflow: 'hidden', flexShrink: 0,
+        }}>
+          {preview
+            ? <img src={preview} alt="logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+            : <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('owner.settings.branding.noLogo')}</span>
+          }
+        </div>
+
+        <div>
+          <input ref={inputRef} type="file"
+                 accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif"
+                 onChange={onChange} style={{ display: 'none' }} />
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={onPick} disabled={busy}>
+            {busy ? t('owner.settings.branding.uploading') : t('owner.settings.branding.changeLogo')}
+          </button>
+          <p style={{ margin: '6px 0 0', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
+            {t('owner.settings.branding.logoHint')}
+          </p>
+        </div>
+      </div>
+    </CollapsibleSection>
   );
 }
 

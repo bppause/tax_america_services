@@ -233,6 +233,12 @@ export const taxApi = {
   adminEmployeePhotoUploadUrl(auth, id, payload) {
     return request('POST', `/admin/employees/${encodeURIComponent(id)}/photo/upload-url`, payload, auth, { admin: true });
   },
+  adminLogoUploadUrl(auth, payload) {
+    return request('POST', '/admin/community/logo/upload-url', payload, auth, { admin: true });
+  },
+  adminUpdateCommunityLogo(auth, payload) {
+    return request('PUT', '/admin/community/logo', payload, auth, { admin: true });
+  },
 
   adminListEmailTemplates(auth, communitySlug)  { return request('GET',  `/admin/email-templates?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
   adminUpdateEmailTemplate(auth, key, lang, payload) { return request('PUT', `/admin/email-templates/${encodeURIComponent(key)}/${encodeURIComponent(lang)}`, payload, auth, { admin: true }); },

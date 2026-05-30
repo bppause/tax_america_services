@@ -3274,6 +3274,54 @@ module.exports = function createTaxRouter(deps) {
     res.json({ ok: true });
   });
 
+  // POST /admin/community/logo/upload-url — returns a Supabase signed URL
+  // the client PUTs the logo file to directly (no bytes through Node).
+  // Accepts PNG, JPEG, WebP, SVG. After the PUT the client calls the PUT
+  // below to persist the public URL on the community row.
+  const COMMUNITY_LOGOS_BUCKET = 'community-logos';
+  const LOGO_MAX_BYTES = 5 * 1024 * 1024;
+  const LOGO_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif']);
+  router.post('/admin/community/logo/upload-url', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_settings');
+    if (!actor) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const fileName = sanitizeFileName(req.body?.fileName || 'logo.png');
+    const mimeType = trim(req.body?.mimeType || 'image/png', 200).toLowerCase();
+    const sizeBytes = Number(req.body?.sizeBytes || 0);
+    if (!LOGO_MIMES.has(mimeType))
+      return res.status(400).json({ error: 'logo_mime_invalid',
+        message: 'Logo must be PNG, JPEG, WebP, SVG, or GIF.' });
+    if (sizeBytes > LOGO_MAX_BYTES)
+      return res.status(400).json({ error: 'logo_too_large',
+        message: 'Logo file must be 5 MB or smaller.' });
+    const ext   = (fileName.match(/\.([a-z0-9]+)$/i)?.[1] || 'png').toLowerCase();
+    const path  = `${communitySlug}/logo-${Date.now()}.${ext}`;
+    const { data: signed, error: sErr } = await supabase.storage
+      .from(COMMUNITY_LOGOS_BUCKET).createSignedUploadUrl(path, { upsert: true });
+    if (sErr) {
+      warn('[logo-upload] createSignedUploadUrl failed', sErr.message);
+      return res.status(500).json({ error: 'storage_failed', message: sErr.message });
+    }
+    const { data: pub } = supabase.storage.from(COMMUNITY_LOGOS_BUCKET).getPublicUrl(path);
+    res.json({ signedUrl: signed.signedUrl, path, publicUrl: pub?.publicUrl || '' });
+  });
+
+  // PUT /admin/community/logo — persist the public logo URL returned above.
+  router.put('/admin/community/logo', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const logoUrl = trim(body.logoUrl, 1000);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    if (!logoUrl) return res.status(400).json({ error: 'logoUrl required.' });
+    const { error } = await supabase.from('communities')
+      .update({ logo_url: logoUrl, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, logo_url: logoUrl });
+  });
+
   // PUT /admin/community-settings/email-from — owner-set From-name and
   // From-address used as the sender on outbound notifications. Per-locale
   // because the practice may want a Spanish name on Spanish emails and an
