@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { CERT_LIBRARY } from '../lib/certLibrary';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
@@ -626,6 +627,116 @@ function AssignmentManager({ assignments, customers, empId, auth, onChange, t, l
 // with a toggle; on = granted (default), off = revoked. We start from
 // the server's registry so adding a new key on the server surfaces it
 // here without a frontend change.
+
+// Full-library multi-select cert picker for employee public profiles.
+// Shows every credential in CERT_LIBRARY as a checkbox list, plus any
+// catalog-only certs (used on services but not in the library), plus a
+// custom free-text input. Filterable by a search box.
+function ProfileCertPicker({ certifications, setCertifications, certPool, certInput, setCertInput, t }) {
+  const [filter, setFilter] = useState('');
+  const q = filter.trim().toLowerCase();
+
+  // All known options: CERT_LIBRARY labels first, then catalog-only extras
+  const libLabels = CERT_LIBRARY.map(c => c.label);
+  const libSet = new Set(libLabels);
+  const catalogExtras = (certPool || []).filter(c => !libSet.has(c));
+  const allOptions = [...libLabels, ...catalogExtras];
+  const visible = q ? allOptions.filter(c => c.toLowerCase().includes(q)) : allOptions;
+
+  const toggle = (c) =>
+    setCertifications(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
+
+  const addCustom = () => {
+    const v = certInput.trim();
+    if (v && !certifications.includes(v)) setCertifications(prev => [...prev, v]);
+    setCertInput('');
+  };
+
+  // Note for a given label (from CERT_LIBRARY)
+  const noteFor = (label) => CERT_LIBRARY.find(c => c.label === label)?.note || null;
+
+  return (
+    <div>
+      <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+        {t('owner.publicProfile.certifications')}
+      </label>
+      <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
+        {t('owner.publicProfile.certificationsHint')}
+      </p>
+
+      {/* Search filter */}
+      <input type="text" value={filter} onChange={e => setFilter(e.target.value)}
+        placeholder="Filter credentials…"
+        style={{ width: '100%', padding: '5px 8px', border: '1px solid var(--tax-border)',
+                 borderRadius: 6, fontSize: 12, marginBottom: 6 }} />
+
+      {/* Scrollable checklist */}
+      <div style={{
+        maxHeight: 220, overflowY: 'auto', border: '1px solid var(--tax-border)',
+        borderRadius: 6, background: 'var(--tax-bg)',
+      }}>
+        {visible.length === 0 && (
+          <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--tax-muted)' }}>
+            No credentials match "{filter}"
+          </div>
+        )}
+        {visible.map(c => {
+          const checked = certifications.includes(c);
+          const note = noteFor(c);
+          return (
+            <label key={c} style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              padding: '8px 12px', cursor: 'pointer',
+              borderBottom: '1px solid var(--tax-border)',
+              background: checked ? '#fffbeb' : 'transparent',
+            }}>
+              <input type="checkbox" checked={checked} onChange={() => toggle(c)}
+                style={{ marginTop: 2, flexShrink: 0, accentColor: '#d97706' }} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: checked ? 700 : 400, color: checked ? '#92400e' : 'var(--tax-text)' }}>
+                  {checked && '🏅 '}{c}
+                </div>
+                {note && (
+                  <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>{note}</div>
+                )}
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      {/* Custom cert input */}
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <input type="text" value={certInput} maxLength={200}
+          onChange={e => setCertInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }}
+          placeholder={t('owner.services.certificationsPlaceholder')}
+          style={{ flex: 1, padding: '5px 8px', border: '1px solid var(--tax-border)', borderRadius: 4, fontSize: 12 }} />
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addCustom}>
+          {t('owner.services.certificationsAdd')}
+        </button>
+      </div>
+
+      {/* Summary of selected */}
+      {certifications.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8 }}>
+          {certifications.map(c => (
+            <span key={c} style={{
+              fontSize: 11, padding: '2px 8px', borderRadius: 999,
+              background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}>
+              🏅 {c}
+              <button type="button" onClick={() => toggle(c)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontSize: 13, lineHeight: 1, padding: 0 }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Public profile card. Lets the owner publish this employee on the
 // landing page's "Meet the team" section with a photo, a short title,
 // and a bilingual bio. Default visibility is OFF — the owner explicitly
@@ -895,66 +1006,15 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
           </div>
         </div>
 
-        {/* Certifications — drawn from the community's service catalog cert pool */}
-        <div>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
-            {t('owner.publicProfile.certifications')}
-          </label>
-          <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
-            {t('owner.publicProfile.certificationsHint')}
-          </p>
-          {/* Pool from services — quick-pick chips */}
-          {certPool.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-              {certPool.map(c => {
-                const active = certifications.includes(c);
-                return (
-                  <button key={c} type="button"
-                    onClick={() => setCertifications(prev => active ? prev.filter(x => x !== c) : [...prev, c])}
-                    style={{
-                      fontSize: 11, padding: '3px 10px', borderRadius: 999, cursor: 'pointer',
-                      border: `1px solid ${active ? '#f59e0b' : 'var(--tax-border)'}`,
-                      background: active ? '#fef3c7' : 'var(--tax-bg)',
-                      color: active ? '#92400e' : 'var(--tax-muted)',
-                      fontWeight: active ? 700 : 400,
-                    }}>
-                    {active ? '🏅 ' : '+ '}{c}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {/* Selected chips */}
-          {certifications.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
-              {certifications.map(c => (
-                <span key={c} style={{
-                  fontSize: 11, padding: '3px 10px', borderRadius: 999,
-                  background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
-                  display: 'flex', alignItems: 'center', gap: 4,
-                }}>
-                  🏅 {c}
-                  <button type="button" onClick={() => setCertifications(prev => prev.filter(x => x !== c))}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontSize: 13, lineHeight: 1, padding: 0 }}>
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          {/* Custom cert input */}
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input type="text" value={certInput} maxLength={200}
-              onChange={e => setCertInput(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); const v = certInput.trim(); if (v && !certifications.includes(v)) setCertifications(p => [...p, v]); setCertInput(''); } }}
-              placeholder={t('owner.services.certificationsPlaceholder')}
-              style={{ flex: 1, padding: '5px 8px', border: '1px solid var(--tax-border)', borderRadius: 4, fontSize: 12 }} />
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-              onClick={() => { const v = certInput.trim(); if (v && !certifications.includes(v)) setCertifications(p => [...p, v]); setCertInput(''); }}>
-              {t('owner.services.certificationsAdd')}
-            </button>
-          </div>
-        </div>
+        {/* Certifications — full CERT_LIBRARY multi-select + catalog extras + custom */}
+        <ProfileCertPicker
+          certifications={certifications}
+          setCertifications={setCertifications}
+          certPool={certPool}
+          certInput={certInput}
+          setCertInput={setCertInput}
+          t={t}
+        />
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--tax-muted)' }}>
           {t('owner.publicProfile.displayOrder')}:

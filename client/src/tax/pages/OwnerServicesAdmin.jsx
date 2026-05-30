@@ -58,10 +58,29 @@ export default function OwnerServicesAdmin() {
         : products.length === 0
           ? <p style={{ color: 'var(--tax-muted)' }}>{t('owner.services.empty')}</p>
           : <div style={{ display: 'grid', gap: 10 }}>
-              {products.map(p => (
+              {products.map((p, idx) => (
                 <ServiceRow key={p.id} product={p} auth={auth}
                             community={community} relTypes={relTypes}
                             employees={employees} allProducts={products}
+                            isFirst={idx === 0} isLast={idx === products.length - 1}
+                            onMoveUp={async () => {
+                              if (idx === 0) return;
+                              const prev = products[idx - 1];
+                              await Promise.all([
+                                taxApi.adminUpdateProduct(auth, p.id, { displayOrder: prev.display_order }),
+                                taxApi.adminUpdateProduct(auth, prev.id, { displayOrder: p.display_order }),
+                              ]);
+                              load();
+                            }}
+                            onMoveDown={async () => {
+                              if (idx === products.length - 1) return;
+                              const next = products[idx + 1];
+                              await Promise.all([
+                                taxApi.adminUpdateProduct(auth, p.id, { displayOrder: next.display_order }),
+                                taxApi.adminUpdateProduct(auth, next.id, { displayOrder: p.display_order }),
+                              ]);
+                              load();
+                            }}
                             onChange={load} locale={locale} t={t} />
               ))}
             </div>}
@@ -212,7 +231,7 @@ function AddServiceLauncher({ community, auth, onAdded, t }) {
   );
 }
 
-function ServiceRow({ product: p, auth, community, relTypes, employees = [], allProducts = [], onChange, locale, t }) {
+function ServiceRow({ product: p, auth, community, relTypes, employees = [], allProducts = [], isFirst, isLast, onMoveUp, onMoveDown, onChange, locale, t }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -305,8 +324,23 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], all
           </div>
         </div>
         {/* Row actions — stop propagation so they don't toggle expand */}
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}
+        <div style={{ display: 'flex', gap: 4, flexShrink: 0, alignItems: 'center' }}
              onClick={e => e.stopPropagation()}>
+          {/* Reorder buttons */}
+          <button type="button" onClick={onMoveUp} disabled={busy || isFirst}
+            title="Move up"
+            style={{
+              border: '1px solid var(--tax-border)', borderRadius: 4, background: 'transparent',
+              padding: '2px 7px', cursor: isFirst ? 'default' : 'pointer',
+              color: isFirst ? 'var(--tax-border)' : 'var(--tax-muted)', fontSize: 13, lineHeight: 1,
+            }}>↑</button>
+          <button type="button" onClick={onMoveDown} disabled={busy || isLast}
+            title="Move down"
+            style={{
+              border: '1px solid var(--tax-border)', borderRadius: 4, background: 'transparent',
+              padding: '2px 7px', cursor: isLast ? 'default' : 'pointer',
+              color: isLast ? 'var(--tax-border)' : 'var(--tax-muted)', fontSize: 13, lineHeight: 1,
+            }}>↓</button>
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                   onClick={toggleEnabled} disabled={busy}
                   style={{ color: 'var(--tax-muted)', fontSize: 11 }}>
