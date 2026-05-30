@@ -396,8 +396,12 @@ module.exports = function createTaxRouter(deps) {
         if (lr.ok) {
           const raw = Buffer.from(await lr.arrayBuffer());
           logoBuffer = await require('sharp')(raw).png().toBuffer();
+        } else {
+          warn(`[brochure] logo fetch ${lr.status} for ${community.logo_url}`);
         }
-      } catch (_) { /* unavailable or unsupported format — continue without logo */ }
+      } catch (logoErr) {
+        warn(`[brochure] logo failed: ${logoErr?.message} url=${community.logo_url}`);
+      }
     }
 
     const PDFDocument = require('pdfkit');
@@ -495,12 +499,13 @@ module.exports = function createTaxRouter(deps) {
       doc.rect(0, 0, PW, HEADER_H).fill(BRAND);
       doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(26)
          .text(bizName, M, 32, { width: CW, align: 'center' });
-      doc.fillColor(ACCENT).font('Helvetica').fontSize(12)
+      doc.fillColor(WHITE).font('Helvetica').fontSize(12).opacity(0.82)
          .text(
            lang === 'es'
              ? 'Firma bilingüe especializada en servicios tributarios y contables'
              : 'Bilingual tax & accounting firm — professional, accurate, on time',
            M, 72, { width: CW, align: 'center' });
+      doc.opacity(1);
     }
 
     // ── Intro strip ───────────────────────────────────────────────────────
