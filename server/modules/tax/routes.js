@@ -916,6 +916,9 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
     const productSlug   = trim(body.productSlug || '', 200);
+    // Accept both old single-slug and new multi-slug from the service picker.
+    const productSlugsRaw = Array.isArray(body.productSlugs) ? body.productSlugs : (productSlug ? [productSlug] : []);
+    const focusSlugs = productSlugsRaw.map(s => trim(s, 200)).filter(Boolean).slice(0, 10);
     const messages      = Array.isArray(body.messages) ? body.messages : [];
 
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
@@ -957,31 +960,43 @@ module.exports = function createTaxRouter(deps) {
       return `- ${name} (${p.category}): ${desc.slice(0, 300)}`;
     }).join('\n');
 
-    const focusProduct = productSlug
-      ? (products || []).find(p => p.slug === productSlug)
-      : null;
-    const focusName = focusProduct
-      ? (focusProduct.name_i18n?.en || focusProduct.name_i18n?.es || productSlug)
-      : null;
+    // Identify the services the lead specifically selected (1-to-many).
+    const focusProducts = focusSlugs.length
+      ? (products || []).filter(p => focusSlugs.includes(p.slug))
+      : [];
+    const focusNames = focusProducts.map(p => p.name_i18n?.en || p.name_i18n?.es || p.slug);
+
+    // Build detailed context only for the selected services; list all others briefly.
+    const focusLines = focusProducts.map(p => {
+      const name = p.name_i18n?.en || p.name_i18n?.es || p.slug;
+      const long = p.long_description_i18n?.en || p.long_description_i18n?.es || '';
+      const short = p.description_i18n?.en || p.description_i18n?.es || '';
+      return `### ${name}\n${long || short}`.slice(0, 600);
+    }).join('\n\n');
 
     const systemPrompt = [
       `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
-      `Your job is to answer questions prospects have about the services offered, help them understand`,
-      `what service fits their situation, and — when they are ready — invite them to send their contact`,
-      `details so a team member can follow up.`,
+      `Your job is to answer questions about the specific services the prospect selected, help them`,
+      `understand what fits their situation, and — when they are ready — invite them to share their`,
+      `contact details so a team member can follow up and schedule an appointment.`,
       '',
-      `Services offered:\n${productLines || '(No services listed yet)'}`,
+      focusNames.length
+        ? `The prospect has selected the following service${focusNames.length > 1 ? 's' : ''} to ask about:\n${focusLines}`
+        : `All services offered:\n${productLines || '(No services listed yet)'}`,
       '',
-      focusName ? `The visitor is currently looking at the "${focusName}" service. Start the conversation focused there, but answer questions about any service.` : '',
+      focusNames.length && productLines
+        ? `Other available services (for reference only):\n${productLines}`
+        : '',
       '',
       `Behavior guidelines:`,
-      `- Be concise and friendly. Answer honestly; do not invent fees or timelines.`,
-      `- Ask one clarifying question at a time to understand the prospect's situation.`,
-      `- After 3 or more exchanges, or whenever the prospect expresses clear interest, offer to connect`,
-      `  them with the team by ending your reply with exactly the token [READY_TO_CONNECT] on its own line.`,
-      `- You can also include [READY_TO_CONNECT] earlier if the user explicitly asks to be contacted.`,
-      `- Do NOT include [READY_TO_CONNECT] on the very first reply or before you have answered at least one question.`,
-      `- Reply in the same language the user is writing in (English or Spanish).`,
+      `- Focus your answers on the selected service(s) above. Only discuss other services if the prospect asks.`,
+      `- Be concise and friendly. Answer honestly; do not invent fees, timelines, or guarantees.`,
+      `- Ask one short clarifying question at a time to understand the prospect's specific situation.`,
+      `- After 3 or more exchanges, or when the prospect expresses clear readiness, end your reply with`,
+      `  the token [READY_TO_CONNECT] on its own line to trigger the appointment booking step.`,
+      `- Include [READY_TO_CONNECT] immediately if the user says they want to be contacted or schedule.`,
+      `- Do NOT include [READY_TO_CONNECT] on the very first reply.`,
+      `- Reply in the same language the user writes in (English or Spanish).`,
     ].filter(Boolean).join('\n');
 
     let Anthropic;
