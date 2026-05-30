@@ -394,7 +394,14 @@ module.exports = function createTaxRouter(deps) {
     let logoBuffer = null;
     if (community.logo_url) {
       try {
-        const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(6000) });
+        // logo_url may be stored as a relative path (e.g. /tax/logo.png).
+        // Prefix with PUBLIC_APP_URL so fetch() gets an absolute URL.
+        let logoFetchUrl = community.logo_url;
+        if (!/^https?:\/\//i.test(logoFetchUrl)) {
+          const base = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '');
+          logoFetchUrl = base + (logoFetchUrl.startsWith('/') ? '' : '/') + logoFetchUrl;
+        }
+        const lr = await fetch(logoFetchUrl, { signal: AbortSignal.timeout(6000) });
         if (lr.ok) {
           const raw = Buffer.from(await lr.arrayBuffer());
           logoBuffer = await require('sharp')(raw).png().toBuffer();
