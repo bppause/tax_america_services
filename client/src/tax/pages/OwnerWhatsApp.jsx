@@ -234,6 +234,21 @@ export default function OwnerWhatsApp() {
 
           {/* ── Left: template editor ── */}
           <div>
+            {/* Logo header — mirrors PDF brochure; click goes to public website */}
+            {settings?.logo_url && (
+              <a href={publicUrl} target="_blank" rel="noreferrer"
+                 title={msgLocale === 'es' ? 'Abrir sitio web' : 'Open website'}
+                 style={{
+                   display: 'flex', alignItems: 'center', justifyContent: 'center',
+                   padding: '12px 16px', marginBottom: 14, borderRadius: 8,
+                   border: '1px solid var(--tax-border)', background: '#fff',
+                   textDecoration: 'none', cursor: 'pointer',
+                 }}>
+                <img src={settings.logo_url} alt={settings.name || ''}
+                     style={{ maxHeight: 52, maxWidth: 240, objectFit: 'contain' }} />
+              </a>
+            )}
+
             {/* Locale tabs + top copy button */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 18, alignItems: 'center', flexWrap: 'wrap' }}>
               {['es', 'en'].map(lang => (
