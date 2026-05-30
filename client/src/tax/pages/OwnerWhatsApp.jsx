@@ -139,10 +139,10 @@ export default function OwnerWhatsApp() {
       {loading ? (
         <p style={{ color: 'var(--tax-muted)' }}>{t('owner.whatsapp.loading')}</p>
       ) : (
-        <div style={{ maxWidth: 680 }}>
+        <div style={{ maxWidth: 900 }}>
 
-          {/* Language selector */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          {/* Language selector — controls both message and PDF preview */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
             {['es', 'en'].map(lang => (
               <button key={lang} type="button"
                       className={`tax-btn ${msgLocale === lang ? 'tax-btn--primary' : 'tax-btn--ghost'}`}
@@ -152,53 +152,64 @@ export default function OwnerWhatsApp() {
             ))}
           </div>
 
-          {/* Message preview + copy */}
-          {message ? (
-            <div style={{ position: 'relative' }}>
-              <pre style={{
-                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                background: 'var(--tax-bg-alt)', border: '1px solid var(--tax-border)',
-                borderRadius: 8, padding: '16px 16px 16px 16px',
-                paddingTop: 48,
-                fontSize: 14, lineHeight: 1.7,
-                fontFamily: 'inherit', margin: 0,
-              }}>
-                {message}
-              </pre>
-              <button type="button"
-                      className={`tax-btn ${copied ? 'tax-btn--ghost' : 'tax-btn--primary'} tax-btn--sm`}
-                      onClick={copy}
-                      style={{ position: 'absolute', top: 10, right: 10 }}>
-                {copied ? `✓ ${t('owner.whatsapp.copied')}` : t('owner.whatsapp.copy')}
-              </button>
-            </div>
-          ) : (
-            <p style={{ color: 'var(--tax-muted)' }}>{t('owner.whatsapp.noServices')}</p>
-          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
 
-          {/* PDF brochure links */}
-          {!loading && products.some(p => p.enabled) && (
-            <div style={{
-              marginTop: 16, padding: '12px 16px',
-              background: 'var(--tax-bg-alt)', borderRadius: 8,
-              border: '1px solid var(--tax-border)',
-              display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center',
-            }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tax-text)' }}>
-                {t('owner.whatsapp.brochure.label')}
-              </span>
-              {['es', 'en'].map(lang => (
-                <a key={lang}
-                   href={brochureUrl(window.location.origin, community.id, lang)}
-                   target="_blank" rel="noreferrer"
-                   className="tax-btn tax-btn--ghost tax-btn--sm">
-                  {t('owner.whatsapp.brochure.open', { lang: lang.toUpperCase() })}
-                </a>
-              ))}
+            {/* WhatsApp message */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>
+                {t('owner.whatsapp.section.message')}
+              </div>
+              {message ? (
+                <div style={{ position: 'relative' }}>
+                  <pre style={{
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                    background: 'var(--tax-bg-alt)', border: '1px solid var(--tax-border)',
+                    borderRadius: 8, padding: 14, paddingTop: 44,
+                    fontSize: 13, lineHeight: 1.7,
+                    fontFamily: 'inherit', margin: 0,
+                    maxHeight: 680, overflowY: 'auto',
+                  }}>
+                    {message}
+                  </pre>
+                  <button type="button"
+                          className={`tax-btn ${copied ? 'tax-btn--ghost' : 'tax-btn--primary'} tax-btn--sm`}
+                          onClick={copy}
+                          style={{ position: 'absolute', top: 8, right: 8 }}>
+                    {copied ? `✓ ${t('owner.whatsapp.copied')}` : t('owner.whatsapp.copy')}
+                  </button>
+                </div>
+              ) : (
+                <p style={{ color: 'var(--tax-muted)' }}>{t('owner.whatsapp.noServices')}</p>
+              )}
             </div>
-          )}
 
-          <p style={{ marginTop: 12, fontSize: 12, color: 'var(--tax-muted)' }}>
+            {/* PDF brochure inline preview */}
+            {products.some(p => p.enabled) && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+                    {t('owner.whatsapp.section.brochure')}
+                  </span>
+                  <a href={pdfUrl} target="_blank" rel="noreferrer"
+                     style={{ fontSize: 12, color: 'var(--tax-brand-primary)' }}>
+                    {t('owner.whatsapp.brochure.newTab')} ↗
+                  </a>
+                </div>
+                <iframe
+                  key={pdfUrl}
+                  src={pdfUrl}
+                  title={t('owner.whatsapp.section.brochure')}
+                  style={{
+                    width: '100%', height: 680,
+                    border: '1px solid var(--tax-border)',
+                    borderRadius: 8,
+                  }}
+                />
+              </div>
+            )}
+          </div>
+
+          <p style={{ marginTop: 14, fontSize: 12, color: 'var(--tax-muted)' }}>
             {t('owner.whatsapp.hint.prefix')}{' '}
             <a href={`/tax/${community?.id}/employee/settings`}>{t('owner.whatsapp.hint.settings')}</a>
             {' '}{t('owner.whatsapp.hint.and')}{' '}
