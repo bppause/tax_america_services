@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
@@ -377,35 +377,139 @@ function ServiceRow({ product: p, auth, community, relTypes, employees = [], onC
   );
 }
 
-// Curated credential list grouped by relevance to service category.
-// Each entry is the canonical display string stored in the DB.
+// Curated credential library.
+// `slugs`      — service slugs where this credential is a primary suggestion.
+// `categories` — fallback: surface when the service's category matches.
+// Entries with neither match still appear under "Other credentials".
 const CERT_LIBRARY = [
-  // IRS credentials
-  { label: 'CAA – Certified Acceptance Agent (IRS)',        categories: ['one_off', 'tax_prep', 'recurring'] },
-  { label: 'IRS Enrolled Agent (EA)',                       categories: ['tax_prep', 'recurring', 'one_off'] },
-  { label: 'IRS EFIN – Authorized e-File Provider',        categories: ['tax_prep', 'recurring'] },
-  { label: 'IRS Annual Filing Season Program (AFSP)',       categories: ['tax_prep'] },
-  { label: 'IRS PTIN – Registered Tax Preparer',           categories: ['tax_prep', 'recurring'] },
-  // Accounting
-  { label: 'CPA – Certified Public Accountant',            categories: ['recurring', 'tax_prep', 'one_off'] },
-  { label: 'QuickBooks ProAdvisor – Certified',            categories: ['recurring'] },
-  { label: 'Xero Advisor Certified',                       categories: ['recurring'] },
-  // Payroll
-  { label: 'FPC – Fundamental Payroll Certification',      categories: ['recurring'] },
-  { label: 'CPP – Certified Payroll Professional',         categories: ['recurring'] },
-  // Business / legal
-  { label: 'Notary Public',                                categories: ['one_off', 'tax_prep'] },
-  { label: 'USCIS Accredited Representative',              categories: ['one_off'] },
-  // Translation / general
-  { label: 'ATA Certified Translator',                     categories: ['one_off'] },
-  { label: 'NAICS Licensed Professional',                  categories: ['one_off', 'recurring', 'tax_prep'] },
+  // ── ITIN ──────────────────────────────────────────────────────────────────
+  {
+    label: 'CAA – Certified Acceptance Agent (IRS)',
+    slugs: ['itin'],
+    categories: ['one_off'],
+    note: 'Lets you verify passports in-office — clients never mail originals to the IRS.',
+  },
+  {
+    label: 'IRS Authorized e-File Provider (EFIN)',
+    slugs: ['itin', 'individual-tax', 'business-tax'],
+    categories: ['tax_prep'],
+    note: 'Required to submit returns electronically on behalf of clients.',
+  },
+  // ── Tax preparation ───────────────────────────────────────────────────────
+  {
+    label: 'IRS Enrolled Agent (EA)',
+    slugs: ['individual-tax', 'business-tax', 'itin'],
+    categories: ['tax_prep'],
+    note: 'Highest IRS credential — unlimited practice rights before the IRS.',
+  },
+  {
+    label: 'CPA – Certified Public Accountant',
+    slugs: ['individual-tax', 'business-tax', 'bookkeeping', 'sales-tax', 'workers-comp-audit'],
+    categories: ['tax_prep', 'recurring'],
+    note: 'State-licensed accounting credential with audit and attest rights.',
+  },
+  {
+    label: 'IRS Annual Filing Season Program (AFSP)',
+    slugs: ['individual-tax', 'business-tax'],
+    categories: ['tax_prep'],
+    note: 'Voluntary IRS program — limited representation rights and directory listing.',
+  },
+  {
+    label: 'IRS PTIN – Registered Tax Preparer',
+    slugs: ['individual-tax', 'business-tax'],
+    categories: ['tax_prep'],
+    note: 'Required for all paid preparers who sign federal returns.',
+  },
+  // ── Bookkeeping / accounting ──────────────────────────────────────────────
+  {
+    label: 'QuickBooks ProAdvisor – Certified',
+    slugs: ['bookkeeping', 'payroll'],
+    categories: ['recurring'],
+    note: 'Intuit-certified QuickBooks expertise listed in the ProAdvisor directory.',
+  },
+  {
+    label: 'Xero Advisor Certified',
+    slugs: ['bookkeeping'],
+    categories: ['recurring'],
+    note: 'Xero-certified advisor listed in the Xero advisor directory.',
+  },
+  {
+    label: 'Certified Bookkeeper (CB) – AIPB',
+    slugs: ['bookkeeping'],
+    categories: ['recurring'],
+    note: 'American Institute of Professional Bookkeepers national credential.',
+  },
+  // ── Payroll ───────────────────────────────────────────────────────────────
+  {
+    label: 'CPP – Certified Payroll Professional',
+    slugs: ['payroll'],
+    categories: ['recurring'],
+    note: 'American Payroll Association top-tier payroll credential.',
+  },
+  {
+    label: 'FPC – Fundamental Payroll Certification',
+    slugs: ['payroll'],
+    categories: ['recurring'],
+    note: 'American Payroll Association entry-level credential.',
+  },
+  // ── Sales tax / compliance ────────────────────────────────────────────────
+  {
+    label: 'CMI – Certified Member of the Institute (IPT)',
+    slugs: ['sales-tax'],
+    categories: ['recurring'],
+    note: 'Institute for Professionals in Taxation — sales & use tax specialty.',
+  },
+  // ── Workers comp audit ────────────────────────────────────────────────────
+  {
+    label: 'CWCA – Certified Workers\' Compensation Advisor',
+    slugs: ['workers-comp-audit'],
+    categories: ['one_off'],
+    note: 'Specialist designation for workers\' compensation advisory work.',
+  },
+  // ── Business formation ────────────────────────────────────────────────────
+  {
+    label: 'Notary Public',
+    slugs: ['business-formation', 'notary', 'itin'],
+    categories: ['one_off'],
+    note: 'State-commissioned to witness signatures and certify documents.',
+  },
+  {
+    label: 'USCIS Accredited Representative',
+    slugs: ['itin', 'business-formation'],
+    categories: ['one_off'],
+    note: 'DOJ-accredited to represent clients before USCIS and immigration courts.',
+  },
+  // ── Translation ───────────────────────────────────────────────────────────
+  {
+    label: 'ATA Certified Translator',
+    slugs: ['translation'],
+    categories: ['one_off'],
+    note: 'American Translators Association certification — accepted by USCIS and courts.',
+  },
 ];
 
-function CertificationsEditor({ certifications, setCertifications, certInput, setCertInput, category, t }) {
-  // Show credentials relevant to this service's category first, then the rest.
-  const relevant = CERT_LIBRARY.filter(c => c.categories.includes(category));
-  const others   = CERT_LIBRARY.filter(c => !c.categories.includes(category));
-  const ordered  = [...relevant, ...others];
+// Score a credential for a given service slug + category.
+// 2 = primary suggestion (slug match), 1 = category match, 0 = general.
+function certScore(cert, slug, category) {
+  if (cert.slugs?.includes(slug))         return 2;
+  if (cert.categories?.includes(category)) return 1;
+  return 0;
+}
+
+function CertificationsEditor({ certifications, setCertifications, certInput, setCertInput, slug, category, t }) {
+  const suggested = CERT_LIBRARY.filter(c => certScore(c, slug, category) === 2);
+  const related   = CERT_LIBRARY.filter(c => certScore(c, slug, category) === 1);
+  const general   = CERT_LIBRARY.filter(c => certScore(c, slug, category) === 0);
+
+  // Render sections only when they have entries. "General" collapses behind
+  // a disclosure toggle so the list doesn't feel overwhelming for services
+  // with many suggested certs.
+  const [showGeneral, setShowGeneral] = React.useState(false);
+  const ordered = [
+    ...(suggested.length ? [{ heading: t('owner.services.certificationsSuggested'), items: suggested }] : []),
+    ...(related.length   ? [{ heading: t('owner.services.certificationsRelated'),   items: related   }] : []),
+    ...(general.length   ? [{ heading: t('owner.services.certificationsGeneral'),   items: general, collapsible: true }] : []),
+  ];
 
   const toggle = (label) => {
     setCertifications(prev =>
@@ -428,42 +532,62 @@ function CertificationsEditor({ certifications, setCertifications, certInput, se
         {t('owner.services.certificationsHint')}
       </p>
 
-      {/* Credential pick-list */}
-      <div style={{ display: 'grid', gap: 5, marginBottom: 10 }}>
-        {relevant.length > 0 && (
-          <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
-                        color: 'var(--tax-brand-primary)', marginBottom: 2 }}>
-            {t('owner.services.certificationsRelevant')}
+      {/* Credential pick-list — sections: Suggested → Related → General (collapsed) */}
+      <div style={{ marginBottom: 10 }}>
+        {ordered.map(section => (
+          <div key={section.heading} style={{ marginBottom: 6 }}>
+            {/* Section heading */}
+            {section.collapsible ? (
+              <button type="button"
+                onClick={() => setShowGeneral(v => !v)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+                         fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                         letterSpacing: '.05em', color: 'var(--tax-muted)',
+                         display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                {showGeneral ? '▾' : '▸'} {section.heading}
+              </button>
+            ) : (
+              <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                            letterSpacing: '.05em', marginBottom: 4,
+                            color: section.items === suggested
+                              ? 'var(--tax-brand-primary)' : 'var(--tax-muted)' }}>
+                {section.heading}
+              </div>
+            )}
+
+            {/* Credential rows */}
+            {(!section.collapsible || showGeneral) && (
+              <div style={{ display: 'grid', gap: 4 }}>
+                {section.items.map(c => {
+                  const checked = certifications.includes(c.label);
+                  return (
+                    <label key={c.label} style={{
+                      display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+                      padding: '8px 10px', borderRadius: 7,
+                      border: `1.5px solid ${checked ? '#f59e0b' : 'var(--tax-border)'}`,
+                      background: checked ? '#fffbeb' : '#fff',
+                      transition: 'all .1s',
+                    }}>
+                      <input type="checkbox" checked={checked} onChange={() => toggle(c.label)}
+                        style={{ width: 15, height: 15, accentColor: '#f59e0b', flexShrink: 0, marginTop: 1 }} />
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: checked ? 700 : 500,
+                                      color: checked ? '#92400e' : 'var(--tax-text)' }}>
+                          {checked ? '🏅 ' : ''}{c.label}
+                        </div>
+                        {c.note && (
+                          <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2, lineHeight: 1.4 }}>
+                            {c.note}
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        )}
-        {ordered.map((c, i) => {
-          const checked = certifications.includes(c.label);
-          const isFirstOther = relevant.length > 0 && i === relevant.length;
-          return (
-            <div key={c.label}>
-              {isFirstOther && (
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em',
-                              color: 'var(--tax-muted)', marginTop: 8, marginBottom: 2 }}>
-                  {t('owner.services.certificationsOther')}
-                </div>
-              )}
-              <label style={{
-                display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-                padding: '7px 10px', borderRadius: 7,
-                border: `1.5px solid ${checked ? '#f59e0b' : 'var(--tax-border)'}`,
-                background: checked ? '#fffbeb' : '#fff',
-                transition: 'all .1s',
-              }}>
-                <input type="checkbox" checked={checked} onChange={() => toggle(c.label)}
-                  style={{ width: 15, height: 15, accentColor: '#f59e0b', flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: checked ? 700 : 400,
-                               color: checked ? '#92400e' : 'var(--tax-text)' }}>
-                  {checked ? '🏅 ' : ''}{c.label}
-                </span>
-              </label>
-            </div>
-          );
-        })}
+        ))}
       </div>
 
       {/* Custom credential input */}
@@ -680,6 +804,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         setCertifications={setCertifications}
         certInput={certInput}
         setCertInput={setCertInput}
+        slug={p.slug}
         category={p.category}
         t={t}
       />
