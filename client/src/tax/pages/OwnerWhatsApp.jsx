@@ -52,9 +52,11 @@ function buildServicesBlock(locale, products) {
 }
 
 function buildContactBlock(locale, settings) {
+  const waDigits = (settings.whatsapp || '').replace(/\D/g, '');
+  const waUrl    = waDigits ? `https://wa.me/${waDigits}` : null;
   return [
     settings.phone         ? (locale === 'es' ? `📞 Teléfono: ${settings.phone}` : `📞 Phone: ${settings.phone}`) : '',
-    settings.whatsapp      ? `💬 WhatsApp: ${settings.whatsapp}` : '',
+    waUrl                  ? `💬 WhatsApp: ${waUrl}` : '',
     settings.contact_email ? `📧 Email: ${settings.contact_email}` : '',
     `🌐 {SITE}`,
   ].filter(Boolean).join('\n');

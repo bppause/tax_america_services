@@ -463,40 +463,42 @@ module.exports = function createTaxRouter(deps) {
     }
 
     // ── Header ────────────────────────────────────────────────────────────
-    const HEADER_H = logoBuffer ? 150 : 120;
-    doc.rect(0, 0, PW, HEADER_H).fill(BRAND);
+    const LOGO_SECTION_H = 140;  // white panel height when logo present
+    const BANNER_H       = 38;   // brand-color tagline band height
+    const HEADER_H = logoBuffer ? LOGO_SECTION_H + BANNER_H : 120;
 
     if (logoBuffer) {
-      // White logo pill on the left; name + tagline on the right.
-      const LOGO_PAD = 10;
-      const PILL_W   = 160;
-      const PILL_H   = 110;
-      const pillX    = M;
-      const pillY    = (HEADER_H - PILL_H) / 2;
-      doc.roundedRect(pillX, pillY, PILL_W, PILL_H, 8).fill(WHITE);
+      // White logo panel (full width) with thin brand stripe at top.
+      doc.rect(0, 0, PW, LOGO_SECTION_H).fill(WHITE);
+      doc.rect(0, 0, PW, 5).fill(BRAND);
+
+      // Logo centered in the white panel, generous fit box.
+      const MAX_LOGO_W = 340;
+      const MAX_LOGO_H = 110;
+      const logoX = (PW - MAX_LOGO_W) / 2;
+      const logoY = 5 + (LOGO_SECTION_H - 5 - MAX_LOGO_H) / 2;
       try {
-        doc.image(logoBuffer, pillX + LOGO_PAD, pillY + LOGO_PAD,
-          { fit: [PILL_W - LOGO_PAD*2, PILL_H - LOGO_PAD*2], align: 'center', valign: 'center' });
-      } catch (_) { /* unsupported format — pill stays, logo skipped */ }
-      const tx = pillX + PILL_W + 18;
-      const tw = CW - PILL_W - 18;
-      const nameY = (HEADER_H / 2) - 22;
-      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(22)
-         .text(bizName, tx, nameY, { width: tw });
-      doc.fillColor(ACCENT).font('Helvetica').fontSize(11)
+        doc.image(logoBuffer, logoX, logoY,
+          { fit: [MAX_LOGO_W, MAX_LOGO_H], align: 'center', valign: 'center' });
+      } catch (_) { /* unsupported format — white panel stays */ }
+
+      // Brand-colored tagline banner immediately below logo panel.
+      doc.rect(0, LOGO_SECTION_H, PW, BANNER_H).fill(BRAND);
+      doc.fillColor(WHITE).font('Helvetica').fontSize(10)
          .text(
            lang === 'es'
-             ? 'Firma bilingue especializada en servicios tributarios y contables'
+             ? 'Firma bilingüe especializada en servicios tributarios y contables'
              : 'Bilingual tax & accounting firm — professional, accurate, on time',
-           tx, nameY + 32, { width: tw });
+           M, LOGO_SECTION_H + 12, { width: CW, align: 'center' });
     } else {
-      // Centered name + tagline, no logo.
+      // No logo — centered name + tagline on solid brand background.
+      doc.rect(0, 0, PW, HEADER_H).fill(BRAND);
       doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(26)
          .text(bizName, M, 32, { width: CW, align: 'center' });
       doc.fillColor(ACCENT).font('Helvetica').fontSize(12)
          .text(
            lang === 'es'
-             ? 'Firma bilingue especializada en servicios tributarios y contables'
+             ? 'Firma bilingüe especializada en servicios tributarios y contables'
              : 'Bilingual tax & accounting firm — professional, accurate, on time',
            M, 72, { width: CW, align: 'center' });
     }
@@ -608,25 +610,38 @@ module.exports = function createTaxRouter(deps) {
     doc.moveDown(0.9);
 
     // Contact block — light card matching service cards.
-    const ctaLines = [
-      community.phone         && (lang === 'es' ? `Tel: ${community.phone}` : `Phone: ${community.phone}`),
-      community.whatsapp      && `WhatsApp: ${community.whatsapp}`,
-      community.contact_email && `Email: ${community.contact_email}`,
-      publicUrl               && `Web: ${publicUrl}`,
-    ].filter(Boolean);
-
+    // Items: { label?, text, link? }
+    const waDigits = (community.whatsapp || '').replace(/\D/g, '');
+    const waUrl    = waDigits ? `https://wa.me/${waDigits}` : null;
+    const ctaItems = [];
+    if (community.phone)
+      ctaItems.push({ text: lang === 'es' ? `Tel: ${community.phone}` : `Phone: ${community.phone}` });
+    if (waUrl)
+      ctaItems.push({ label: 'WhatsApp: ', text: waUrl, link: waUrl });
+    if (community.contact_email)
+      ctaItems.push({ label: 'Email: ', text: community.contact_email, link: `mailto:${community.contact_email}` });
+    if (publicUrl)
+      ctaItems.push({ label: 'Web: ', text: publicUrl, link: publicUrl });
     const addrParts = [community.address_line1, community.city, community.state, community.postal_code].filter(Boolean);
-    if (addrParts.length) ctaLines.push(addrParts.join(', '));
+    if (addrParts.length) ctaItems.push({ text: addrParts.join(', ') });
 
-    const ctaCardH = ctaLines.length * 20 + CARD_PAD * 2;
+    const ctaCardH = ctaItems.length * 20 + CARD_PAD * 2;
     const ctaY     = doc.y;
     doc.rect(M, ctaY, CW, ctaCardH).fill(CARD_BG);
     doc.rect(M, ctaY, ACCENT_W, ctaCardH).fill(BRAND);
 
     let cy = ctaY + CARD_PAD;
-    for (const line of ctaLines) {
-      doc.font('Helvetica').fontSize(11).fillColor(DARK)
-         .text(line, M + ACCENT_W + CARD_PAD, cy, { width: CARD_INNER });
+    const textX = M + ACCENT_W + CARD_PAD;
+    for (const item of ctaItems) {
+      if (item.label) {
+        doc.font('Helvetica').fontSize(11).fillColor(DARK)
+           .text(item.label, textX, cy, { width: CARD_INNER, continued: true });
+        doc.fillColor(BRAND)
+           .text(item.text, { link: item.link });
+      } else {
+        doc.font('Helvetica').fontSize(11).fillColor(DARK)
+           .text(item.text, textX, cy, { width: CARD_INNER });
+      }
       cy += 20;
     }
     doc.y = ctaY + ctaCardH + 16;
