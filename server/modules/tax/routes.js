@@ -3297,6 +3297,18 @@ module.exports = function createTaxRouter(deps) {
         message: 'Logo file must be 5 MB or smaller.' });
     const ext   = (fileName.match(/\.([a-z0-9]+)$/i)?.[1] || 'png').toLowerCase();
     const path  = `${communitySlug}/logo-${Date.now()}.${ext}`;
+
+    // Auto-create the bucket on first use if it doesn't exist yet.
+    const { data: buckets } = await supabase.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === COMMUNITY_LOGOS_BUCKET);
+    if (!bucketExists) {
+      const { error: bErr } = await supabase.storage.createBucket(COMMUNITY_LOGOS_BUCKET, { public: true, fileSizeLimit: LOGO_MAX_BYTES });
+      if (bErr && !bErr.message?.includes('already exists')) {
+        warn('[logo-upload] createBucket failed', bErr.message);
+        return res.status(500).json({ error: 'storage_failed', message: `Could not create storage bucket: ${bErr.message}` });
+      }
+    }
+
     const { data: signed, error: sErr } = await supabase.storage
       .from(COMMUNITY_LOGOS_BUCKET).createSignedUploadUrl(path, { upsert: true });
     if (sErr) {

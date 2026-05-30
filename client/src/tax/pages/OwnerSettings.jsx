@@ -1275,7 +1275,8 @@ function CommunityBrandingSection({ settings, auth, community, t, onSaved }) {
       setMsg({ kind: 'success', text: t('owner.settings.saved') });
       onSaved();
     } catch (ex) {
-      setMsg({ kind: 'error', text: ex?.message || t('owner.settings.branding.logoFailed') });
+      const detail = ex?.body?.message || ex?.message || '';
+      setMsg({ kind: 'error', text: detail || t('owner.settings.branding.logoFailed') });
     } finally { setBusy(false); }
   };
 
