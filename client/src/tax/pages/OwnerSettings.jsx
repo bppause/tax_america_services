@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useT } from '../i18n';
 import enBundle from '../i18n/en.json';
 import esBundle from '../i18n/es.json';
@@ -430,6 +430,9 @@ export default function OwnerSettings() {
       <SettingsGroupHeader
         label={t('owner.settings.group.publicSite.label')}
         hint={t('owner.settings.group.publicSite.hint')} />
+
+      <BrandingSection settings={settings} auth={auth} community={community}
+                       t={t} onSaved={load} />
 
       <CommunityContactSection settings={settings} auth={auth} community={community}
                                t={t} onSaved={load} />
@@ -1171,6 +1174,98 @@ function NewStatusForm({ auth, community, onCreated, onCancel, t }) {
         </button>
       </div>
     </div>
+  );
+}
+
+// Logo & branding section. Uses the server's two-step signed-upload flow:
+// 1. POST /admin/community/logo/upload-url → { uploadUrl, publicUrl }
+// 2. PUT file to uploadUrl (direct-to-storage, no server proxy)
+// 3. PUT /admin/community/logo { logoUrl: publicUrl } to persist
+function BrandingSection({ settings, auth, community, t, onSaved }) {
+  const [uploading, setUploading] = useState(false);
+  const [msg, setMsg]             = useState({ kind: 'idle', text: '' });
+  const fileRef = useRef(null);
+
+  const [localLogo, setLocalLogo] = useState(null); // optimistic preview URL
+
+  const currentLogo = localLogo || settings?.logo_url;
+
+  const onFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setMsg({ kind: 'error', text: t('owner.settings.branding.error') });
+      return;
+    }
+    setUploading(true);
+    setMsg({ kind: 'idle', text: '' });
+    try {
+      const ext = file.name.split('.').pop().toLowerCase() || 'png';
+      const { uploadUrl, publicUrl } = await taxApi.adminLogoUploadUrl(auth, {
+        communitySlug: community.id, fileType: ext,
+      });
+      await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      await taxApi.adminUpdateCommunityLogo(auth, {
+        communitySlug: community.id, logoUrl: publicUrl,
+      });
+      setLocalLogo(publicUrl);
+      setMsg({ kind: 'success', text: t('owner.settings.branding.saved') });
+      onSaved();
+    } catch (_e) {
+      setMsg({ kind: 'error', text: t('owner.settings.branding.error') });
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  return (
+    <CollapsibleSection
+      storageKey="branding"
+      defaultOpen={true}
+      title={t('owner.settings.branding.title')}
+      subtitle={t('owner.settings.branding.subtitle')}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+        {/* Current logo preview */}
+        <div style={{
+          width: 160, height: 80,
+          border: '1px solid var(--tax-border)', borderRadius: 8,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: '#fff', flexShrink: 0,
+        }}>
+          {currentLogo
+            ? <img src={currentLogo} alt={community?.name || ''}
+                   style={{ maxWidth: 148, maxHeight: 68, objectFit: 'contain' }} />
+            : <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+                {t('owner.settings.branding.noLogo')}
+              </span>
+          }
+        </div>
+
+        <div style={{ flex: 1, minWidth: 200 }}>
+          {msg.text && (
+            <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
+                 style={{ marginBottom: 10 }}>{msg.text}</div>
+          )}
+          <input ref={fileRef} type="file" id="logo-upload-input"
+                 accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                 style={{ display: 'none' }}
+                 onChange={onFileChange} />
+          <button type="button" className="tax-btn tax-btn--ghost"
+                  disabled={uploading}
+                  onClick={() => fileRef.current?.click()}>
+            {uploading ? t('owner.settings.branding.uploading') : t('owner.settings.branding.editBtn')}
+          </button>
+          <p style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 8, lineHeight: 1.5 }}>
+            {t('owner.settings.branding.hint')}
+          </p>
+        </div>
+      </div>
+    </CollapsibleSection>
   );
 }
 

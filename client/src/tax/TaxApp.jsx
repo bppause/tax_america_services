@@ -43,6 +43,7 @@ import OwnerEmailTemplates from './pages/OwnerEmailTemplates';
 import OwnerRelationshipWorkflows from './pages/OwnerRelationshipWorkflows';
 import OwnerRelationshipTypes from './pages/OwnerRelationshipTypes';
 import OwnerSetup from './pages/OwnerSetup';
+import OwnerWhatsApp from './pages/OwnerWhatsApp';
 import PlatformDashboard from './pages/PlatformDashboard';
 import PlatformCommunityCreate from './pages/PlatformCommunityCreate';
 import { TaxPlatformAuthProvider, useTaxPlatformAuth } from './auth/PlatformAuthProvider';
@@ -96,6 +97,7 @@ function parseTaxPath() {
     if (parts[3] === 'workflows') return { route: 'owner-workflows', slug };
     if (parts[3] === 'services') return { route: 'owner-services', slug };
     if (parts[3] === 'setup') return { route: 'owner-setup', slug };
+    if (parts[3] === 'whatsapp') return { route: 'owner-whatsapp', slug };
     if (parts[3] === 'articles') return { route: 'owner-articles', slug };
     if (parts[3] === 'faqs')     return { route: 'owner-faqs', slug };
     if (parts[3] === 'service-catalog') return { route: 'owner-service-catalog', slug };
@@ -257,6 +259,7 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-workflows') return <OwnerRelationshipWorkflows />;
   if (parsed.route === 'owner-services') return <OwnerRelationshipTypes />;
   if (parsed.route === 'owner-setup') return <OwnerSetup />;
+  if (parsed.route === 'owner-whatsapp') return <OwnerWhatsApp />;
   if (parsed.route === 'employee-help') return <EmployeeHelp />;
   if (parsed.route === 'employee-inbox') return <EmployeeInbox />;
   if (parsed.route === 'owner-dashboard') return <OwnerDashboard />;
