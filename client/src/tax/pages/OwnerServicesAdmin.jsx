@@ -388,6 +388,10 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
   const [reqs, setReqs] = useState(() => initialReqs.map(d => (
     typeof d === 'string' ? { en: d, es: '' } : { en: d.en || '', es: d.es || '' }
   )));
+  const [certifications, setCertifications] = useState(
+    Array.isArray(p.certifications) ? p.certifications : []
+  );
+  const [certInput, setCertInput] = useState('');
   const [order, setOrder] = useState(String(p.display_order || 0));
   const [videoUrl, setVideoUrl] = useState(p.video_url || '');
 
@@ -442,6 +446,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         descriptionI18n: { en: descEn.trim(), es: descEs.trim() },
         longDescriptionI18n: { en: longEn.trim(), es: longEs.trim() },
         requiredDocuments: cleanedReqs,
+        certifications: certifications.filter(Boolean),
         displayOrder: Number(order) || 0,
         videoUrl: videoUrl.trim(),
         // Phase 4n.46: the product-level cadence + employee_notes
@@ -540,6 +545,55 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
                   className="tax-btn tax-btn--ghost tax-btn--sm"
                   style={{ color: 'var(--tax-brand-primary)', justifySelf: 'start' }}>
             + {t('owner.services.requiresAdd')}
+          </button>
+        </div>
+      </div>
+
+      {/* Certifications — surface in AI chat upfront and as badges on service cards */}
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+          {t('owner.services.certifications')}
+        </label>
+        <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
+          {t('owner.services.certificationsHint')}
+        </p>
+        {/* Existing certification tags */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+          {certifications.map((c, i) => (
+            <span key={i} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '3px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+              background: '#fef3c7', color: '#92400e', border: '1.5px solid #f59e0b',
+            }}>
+              🏅 {c}
+              <button type="button" onClick={() => setCertifications(prev => prev.filter((_, idx) => idx !== i))}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', fontSize: 14, padding: '0 0 0 2px', lineHeight: 1 }}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        {/* Add new certification */}
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input type="text" value={certInput} onChange={e => setCertInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const v = certInput.trim();
+                if (v && !certifications.includes(v)) setCertifications(prev => [...prev, v]);
+                setCertInput('');
+              }
+            }}
+            placeholder={t('owner.services.certificationsPlaceholder')}
+            maxLength={200}
+            style={{ flex: 1, padding: '6px 10px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 13 }} />
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+            onClick={() => {
+              const v = certInput.trim();
+              if (v && !certifications.includes(v)) setCertifications(prev => [...prev, v]);
+              setCertInput('');
+            }}>
+            + {t('owner.services.certificationsAdd')}
           </button>
         </div>
       </div>

@@ -355,6 +355,7 @@ create table if not exists public.tax_products (
   required_documents jsonb not null default '[]'::jsonb,
   notification_rules jsonb not null default '[]'::jsonb,
   pricing jsonb not null default '{}'::jsonb,
+  certifications jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (community_id, slug)

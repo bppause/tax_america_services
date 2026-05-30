@@ -92,6 +92,17 @@ export default function ServicesGrid({ products, community, onRequestService }) 
                 </div>
                 <span className="tax-service-card__category">{categoryLabel}</span>
                 <h3>{name}</h3>
+                {Array.isArray(p.certifications) && p.certifications.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                    {p.certifications.map((c, i) => (
+                      <span key={i} style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 999,
+                        background: '#fef3c7', color: '#92400e',
+                        border: '1px solid #f59e0b', whiteSpace: 'nowrap',
+                      }}>🏅 {c}</span>
+                    ))}
+                  </div>
+                )}
                 <p>{desc}</p>
                 <span className="tax-service-card__more">
                   {t('services.card.learnMore')} →
@@ -179,6 +190,24 @@ function ServiceDetailModal({ product, locale, t, community, products, onClose, 
 
         {tab === 'info' && (
           <>
+            {Array.isArray(product.certifications) && product.certifications.length > 0 && (
+              <div style={{
+                background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 8,
+                padding: '10px 14px', marginBottom: 14,
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: '#92400e', marginBottom: 6 }}>
+                  {locale === 'es' ? 'Certificaciones y credenciales' : 'Certifications & credentials'}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                  {product.certifications.map((c, i) => (
+                    <span key={i} style={{
+                      fontSize: 12, fontWeight: 600, padding: '3px 10px', borderRadius: 999,
+                      background: '#fef3c7', color: '#92400e', border: '1px solid #f59e0b',
+                    }}>🏅 {c}</span>
+                  ))}
+                </div>
+              </div>
+            )}
             {videoUrl && <VideoEmbed url={videoUrl} title={name} />}
             <p className="tax-modal__desc">{desc}</p>
             {longDesc && (

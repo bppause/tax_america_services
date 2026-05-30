@@ -361,7 +361,7 @@ module.exports = function createTaxRouter(deps) {
 
     const { data: products, error: pErr } = await supabase
       .from('tax_products')
-      .select('id, slug, category, enabled, display_order, name_i18n, description_i18n, long_description_i18n, required_documents, icon, video_url, cadence_kind, anchor_rule, employee_notes_i18n')
+      .select('id, slug, category, enabled, display_order, name_i18n, description_i18n, long_description_i18n, required_documents, icon, video_url, cadence_kind, anchor_rule, employee_notes_i18n, certifications')
       .eq('community_id', slug)
       .eq('enabled', true)
       .order('display_order', { ascending: true });
@@ -994,7 +994,7 @@ module.exports = function createTaxRouter(deps) {
     // Load products to give the AI context about offered services.
     const { data: products } = await supabase
       .from('tax_products')
-      .select('slug, name_i18n, description_i18n, long_description_i18n, category')
+      .select('slug, name_i18n, description_i18n, long_description_i18n, category, certifications')
       .eq('community_id', community.id)
       .eq('enabled', true)
       .order('sort_order', { ascending: true });
@@ -1003,7 +1003,9 @@ module.exports = function createTaxRouter(deps) {
       const name = (p.name_i18n?.en || p.name_i18n?.es || p.slug);
       const desc = (p.long_description_i18n?.en || p.description_i18n?.en
                  || p.long_description_i18n?.es || p.description_i18n?.es || '');
-      return `- ${name} (${p.category}): ${desc.slice(0, 300)}`;
+      const certs = Array.isArray(p.certifications) && p.certifications.length
+        ? ` [Certifications: ${p.certifications.join('; ')}]` : '';
+      return `- ${name} (${p.category})${certs}: ${desc.slice(0, 300)}`;
     }).join('\n');
 
     // Identify the services the lead specifically selected (1-to-many).
@@ -1013,11 +1015,15 @@ module.exports = function createTaxRouter(deps) {
     const focusNames = focusProducts.map(p => p.name_i18n?.en || p.name_i18n?.es || p.slug);
 
     // Build detailed context only for the selected services; list all others briefly.
+    // Certifications are pulled to the top so the AI leads with them naturally.
     const focusLines = focusProducts.map(p => {
       const name = p.name_i18n?.en || p.name_i18n?.es || p.slug;
       const long = p.long_description_i18n?.en || p.long_description_i18n?.es || '';
       const short = p.description_i18n?.en || p.description_i18n?.es || '';
-      return `### ${name}\n${long || short}`.slice(0, 600);
+      const certs = Array.isArray(p.certifications) && p.certifications.length
+        ? `Certifications held by this practice for this service:\n${p.certifications.map(c => `• ${c}`).join('\n')}\n\n`
+        : '';
+      return `### ${name}\n${certs}${(long || short)}`.slice(0, 800);
     }).join('\n\n');
 
     const isUnsure = focusSlugs.length === 0; // "not sure / other" path
@@ -1040,6 +1046,7 @@ module.exports = function createTaxRouter(deps) {
       isUnsure
         ? `- Ask one short question at a time to identify the right service. Once you've recommended a service, answer follow-up questions about it.`
         : `- Focus on the selected service(s). Only discuss others if asked.`,
+      `- When a service has listed certifications, mention them naturally upfront (e.g. "We are a CAA – Certified Acceptance Agent, which means..."). Do not bury them — credentials build trust and are a key reason to choose this practice.`,
       `- Be concise and friendly. Do not invent fees, timelines, or guarantees.`,
       `- After 3 or more exchanges, or when the prospect expresses readiness, end your reply with`,
       `  the token [READY_TO_CONNECT] on its own line to trigger the appointment booking step.`,
@@ -3636,7 +3643,7 @@ module.exports = function createTaxRouter(deps) {
       .select(`
         id, slug, category, enabled, display_order, icon,
         name_i18n, description_i18n, long_description_i18n, required_documents, video_url,
-        cadence_kind, anchor_rule, employee_notes_i18n,
+        cadence_kind, anchor_rule, employee_notes_i18n, certifications,
         schedules:tax_filing_schedules ( id, slug, jurisdiction, cadence, enabled, name_i18n, info_checklist )
       `)
       .eq('community_id', communitySlug)
@@ -3810,6 +3817,11 @@ module.exports = function createTaxRouter(deps) {
         }
         return '';
       }).filter(d => (typeof d === 'string' ? d : (d.en || d.es)));
+    }
+    if (Array.isArray(body.certifications)) {
+      update.certifications = body.certifications.slice(0, 20)
+        .map(c => String(c).trim().slice(0, 200))
+        .filter(Boolean);
     }
     if (body.enabled !== undefined) update.enabled = !!body.enabled;
     if (body.videoUrl !== undefined) {
