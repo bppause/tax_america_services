@@ -768,7 +768,6 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
     setCertifications(Array.isArray(emp.certifications) ? emp.certifications : []);
   }, [emp]);
   const [certInput, setCertInput] = useState('');
-  // Pool of all certs already assigned to any service in this community's catalog
   const [certPool, setCertPool] = useState([]);
   useEffect(() => {
     if (!community?.id) return;
@@ -780,53 +779,66 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
       })
       .catch(() => {});
   }, [community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
-  const dirty = draft.showOnHomepage !== !!emp.show_on_homepage
-             || draft.photoUrl !== (emp.photo_url || '')
-             || draft.titleEn !== (emp.title_i18n?.en || '')
-             || draft.titleEs !== (emp.title_i18n?.es || '')
-             || draft.bioEn !== (emp.bio_i18n?.en || '')
-             || draft.bioEs !== (emp.bio_i18n?.es || '')
-             || draft.roleEn !== (emp.role_i18n?.en || '')
-             || draft.roleEs !== (emp.role_i18n?.es || '')
-             || draft.highlightsEn !== (emp.highlights_i18n?.en || '')
-             || draft.highlightsEs !== (emp.highlights_i18n?.es || '')
-             || draft.educationEn !== (emp.education_i18n?.en || '')
-             || draft.educationEs !== (emp.education_i18n?.es || '')
-             || draft.experienceEn !== (emp.experience_i18n?.en || '')
-             || draft.experienceEs !== (emp.experience_i18n?.es || '')
-             || Number(draft.displayOrder) !== (emp.homepage_display_order ?? 100)
-             || JSON.stringify(certifications) !== JSON.stringify(Array.isArray(emp.certifications) ? emp.certifications : []);
+  // Auto-save
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle'|'saving'|'saved'|error
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
 
-  const set = (k, v) => setDraft(prev => ({ ...prev, [k]: v }));
-
-  const onSave = async () => {
-    setBusy(true); setMsg({ kind: 'idle', text: '' });
+  const doSave = useRef(null);
+  doSave.current = async (overrides = {}) => {
+    setSaveStatus('saving');
     try {
+      const d = { ...draft, ...overrides };
       await taxApi.adminSetEmployeePublicProfile(auth, emp.id, {
-        showOnHomepage: draft.showOnHomepage,
-        photoUrl: draft.photoUrl.trim(),
-        titleI18n: { en: draft.titleEn.trim(), es: draft.titleEs.trim() },
-        bioI18n: { en: draft.bioEn.trim(), es: draft.bioEs.trim() },
-        roleI18n: { en: draft.roleEn.trim(), es: draft.roleEs.trim() },
-        highlightsI18n: { en: draft.highlightsEn.trim(), es: draft.highlightsEs.trim() },
-        educationI18n: { en: draft.educationEn.trim(), es: draft.educationEs.trim() },
-        experienceI18n: { en: draft.experienceEn.trim(), es: draft.experienceEs.trim() },
-        displayOrder: Number(draft.displayOrder) || 100,
-        certifications,
+        showOnHomepage: d.showOnHomepage,
+        photoUrl: (d.photoUrl || '').trim(),
+        titleI18n: { en: d.titleEn.trim(), es: d.titleEs.trim() },
+        bioI18n: { en: d.bioEn.trim(), es: d.bioEs.trim() },
+        roleI18n: { en: d.roleEn.trim(), es: d.roleEs.trim() },
+        highlightsI18n: { en: d.highlightsEn.trim(), es: d.highlightsEs.trim() },
+        educationI18n: { en: d.educationEn.trim(), es: d.educationEs.trim() },
+        experienceI18n: { en: d.experienceEn.trim(), es: d.experienceEs.trim() },
+        displayOrder: Number(d.displayOrder) || 100,
+        certifications: overrides.certifications ?? certifications,
       });
-      setMsg({ kind: 'success', text: t('owner.publicProfile.saved') });
-      onSaved && onSaved();
+      setSaveStatus('saved');
+      onSaved?.();
+      savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
     } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || '' });
-    } finally { setBusy(false); }
+      setSaveStatus(e?.message || 'Save failed');
+    }
+  };
+
+  const scheduleAutoSave = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    debounceRef.current = setTimeout(() => doSave.current(overrides), 1200);
+  };
+
+  const saveNow = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    doSave.current(overrides);
+  };
+
+  const set = (k, v, immediate = false) => {
+    const next = { [k]: v };
+    setDraft(prev => ({ ...prev, ...next }));
+    if (immediate) saveNow(next); else scheduleAutoSave(next);
   };
 
   return (
     <section style={{ marginTop: 32 }}>
-      <h3 style={{ margin: 0 }}>{t('owner.publicProfile.heading')}</h3>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0 }}>{t('owner.publicProfile.heading')}</h3>
+        {saveStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
+        {saveStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+        {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+          <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
+        )}
+      </div>
       <p className="tax-section__lede" style={{ marginTop: 4, marginBottom: 12 }}>
         {t('owner.publicProfile.sub')}
       </p>
@@ -839,7 +851,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
       }}>
         <label style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <input type="checkbox" checked={draft.showOnHomepage}
-                 onChange={e => set('showOnHomepage', e.target.checked)} disabled={busy} />
+                 onChange={e => set('showOnHomepage', e.target.checked, true)} />
           <span style={{ fontWeight: 600 }}>{t('owner.publicProfile.showOnHomepage')}</span>
         </label>
         <p style={{ margin: '0 0 4px', fontSize: 12, color: 'var(--tax-muted)' }}>
@@ -865,14 +877,14 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
               {t('owner.publicProfile.photoUrl')}
             </label>
             <input type="url" value={draft.photoUrl}
-                   onChange={e => set('photoUrl', e.target.value)} disabled={busy}
+                   onChange={e => set('photoUrl', e.target.value)}
                    maxLength={1000}
                    placeholder="https://… (paste a direct image link)"
                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
             <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.photoHint')}
             </p>
-            <PhotoUploadButton emp={emp} auth={auth} disabled={busy} t={t}
+            <PhotoUploadButton emp={emp} auth={auth} t={t}
                                onUploaded={(url) => set('photoUrl', url)} />
           </div>
         </div>
@@ -882,7 +894,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.titleEn')}
             </label>
-            <input type="text" value={draft.titleEn} maxLength={200} disabled={busy}
+            <input type="text" value={draft.titleEn} maxLength={200}
                    onChange={e => set('titleEn', e.target.value)}
                    placeholder="e.g. Senior Tax Preparer"
                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
@@ -891,7 +903,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.titleEs')}
             </label>
-            <input type="text" value={draft.titleEs} maxLength={200} disabled={busy}
+            <input type="text" value={draft.titleEs} maxLength={200}
                    onChange={e => set('titleEs', e.target.value)}
                    placeholder="p. ej. Preparadora de Impuestos Senior"
                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
@@ -903,7 +915,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.roleEn')}
             </label>
-            <input type="text" value={draft.roleEn} maxLength={200} disabled={busy}
+            <input type="text" value={draft.roleEn} maxLength={200}
                    onChange={e => set('roleEn', e.target.value)}
                    placeholder={t('owner.publicProfile.rolePlaceholderEn')}
                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
@@ -912,7 +924,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.roleEs')}
             </label>
-            <input type="text" value={draft.roleEs} maxLength={200} disabled={busy}
+            <input type="text" value={draft.roleEs} maxLength={200}
                    onChange={e => set('roleEs', e.target.value)}
                    placeholder={t('owner.publicProfile.rolePlaceholderEs')}
                    style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
@@ -924,7 +936,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.bioEn')}
             </label>
-            <textarea rows={4} value={draft.bioEn} maxLength={4000} disabled={busy}
+            <textarea rows={4} value={draft.bioEn} maxLength={4000}
                       onChange={e => set('bioEn', e.target.value)}
                       placeholder={t('owner.publicProfile.bioPlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -933,7 +945,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.bioEs')}
             </label>
-            <textarea rows={4} value={draft.bioEs} maxLength={4000} disabled={busy}
+            <textarea rows={4} value={draft.bioEs} maxLength={4000}
                       onChange={e => set('bioEs', e.target.value)}
                       placeholder={t('owner.publicProfile.bioPlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -945,7 +957,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.highlightsEn')}
             </label>
-            <textarea rows={4} value={draft.highlightsEn} maxLength={4000} disabled={busy}
+            <textarea rows={4} value={draft.highlightsEn} maxLength={4000}
                       onChange={e => set('highlightsEn', e.target.value)}
                       placeholder={t('owner.publicProfile.highlightsPlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -954,7 +966,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.highlightsEs')}
             </label>
-            <textarea rows={4} value={draft.highlightsEs} maxLength={4000} disabled={busy}
+            <textarea rows={4} value={draft.highlightsEs} maxLength={4000}
                       onChange={e => set('highlightsEs', e.target.value)}
                       placeholder={t('owner.publicProfile.highlightsPlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -969,7 +981,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.educationEn')}
             </label>
-            <textarea rows={3} value={draft.educationEn} maxLength={4000} disabled={busy}
+            <textarea rows={3} value={draft.educationEn} maxLength={4000}
                       onChange={e => set('educationEn', e.target.value)}
                       placeholder={t('owner.publicProfile.educationPlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -978,7 +990,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.educationEs')}
             </label>
-            <textarea rows={3} value={draft.educationEs} maxLength={4000} disabled={busy}
+            <textarea rows={3} value={draft.educationEs} maxLength={4000}
                       onChange={e => set('educationEs', e.target.value)}
                       placeholder={t('owner.publicProfile.educationPlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -990,7 +1002,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.experienceEn')}
             </label>
-            <textarea rows={3} value={draft.experienceEn} maxLength={4000} disabled={busy}
+            <textarea rows={3} value={draft.experienceEn} maxLength={4000}
                       onChange={e => set('experienceEn', e.target.value)}
                       placeholder={t('owner.publicProfile.experiencePlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -999,7 +1011,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
             <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
               {t('owner.publicProfile.experienceEs')}
             </label>
-            <textarea rows={3} value={draft.experienceEs} maxLength={4000} disabled={busy}
+            <textarea rows={3} value={draft.experienceEs} maxLength={4000}
                       onChange={e => set('experienceEs', e.target.value)}
                       placeholder={t('owner.publicProfile.experiencePlaceholder')}
                       style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
@@ -1009,7 +1021,11 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
         {/* Certifications — full CERT_LIBRARY multi-select + catalog extras + custom */}
         <ProfileCertPicker
           certifications={certifications}
-          setCertifications={setCertifications}
+          setCertifications={(next) => {
+            const resolved = typeof next === 'function' ? next(certifications) : next;
+            setCertifications(resolved);
+            saveNow({ certifications: resolved });
+          }}
           certPool={certPool}
           certInput={certInput}
           setCertInput={setCertInput}
@@ -1018,24 +1034,12 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--tax-muted)' }}>
           {t('owner.publicProfile.displayOrder')}:
-          <input type="number" value={draft.displayOrder} disabled={busy}
+          <input type="number" value={draft.displayOrder}
                  onChange={e => set('displayOrder', e.target.value)}
                  min="0" max="10000"
                  style={{ width: 80, padding: '4px 6px', border: '1px solid var(--tax-border)', borderRadius: 4 }} />
         </label>
 
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                  onClick={onSave} disabled={busy || !dirty}>
-            {busy ? t('lead.submitting') : t('owner.publicProfile.save')}
-          </button>
-          {msg.text && (
-            <span style={{ fontSize: 12,
-                           color: msg.kind === 'success' ? 'var(--tax-success)' : 'var(--tax-error)' }}>
-              {msg.text}
-            </span>
-          )}
-        </div>
       </div>
     </section>
   );
