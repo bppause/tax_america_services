@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { hasSavedLocale, pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
@@ -29,8 +29,10 @@ export default function EmployeeProfile() {
     addr: { line1: '', line2: '', city: '', state: '', postal_code: '', country: 'US' },
     inApp: true, email: false,
   });
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState({ kind: 'idle', text: '' });
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle'|'saving'|'saved'|error string
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
 
   useEffect(() => {
     if (!employee) return;
@@ -92,58 +94,77 @@ export default function EmployeeProfile() {
     return () => { cancelled = true; };
   }, [fbUser, community, employee?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const setPref = (typeKey, channel, on) => setPrefs(p => ({
-    ...p,
-    [typeKey]: { ...(p[typeKey] || {}), [channel]: on },
-  }));
+  const doSave = useRef(null);
+  doSave.current = async (overrides = {}) => {
+    const d = { ...form, ...overrides };
+    const wn = d.whatsapp ? normalizeWhatsappForCheck(d.whatsapp) : '';
+    if (d.whatsapp && !WHATSAPP_E164.test(wn)) {
+      setSaveStatus(t('portal.profile.whatsapp.invalid'));
+      return;
+    }
+    setSaveStatus('saving');
+    try {
+      const address = {};
+      for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
+        const v = String((d.addr || {})[k] || '').trim();
+        if (v) address[k] = v;
+      }
+      const np = overrides.notificationPrefs ?? prefs;
+      const anyEmail = Object.values(np).some(p => p && p.email === true);
+      const channels = anyEmail ? ['in_app', 'email'] : ['in_app'];
+      await taxApi.updateEmployeeProfile(auth, {
+        firstName: d.firstName.trim(),
+        middleName: d.middleName.trim(),
+        lastName: d.lastName.trim(),
+        phone: d.phone.trim(),
+        whatsapp: d.whatsapp.trim(),
+        address,
+        preferredCommunicationEmail: d.preferredEmail.trim(),
+        notificationChannels: channels,
+        notificationPrefs: np,
+        locale: d.locale,
+      });
+      if (d.locale !== locale) setLocale(d.locale);
+      setSaveStatus('saved');
+      refreshMe();
+      savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch (e) {
+      setSaveStatus(e?.message || 'Save failed');
+    }
+  };
 
-  const onField = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const onAddr  = (k, v) => setForm(p => ({ ...p, addr: { ...p.addr, [k]: v } }));
+  const scheduleAutoSave = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    debounceRef.current = setTimeout(() => doSave.current(overrides), 1200);
+  };
+
+  const saveNow = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    doSave.current(overrides);
+  };
+
+  const setPref = (typeKey, channel, on) => {
+    const nextPrefs = { ...prefs, [typeKey]: { ...(prefs[typeKey] || {}), [channel]: on } };
+    setPrefs(nextPrefs);
+    saveNow({ notificationPrefs: nextPrefs });
+  };
+
+  const onField = (k, v, immediate = false) => {
+    setForm(p => ({ ...p, [k]: v }));
+    if (immediate) saveNow({ [k]: v }); else scheduleAutoSave({ [k]: v });
+  };
+  const onAddr = (k, v) => {
+    setForm(p => ({ ...p, addr: { ...p.addr, [k]: v } }));
+    scheduleAutoSave();
+  };
 
   const whatsappNormalized = form.whatsapp ? normalizeWhatsappForCheck(form.whatsapp) : '';
   const whatsappValid = !form.whatsapp || WHATSAPP_E164.test(whatsappNormalized);
   const waLink = whatsappValid && whatsappNormalized.length > 1
     ? `https://wa.me/${whatsappNormalized.replace(/^\+/, '')}` : '';
 
-  const onSave = async (e) => {
-    e?.preventDefault?.();
-    if (form.whatsapp && !whatsappValid) {
-      setMsg({ kind: 'error', text: t('portal.profile.whatsapp.invalid') });
-      return;
-    }
-    setBusy(true); setMsg({ kind: 'idle', text: '' });
-    try {
-      const address = {};
-      for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
-        const v = String(form.addr[k] || '').trim();
-        if (v) address[k] = v;
-      }
-      // Derive the legacy global channel array from the per-type matrix
-      // so older code paths still resolve sensibly. in_app always on as a
-      // baseline; include email if any per-type pref opts in.
-      const anyEmail = Object.values(prefs).some(p => p && p.email === true);
-      const channels = anyEmail ? ['in_app', 'email'] : ['in_app'];
-      await taxApi.updateEmployeeProfile(auth, {
-        firstName: form.firstName.trim(),
-        middleName: form.middleName.trim(),
-        lastName: form.lastName.trim(),
-        phone: form.phone.trim(),
-        whatsapp: form.whatsapp.trim(),
-        address,
-        preferredCommunicationEmail: form.preferredEmail.trim(),
-        notificationChannels: channels,
-        notificationPrefs: prefs,
-        locale: form.locale,
-      });
-      if (form.locale !== locale) setLocale(form.locale);
-      setMsg({ kind: 'success', text: t('portal.profile.saved') });
-      refreshMe();
-    } catch (err) {
-      setMsg({ kind: 'error', text: err?.message || t('respond.error.generic') });
-    } finally {
-      setBusy(false);
-    }
-  };
 
   // First-load sync: pull the saved profile locale into the UI when the
   // browser has no explicit user choice yet, so the preference follows
@@ -157,9 +178,16 @@ export default function EmployeeProfile() {
 
   return (
     <EmployeeShell community={community} active="profile">
-      <h2 style={{ marginTop: 0 }}>{t('employee.profile.title')}</h2>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0 }}>{t('employee.profile.title')}</h2>
+        {saveStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
+        {saveStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+        {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+          <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
+        )}
+      </div>
 
-      <form className="tax-form" onSubmit={onSave} noValidate style={{ maxWidth: 720 }}>
+      <form className="tax-form" noValidate style={{ maxWidth: 720 }}>
         <div className="tax-form__row3">
           <div>
             <label htmlFor="ep-first">{t('owner.customers.fieldFirstName')}</label>
@@ -241,7 +269,7 @@ export default function EmployeeProfile() {
             </span>
           </label>
           <select id="ep-locale" value={form.locale}
-                  onChange={e => onField('locale', e.target.value)}
+                  onChange={e => onField('locale', e.target.value, true)}
                   style={{ maxWidth: 280 }}>
             <option value="es">Español</option>
             <option value="en">English</option>
@@ -349,13 +377,6 @@ export default function EmployeeProfile() {
           </div>
         </fieldset>
 
-        {msg.text && (
-          <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}>{msg.text}</div>
-        )}
-
-        <button type="submit" className="tax-btn tax-btn--primary" disabled={busy}>
-          {busy ? t('lead.submitting') : t('portal.profile.save')}
-        </button>
       </form>
 
       {/* ── Assignments widget (Phase 3b) ─────────────────────────────────

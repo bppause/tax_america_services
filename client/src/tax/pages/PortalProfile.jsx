@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { hasSavedLocale, pickI18n, useT } from '../i18n';
 import { useTaxAuth } from '../auth/AuthProvider';
 import { taxApi } from '../api';
@@ -31,8 +31,10 @@ export default function PortalProfile() {
     phone: '', whatsapp: '', preferredEmail: '', locale: 'es',
     addr: { line1: '', line2: '', city: '', state: '', postal_code: '', country: 'US' },
   });
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [profileMsg, setProfileMsg] = useState({ kind: 'idle', text: '' });
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle'|'saving'|'saved'|error string
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
 
   // Hydrate the form from the auth context whenever the customer record
   // refreshes (initial load, post-save).
@@ -56,8 +58,60 @@ export default function PortalProfile() {
     });
   }, [customer]);
 
-  const onField = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const onAddr  = (k, v) => setForm(p => ({ ...p, addr: { ...p.addr, [k]: v } }));
+  const doSave = useRef(null);
+  doSave.current = async (overrides = {}) => {
+    const d = { ...form, ...overrides };
+    const wn = d.whatsapp ? normalizeWhatsappForCheck(d.whatsapp) : '';
+    if (d.whatsapp && !WHATSAPP_E164.test(wn)) {
+      setSaveStatus(t('portal.profile.whatsapp.invalid'));
+      return;
+    }
+    setSaveStatus('saving');
+    try {
+      const address = {};
+      for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
+        const v = String((d.addr || {})[k] || '').trim();
+        if (v) address[k] = v;
+      }
+      await taxApi.updateProfile(auth, {
+        firstName: d.firstName.trim(),
+        middleName: d.middleName.trim(),
+        lastName: d.lastName.trim(),
+        phone: d.phone.trim(),
+        whatsapp: d.whatsapp.trim(),
+        address,
+        preferredCommunicationEmail: d.preferredEmail.trim(),
+        locale: d.locale,
+      });
+      if (d.locale !== locale) setLocale(d.locale);
+      setSaveStatus('saved');
+      refreshMe();
+      savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch (e) {
+      setSaveStatus(e?.message || 'Save failed');
+    }
+  };
+
+  const scheduleAutoSave = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    debounceRef.current = setTimeout(() => doSave.current(overrides), 1200);
+  };
+
+  const saveNow = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    doSave.current(overrides);
+  };
+
+  const onField = (k, v, immediate = false) => {
+    setForm(p => ({ ...p, [k]: v }));
+    if (immediate) saveNow({ [k]: v }); else scheduleAutoSave({ [k]: v });
+  };
+  const onAddr = (k, v) => {
+    setForm(p => ({ ...p, addr: { ...p.addr, [k]: v } }));
+    scheduleAutoSave();
+  };
 
   const whatsappNormalized = form.whatsapp ? normalizeWhatsappForCheck(form.whatsapp) : '';
   const whatsappValid = !form.whatsapp || WHATSAPP_E164.test(whatsappNormalized);
@@ -65,42 +119,6 @@ export default function PortalProfile() {
     ? `https://wa.me/${whatsappNormalized.replace(/^\+/, '')}`
     : '';
 
-  const onSaveProfile = async (e) => {
-    e?.preventDefault?.();
-    if (form.whatsapp && !whatsappValid) {
-      setProfileMsg({ kind: 'error', text: t('portal.profile.whatsapp.invalid') });
-      return;
-    }
-    setSavingProfile(true);
-    setProfileMsg({ kind: 'idle', text: '' });
-    try {
-      // Strip empty address fields so we don't persist clutter.
-      const address = {};
-      for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
-        const v = String(form.addr[k] || '').trim();
-        if (v) address[k] = v;
-      }
-      await taxApi.updateProfile(auth, {
-        firstName: form.firstName.trim(),
-        middleName: form.middleName.trim(),
-        lastName: form.lastName.trim(),
-        phone: form.phone.trim(),
-        whatsapp: form.whatsapp.trim(),
-        address,
-        preferredCommunicationEmail: form.preferredEmail.trim(),
-        locale: form.locale,
-      });
-      // Profile locale is the user's source of truth — apply it to the UI
-      // immediately so the saved preference takes effect without a reload.
-      if (form.locale !== locale) setLocale(form.locale);
-      setProfileMsg({ kind: 'success', text: t('portal.profile.saved') });
-      refreshMe();
-    } catch (err) {
-      setProfileMsg({ kind: 'error', text: err?.message || t('respond.error.generic') });
-    } finally {
-      setSavingProfile(false);
-    }
-  };
 
   // First-load sync: if the customer has a saved profile locale and the
   // browser has no explicit user choice yet (no localStorage), apply the
@@ -117,35 +135,39 @@ export default function PortalProfile() {
   const initial = prefs?.channels || ['email', 'in_app'];
   const [emailPref, setEmailPref] = useState(initial.includes('email'));
   const [inAppPref, setInAppPref] = useState(initial.includes('in_app'));
-  const [savingPrefs, setSavingPrefs] = useState(false);
-  const [prefsMsg, setPrefsMsg] = useState({ kind: 'idle', text: '' });
+  const [prefsStatus, setPrefsStatus] = useState('idle');
+  const prefsSavedTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(prefsSavedTimerRef.current), []);
 
-  const onSavePrefs = async () => {
+  const savePrefsNow = async (ep, ip) => {
     const channels = [];
-    if (emailPref) channels.push('email');
-    if (inAppPref) channels.push('in_app');
-    if (!channels.length) {
-      setPrefsMsg({ kind: 'error', text: t('portal.profile.atLeastOne') });
-      return;
-    }
-    setSavingPrefs(true); setPrefsMsg({ kind: 'idle', text: '' });
+    if (ep) channels.push('email');
+    if (ip) channels.push('in_app');
+    if (!channels.length) { setPrefsStatus(t('portal.profile.atLeastOne')); return; }
+    setPrefsStatus('saving');
     try {
       await taxApi.updatePreferences(auth, { channels });
-      setPrefsMsg({ kind: 'success', text: t('portal.profile.saved') });
+      setPrefsStatus('saved');
       refreshMe();
+      prefsSavedTimerRef.current = setTimeout(() => setPrefsStatus('idle'), 2500);
     } catch (err) {
-      setPrefsMsg({ kind: 'error', text: err?.message || t('respond.error.generic') });
-    } finally {
-      setSavingPrefs(false);
+      setPrefsStatus(err?.message || 'Save failed');
     }
   };
 
   return (
     <PortalShell community={community} active="profile">
-      <h2 style={{ marginTop: 0 }}>{t('portal.profile.title')}</h2>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ margin: 0 }}>{t('portal.profile.title')}</h2>
+        {saveStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
+        {saveStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+        {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+          <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
+        )}
+      </div>
 
       {/* ── Editable profile form ─────────────────────────────────────── */}
-      <form className="tax-form" onSubmit={onSaveProfile} noValidate style={{ maxWidth: 720 }}>
+      <form className="tax-form" noValidate style={{ maxWidth: 720 }}>
         <div className="tax-form__row3">
           <div>
             <label htmlFor="pp-first">{t('owner.customers.fieldFirstName')}</label>
@@ -227,7 +249,7 @@ export default function PortalProfile() {
             </span>
           </label>
           <select id="pp-locale" value={form.locale}
-                  onChange={e => onField('locale', e.target.value)}
+                  onChange={e => onField('locale', e.target.value, true)}
                   style={{ maxWidth: 280 }}>
             <option value="es">Español</option>
             <option value="en">English</option>
@@ -276,17 +298,6 @@ export default function PortalProfile() {
           </div>
         </fieldset>
 
-        {profileMsg.text && (
-          <div className={`tax-msg tax-msg--${profileMsg.kind === 'error' ? 'error' : 'success'}`}>
-            {profileMsg.text}
-          </div>
-        )}
-
-        <div className="tax-sticky-cta">
-          <button type="submit" className="tax-btn tax-btn--primary" disabled={savingProfile}>
-            {savingProfile ? t('lead.submitting') : t('portal.profile.save')}
-          </button>
-        </div>
       </form>
 
       {/* Services (read-only) — the language preference moved into the
@@ -308,23 +319,19 @@ export default function PortalProfile() {
       <div className="tax-form" style={{ maxWidth: 480 }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: allowChange ? 'pointer' : 'default' }}>
           <input type="checkbox" checked={emailPref} disabled={!allowChange}
-                 onChange={e => setEmailPref(e.target.checked)} />
+                 onChange={e => { setEmailPref(e.target.checked); savePrefsNow(e.target.checked, inAppPref); }} />
           <span>{t('portal.profile.channel.email')}</span>
         </label>
         <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: allowChange ? 'pointer' : 'default' }}>
           <input type="checkbox" checked={inAppPref} disabled={!allowChange}
-                 onChange={e => setInAppPref(e.target.checked)} />
+                 onChange={e => { setInAppPref(e.target.checked); savePrefsNow(emailPref, e.target.checked); }} />
           <span>{t('portal.profile.channel.inApp')}</span>
         </label>
 
-        {prefsMsg.text && (
-          <div className={`tax-msg tax-msg--${prefsMsg.kind === 'error' ? 'error' : 'success'}`}>{prefsMsg.text}</div>
-        )}
-
-        {allowChange && (
-          <button type="button" className="tax-btn tax-btn--primary" onClick={onSavePrefs} disabled={savingPrefs}>
-            {savingPrefs ? t('lead.submitting') : t('portal.profile.save')}
-          </button>
+        {prefsStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
+        {prefsStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+        {prefsStatus !== 'idle' && prefsStatus !== 'saving' && prefsStatus !== 'saved' && (
+          <div className="tax-msg tax-msg--error">{prefsStatus}</div>
         )}
       </div>
 

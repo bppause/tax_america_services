@@ -1032,6 +1032,10 @@ function TaskFormModal({
   const [notes, setNotes] = useState(isEdit ? (task.notes || '') : '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
   const [suggestions, setSuggestions] = useState([]);
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [defaultProductHint, setDefaultProductHint] = useState(null);
@@ -1076,25 +1080,57 @@ function TaskFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
+  const doSave = useRef(null);
+  doSave.current = async (overrides = {}) => {
+    const t_ = overrides.title ?? title;
+    const c_ = overrides.customerId ?? customerId;
+    const p_ = overrides.productId ?? productId;
+    const s_ = overrides.statusKey ?? statusKey;
+    const pr_ = overrides.priority ?? priority;
+    const a_ = overrides.assignedTo ?? assignedTo;
+    const d_ = overrides.dueDate ?? dueDate;
+    const n_ = overrides.notes ?? notes;
+    if (!t_.trim()) { if (isEdit) { setSaveStatus('Title required'); return; } return; }
+    if (isEdit) {
+      setSaveStatus('saving');
+      try {
+        await taxApi.adminUpdateTask(auth, task.id, {
+          title: t_.trim(), customerId: c_ || null, productId: p_ || null,
+          statusKey: s_, priority: pr_, assignedEmployeeId: a_ || null,
+          dueDate: d_ || null, notes: n_.trim(),
+        });
+        setSaveStatus('saved');
+        onSaved();
+        savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
+      } catch (e) { setSaveStatus(e?.message || 'Save failed'); }
+    }
+  };
+
+  const scheduleAutoSave = (overrides = {}) => {
+    if (!isEdit) return;
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    debounceRef.current = setTimeout(() => doSave.current(overrides), 1200);
+  };
+
+  const saveNow = (overrides = {}) => {
+    if (!isEdit) return;
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    doSave.current(overrides);
+  };
+
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
     setBusy(true); setErr('');
     try {
-      const payload = {
-        title: title.trim(),
-        customerId: customerId || null,
-        productId: productId || null,
-        statusKey, priority,
-        assignedEmployeeId: assignedTo || null,
-        dueDate: dueDate || null,
-        notes: notes.trim(),
-      };
-      if (isEdit) {
-        await taxApi.adminUpdateTask(auth, task.id, payload);
-      } else {
-        await taxApi.adminCreateTask(auth, { communitySlug: community.id, ...payload });
-      }
+      await taxApi.adminCreateTask(auth, {
+        communitySlug: community.id,
+        title: title.trim(), customerId: customerId || null, productId: productId || null,
+        statusKey, priority, assignedEmployeeId: assignedTo || null,
+        dueDate: dueDate || null, notes: notes.trim(),
+      });
       onSaved();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
@@ -1105,13 +1141,20 @@ function TaskFormModal({
       <div className="tax-modal__panel" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
         <button type="button" className="tax-modal__close"
                 onClick={onClose} aria-label={t('preview.close')}>×</button>
-        <h3 className="tax-modal__title">
-          {isEdit ? t('owner.tasks.editTitle') : t('owner.tasks.add')}
-        </h3>
-        <form onSubmit={onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+          <h3 className="tax-modal__title" style={{ margin: 0 }}>
+            {isEdit ? t('owner.tasks.editTitle') : t('owner.tasks.add')}
+          </h3>
+          {isEdit && saveStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
+          {isEdit && saveStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+          {isEdit && saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+            <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
+          )}
+        </div>
+        <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
-            <input type="text" value={title} onChange={e => setTitle(e.target.value)}
+            <input type="text" value={title} onChange={e => { setTitle(e.target.value); scheduleAutoSave({ title: e.target.value }); }}
                    maxLength={300} list="task-suggestions" required autoFocus />
             <datalist id="task-suggestions">
               {suggestions.map((s, i) => (
@@ -1123,7 +1166,7 @@ function TaskFormModal({
           <div>
             <label>{t('owner.tasks.field.customer')}</label>
             <CustomerCombobox
-              customers={customers} value={customerId} onChange={setCustomerId}
+              customers={customers} value={customerId} onChange={v => { setCustomerId(v); saveNow({ customerId: v }); }}
               isAdmin={isAdmin} onAddNew={() => setShowInlineCreate(true)}
               locale={locale} t={t}
             />
@@ -1141,7 +1184,8 @@ function TaskFormModal({
               <label>{t('owner.tasks.field.service')}</label>
               <select value={productId} onChange={e => {
                 setProductId(e.target.value);
-                setProductAutoFilledFor(customerId);  // mark as user-edited
+                setProductAutoFilledFor(customerId);
+                saveNow({ productId: e.target.value });
               }}>
                 <option value="">{t('owner.tasks.field.servicePractice')}</option>
                 {products.map(p => (
@@ -1151,7 +1195,7 @@ function TaskFormModal({
             </div>
             <div>
               <label>{t('owner.tasks.field.owner')}</label>
-              <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
+              <select value={assignedTo} onChange={e => { setAssignedTo(e.target.value); saveNow({ assignedTo: e.target.value }); }}>
                 <option value="">{t('owner.tasks.field.ownerNone')}</option>
                 {employees.map(em => (
                   <option key={em.id} value={em.id}>{displayPersonName(em) || em.email}</option>
@@ -1163,7 +1207,7 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.priority')}</label>
-              <select value={priority} onChange={e => setPriority(e.target.value)}>
+              <select value={priority} onChange={e => { setPriority(e.target.value); saveNow({ priority: e.target.value }); }}>
                 {PRIORITY_OPTIONS.map(p => (
                   <option key={p} value={p}>{t(`owner.tasks.priority.${p}`)}</option>
                 ))}
@@ -1171,7 +1215,7 @@ function TaskFormModal({
             </div>
             <div>
               <label>{t('owner.tasks.field.status')}</label>
-              <select value={statusKey} onChange={e => setStatusKey(e.target.value)}>
+              <select value={statusKey} onChange={e => { setStatusKey(e.target.value); saveNow({ statusKey: e.target.value }); }}>
                 {statuses.map(s => (
                   <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
                 ))}
@@ -1181,21 +1225,22 @@ function TaskFormModal({
 
           <div>
             <label>{t('owner.tasks.field.due')}</label>
-            <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+            <input type="date" value={dueDate} onChange={e => { setDueDate(e.target.value); saveNow({ dueDate: e.target.value }); }} />
           </div>
 
           <div>
             <label>{t('owner.tasks.field.notes')}</label>
-            <textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} maxLength={4000} />
+            <textarea rows={4} value={notes} onChange={e => { setNotes(e.target.value); scheduleAutoSave({ notes: e.target.value }); }} maxLength={4000} />
           </div>
 
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button type="submit" className="tax-btn tax-btn--primary" disabled={busy}>
-              {busy ? t('lead.submitting')
-                    : (isEdit ? t('owner.tasks.save') : t('owner.tasks.create'))}
-            </button>
+            {!isEdit && (
+              <button type="submit" className="tax-btn tax-btn--primary" disabled={busy}>
+                {busy ? t('lead.submitting') : t('owner.tasks.create')}
+              </button>
+            )}
             <button type="button" className="tax-btn tax-btn--ghost"
                     onClick={onClose} style={{ color: 'var(--tax-text)' }}>
               {t('preview.close')}
