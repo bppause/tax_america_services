@@ -200,6 +200,15 @@ export default function OwnerWhatsApp() {
     finally { setSaving(false); }
   };
 
+  // Auto-save 1.5 s after the owner stops editing.
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (!dirty) return;
+    const t = setTimeout(() => saveRef.current(), 1500);
+    return () => clearTimeout(t);
+  }, [dirty, template]);
+
   const copy = async () => {
     if (!message) return;
     try {
@@ -235,15 +244,8 @@ export default function OwnerWhatsApp() {
                 </button>
               ))}
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-                {dirty && (
-                  <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                          onClick={save} disabled={saving}>
-                    {saving ? t('owner.whatsapp.saving') : t('owner.whatsapp.save')}
-                  </button>
-                )}
-                {saveOk && !dirty && (
-                  <span style={{ fontSize: 12, color: 'var(--tax-success, #16a34a)', fontWeight: 600 }}>✓ {t('owner.whatsapp.saved')}</span>
-                )}
+                {saving && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('owner.whatsapp.saving')}</span>}
+                {saveOk && !dirty && !saving && <span style={{ fontSize: 12, color: 'var(--tax-success, #16a34a)', fontWeight: 600 }}>✓ {t('owner.whatsapp.saved')}</span>}
                 <button type="button"
                         className={`tax-btn tax-btn--sm ${copied ? 'tax-btn--ghost' : 'tax-btn--primary'}`}
                         onClick={copy} disabled={!message}>
@@ -302,22 +304,13 @@ export default function OwnerWhatsApp() {
 
             {/* Actions */}
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
-              {dirty && (
-                <button type="button" className="tax-btn tax-btn--primary"
-                        onClick={save} disabled={saving}>
-                  {saving ? t('owner.whatsapp.saving') : t('owner.whatsapp.save')}
-                </button>
-              )}
-              {saveOk && !dirty && (
-                <span style={{ fontSize: 13, color: 'var(--tax-success, #16a34a)', fontWeight: 600 }}>
-                  ✓ {t('owner.whatsapp.saved')}
-                </span>
-              )}
               <button type="button"
                       className={`tax-btn ${copied ? 'tax-btn--ghost' : 'tax-btn--primary'}`}
                       onClick={copy} disabled={!message}>
                 {copied ? `✓ ${t('owner.whatsapp.copied')}` : t('owner.whatsapp.copy')}
               </button>
+              {saving && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('owner.whatsapp.saving')}</span>}
+              {saveOk && !dirty && !saving && <span style={{ fontSize: 12, color: 'var(--tax-success, #16a34a)', fontWeight: 600 }}>✓ {t('owner.whatsapp.saved')}</span>}
             </div>
 
             <p style={{ marginTop: 12, fontSize: 12, color: 'var(--tax-muted)', lineHeight: 1.5 }}>
