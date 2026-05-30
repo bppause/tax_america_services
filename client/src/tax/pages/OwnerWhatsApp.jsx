@@ -134,15 +134,16 @@ export default function OwnerWhatsApp() {
   const { t } = useT();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
-  const [settings,  setSettings]  = useState(null);
-  const [products,  setProducts]  = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [template,  setTemplate]  = useState({ es: {}, en: {} });
-  const [msgLocale, setMsgLocale] = useState('es');
-  const [dirty,     setDirty]     = useState(false);
-  const [saving,    setSaving]    = useState(false);
-  const [saveOk,    setSaveOk]    = useState(false);
-  const [copied,    setCopied]    = useState(false);
+  const [settings,    setSettings]    = useState(null);
+  const [products,    setProducts]    = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [template,    setTemplate]    = useState({ es: {}, en: {} });
+  const [msgLocale,   setMsgLocale]   = useState('es');
+  const [dirty,       setDirty]       = useState(false);
+  const [saving,      setSaving]      = useState(false);
+  const [saveOk,      setSaveOk]      = useState(false);
+  const [copied,      setCopied]      = useState(false);
+  const [pdfVersion,  setPdfVersion]  = useState(() => Date.now());
 
   useEffect(() => {
     if (!fbUser || !community) return;
@@ -155,14 +156,18 @@ export default function OwnerWhatsApp() {
         setSettings(sd.settings);
         setProducts(pd.products || []);
         setTemplate(td.template || { es: {}, en: {} });
+        setPdfVersion(Date.now()); // fresh PDF when settings load
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
 
-  const publicUrl = settings?.website_url || `${window.location.origin}/tax/${community?.id}`;
-  const pdfUrl    = community ? brochureUrl(window.location.origin, community.id, msgLocale) : '';
+  const publicUrl    = settings?.website_url || `${window.location.origin}/tax/${community?.id}`;
+  // pdfUrl goes into the WhatsApp message (clean, cacheable link for recipients).
+  // pdfPreviewUrl busts the cache so the iframe always shows the current brochure.
+  const pdfUrl        = community ? brochureUrl(window.location.origin, community.id, msgLocale) : '';
+  const pdfPreviewUrl = pdfUrl ? `${pdfUrl}&_v=${pdfVersion}` : '';
 
   const getField = (field) => template[msgLocale]?.[field] ?? DEFAULTS[msgLocale][field];
   const setField = (field, value) => {
@@ -319,7 +324,7 @@ export default function OwnerWhatsApp() {
                   {t('owner.whatsapp.brochure.newTab')} ↗
                 </a>
               </div>
-              <iframe key={pdfUrl} src={pdfUrl}
+              <iframe key={pdfPreviewUrl} src={pdfPreviewUrl}
                       title={t('owner.whatsapp.section.brochure')}
                       style={{ width: '100%', height: 700, border: '1px solid var(--tax-border)', borderRadius: 8 }} />
             </div>

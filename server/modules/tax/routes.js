@@ -485,6 +485,8 @@ module.exports = function createTaxRouter(deps) {
         doc.image(logoBuffer, logoX, logoY,
           { fit: [MAX_LOGO_W, MAX_LOGO_H], align: 'center', valign: 'center' });
       } catch (_) { /* unsupported format — white panel stays */ }
+      // Clickable link over the entire logo panel — opens the public website.
+      doc.link(0, 0, PW, LOGO_SECTION_H, publicUrl);
 
       // Brand-colored tagline banner immediately below logo panel.
       doc.rect(0, LOGO_SECTION_H, PW, BANNER_H).fill(BRAND);

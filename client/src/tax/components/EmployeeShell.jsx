@@ -60,7 +60,12 @@ export default function EmployeeShell({ community, active, children }) {
           <a href={base} className="tax-shell__brand" onClick={closeMobile}
              aria-label={community?.name || 'Tax Services'}>
             {community?.logo_url
-              ? <img src={community.logo_url} alt={community?.name || ''} className="tax-brand__logo" style={{ height: 32, maxWidth: 150 }} />
+              ? <a href={community?.website_url || `/tax/${community?.id}`}
+                   target="_blank" rel="noreferrer"
+                   onClick={e => e.stopPropagation()}
+                   style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <img src={community.logo_url} alt={community?.name || ''} className="tax-brand__logo" style={{ height: 32, maxWidth: 150 }} />
+                </a>
               : <span className="tax-brand__mark">{initials}</span>}
             <span className="tax-shell__brand-name">
               <span className="tax-shell__brand-title">{community?.name || ''}</span>
