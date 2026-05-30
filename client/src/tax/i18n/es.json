@@ -1297,6 +1297,8 @@
   "owner.whatsapp.hint.and": "y sus servicios en el",
   "owner.whatsapp.hint.catalog": "Catálogo de Servicios",
   "owner.whatsapp.hint.suffix": ".",
+  "owner.whatsapp.brochure.label": "Portafolio de servicios (PDF):",
+  "owner.whatsapp.brochure.open": "Abrir {lang}",
   "employee.nav.serviceCatalog": "Catálogo de servicios",
   "owner.services.title": "Catálogo de servicios",
   "owner.services.subtitle": "Edita las tarjetas de servicios de tu página pública — nombre, descripción corta, descripción larga del modal y la lista opcional de lo que necesitas del cliente.",

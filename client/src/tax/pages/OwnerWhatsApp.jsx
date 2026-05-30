@@ -12,7 +12,11 @@ const CATEGORY_EMOJI = {
   one_off:   '🏢',
 };
 
-function buildMessage(locale, settings, products, publicUrl) {
+function brochureUrl(origin, communityId, lang) {
+  return `${origin}/api/m/tax/community/${encodeURIComponent(communityId)}/brochure.pdf?lang=${lang}`;
+}
+
+function buildMessage(locale, settings, products, publicUrl, pdfUrl) {
   const name = locale === 'es'
     ? (settings.name    || settings.name_en || '')
     : (settings.name_en || settings.name    || '');
@@ -40,6 +44,10 @@ function buildMessage(locale, settings, products, publicUrl) {
     `🌐 ${publicUrl}`,
   ].filter(Boolean).join('\n');
 
+  const brochureLine = locale === 'es'
+    ? `📄 Portafolio de servicios: ${pdfUrl}`
+    : `📄 Services portfolio: ${pdfUrl}`;
+
   if (locale === 'es') {
     return `Cordial saludo,
 
@@ -52,6 +60,8 @@ Nuestros servicios:
 ${serviceLines}
 
 ${contactLines}
+
+${brochureLine}
 
 Quedamos atentos a sus preguntas. ¡Con gusto le orientamos sin ningún compromiso!
 
@@ -68,6 +78,8 @@ Our services:
 ${serviceLines}
 
 ${contactLines}
+
+${brochureLine}
 
 We are happy to answer any questions with no obligation. Looking forward to hearing from you!
 
@@ -102,9 +114,10 @@ export default function OwnerWhatsApp() {
   }, [fbUser, community]);
 
   const publicUrl = `${window.location.origin}/tax/${community?.id}`;
+  const pdfUrl    = community ? brochureUrl(window.location.origin, community.id, msgLocale) : '';
 
   const message = (!loading && settings && products.some(p => p.enabled))
-    ? buildMessage(msgLocale, settings, products, publicUrl)
+    ? buildMessage(msgLocale, settings, products, publicUrl, pdfUrl)
     : '';
 
   const copy = async () => {
@@ -161,6 +174,28 @@ export default function OwnerWhatsApp() {
             </div>
           ) : (
             <p style={{ color: 'var(--tax-muted)' }}>{t('owner.whatsapp.noServices')}</p>
+          )}
+
+          {/* PDF brochure links */}
+          {!loading && products.some(p => p.enabled) && (
+            <div style={{
+              marginTop: 16, padding: '12px 16px',
+              background: 'var(--tax-bg-alt)', borderRadius: 8,
+              border: '1px solid var(--tax-border)',
+              display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--tax-text)' }}>
+                {t('owner.whatsapp.brochure.label')}
+              </span>
+              {['es', 'en'].map(lang => (
+                <a key={lang}
+                   href={brochureUrl(window.location.origin, community.id, lang)}
+                   target="_blank" rel="noreferrer"
+                   className="tax-btn tax-btn--ghost tax-btn--sm">
+                  {t('owner.whatsapp.brochure.open', { lang: lang.toUpperCase() })}
+                </a>
+              ))}
+            </div>
           )}
 
           <p style={{ marginTop: 12, fontSize: 12, color: 'var(--tax-muted)' }}>

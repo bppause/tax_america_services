@@ -368,6 +368,194 @@ module.exports = function createTaxRouter(deps) {
     res.json({ community, products: products || [] });
   });
 
+  // ── GET /community/:slug/brochure.pdf?lang=es|en ─────────────────────────
+  // Public services brochure — generated on-demand from live community data.
+  // No auth required; suitable for linking from WhatsApp / email.
+  // 5-minute cache so Render doesn't re-generate on every click.
+  router.get('/community/:slug/brochure.pdf', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    const lang = req.query.lang === 'en' ? 'en' : 'es';
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+
+    const [{ data: community, error: cErr }, { data: products }] = await Promise.all([
+      supabase.from('communities')
+        .select('id, name, name_en, phone, whatsapp, contact_email, address_line1, address_line2, city, state, postal_code, country')
+        .eq('id', slug).eq('business_type', TAX_BUSINESS_TYPE).maybeSingle(),
+      supabase.from('tax_products')
+        .select('slug, category, display_order, name_i18n, description_i18n, long_description_i18n')
+        .eq('community_id', slug).eq('enabled', true).order('display_order', { ascending: true }),
+    ]);
+    if (cErr || !community) return res.status(404).json({ error: 'Community not found.' });
+
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({
+      size: 'A4', margin: 0,
+      info: {
+        Title: lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio',
+        Author: community.name_en || community.name,
+      },
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${slug}-services-${lang}.pdf"`);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    doc.pipe(res);
+
+    // ── Layout constants ───────────────────────────────────────────────────
+    const PW      = doc.page.width;   // 595.28
+    const MARGIN  = 50;
+    const CW      = PW - MARGIN * 2;  // content width
+    const BRAND   = '#1e40af';
+    const DARK    = '#1e293b';
+    const MUTED   = '#64748b';
+    const RULE    = '#e2e8f0';
+    const WHITE   = '#ffffff';
+
+    const pickL = (obj) => (obj?.[lang] || obj?.en || obj?.es || '');
+
+    const bizName = lang === 'es'
+      ? (community.name    || community.name_en || '')
+      : (community.name_en || community.name    || '');
+
+    const publicUrl = `${process.env.PUBLIC_APP_URL || ''}/tax/${slug}`;
+
+    // ── Header band ────────────────────────────────────────────────────────
+    doc.rect(0, 0, PW, 120).fill(BRAND);
+
+    doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(24)
+       .text(bizName, MARGIN, 30, { width: CW });
+
+    const tagline = lang === 'es'
+      ? 'Firma bilingue especializada en servicios tributarios y contables'
+      : 'Bilingual tax & accounting firm — professional, accurate, on time';
+    doc.font('Helvetica').fontSize(12).fillColor('#bfdbfe')
+       .text(tagline, MARGIN, 72, { width: CW });
+
+    // ── Intro ──────────────────────────────────────────────────────────────
+    doc.y = 140;
+    const intro = lang === 'es'
+      ? `Somos su aliado de confianza para el manejo de sus obligaciones fiscales y financieras en los Estados Unidos. Con un equipo bilingue con experiencia, ofrecemos atencion de calidad a personas naturales y empresas — con precision, confidencialidad y trato personalizado.`
+      : `We are your trusted partner for tax and financial obligations in the United States. With an experienced bilingual team, we deliver quality service to individuals and businesses — accurate, confidential, and always on time.`;
+
+    doc.font('Helvetica').fontSize(10.5).fillColor(DARK)
+       .text(intro, MARGIN, doc.y, { width: CW, lineGap: 3 });
+    doc.moveDown(1.2);
+
+    // ── Services heading ───────────────────────────────────────────────────
+    const svcHeading = lang === 'es' ? 'Nuestros Servicios' : 'Our Services';
+    doc.font('Helvetica-Bold').fontSize(15).fillColor(BRAND)
+       .text(svcHeading, MARGIN, doc.y);
+    doc.moveDown(0.25);
+    doc.moveTo(MARGIN, doc.y).lineTo(MARGIN + 55, doc.y)
+       .lineWidth(2.5).strokeColor(BRAND).stroke();
+    doc.moveDown(0.9);
+
+    // ── Category labels ────────────────────────────────────────────────────
+    const CAT = {
+      tax_prep:  { es: 'Preparacion de impuestos', en: 'Tax preparation' },
+      recurring: { es: 'Servicio recurrente',      en: 'Ongoing service' },
+      one_off:   { es: 'Servicio unico',           en: 'One-time service' },
+    };
+
+    const FOOTER_RESERVE = 80; // keep space for footer band
+
+    for (const p of (products || [])) {
+      const pname  = pickL(p.name_i18n);
+      const pdesc  = pickL(p.description_i18n);
+      const plong  = pickL(p.long_description_i18n);
+      const catLbl = CAT[p.category]?.[lang] || '';
+      if (!pname) continue;
+
+      // Rough height estimate: 60 pts min per service block
+      if (doc.y > doc.page.height - FOOTER_RESERVE - 70) {
+        doc.addPage({ size: 'A4', margin: 0 });
+        doc.y = MARGIN;
+      }
+
+      // Service name
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(DARK)
+         .text(pname, MARGIN, doc.y, { continued: false, width: CW });
+
+      // Category tag inline
+      if (catLbl) {
+        const tagY = doc.y - doc.currentLineHeight() - 1;
+        doc.font('Helvetica').fontSize(8.5).fillColor(MUTED)
+           .text(catLbl.toUpperCase(), MARGIN, tagY, { width: CW, align: 'right' });
+      }
+
+      doc.moveDown(0.25);
+
+      if (pdesc) {
+        doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
+           .text(pdesc, MARGIN, doc.y, { width: CW, lineGap: 2 });
+        doc.moveDown(0.25);
+      }
+
+      if (plong && plong !== pdesc) {
+        doc.font('Helvetica').fontSize(10).fillColor(MUTED)
+           .text(plong, MARGIN, doc.y, { width: CW, lineGap: 2 });
+        doc.moveDown(0.25);
+      }
+
+      // Service deep-link
+      const svcUrl = `${publicUrl}#service-${p.slug}`;
+      const linkLabel = lang === 'es' ? `Mas informacion: ${svcUrl}` : `Learn more: ${svcUrl}`;
+      doc.font('Helvetica').fontSize(9).fillColor(BRAND)
+         .text(linkLabel, MARGIN, doc.y, { width: CW });
+
+      doc.moveDown(0.6);
+      doc.moveTo(MARGIN, doc.y).lineTo(MARGIN + CW, doc.y)
+         .lineWidth(0.5).strokeColor(RULE).stroke();
+      doc.moveDown(0.75);
+    }
+
+    // ── Contact section ────────────────────────────────────────────────────
+    if (doc.y > doc.page.height - FOOTER_RESERVE - 140) {
+      doc.addPage({ size: 'A4', margin: 0 });
+      doc.y = MARGIN;
+    } else {
+      doc.moveDown(0.5);
+    }
+
+    const ctaHeading = lang === 'es' ? 'Contactenos' : 'Contact Us';
+    doc.font('Helvetica-Bold').fontSize(15).fillColor(BRAND)
+       .text(ctaHeading, MARGIN, doc.y);
+    doc.moveDown(0.25);
+    doc.moveTo(MARGIN, doc.y).lineTo(MARGIN + 55, doc.y)
+       .lineWidth(2.5).strokeColor(BRAND).stroke();
+    doc.moveDown(0.9);
+
+    const contactLines = [
+      community.phone         && (lang === 'es' ? `Tel: ${community.phone}` : `Phone: ${community.phone}`),
+      community.whatsapp      && `WhatsApp: ${community.whatsapp}`,
+      community.contact_email && `Email: ${community.contact_email}`,
+      publicUrl               && `Web: ${publicUrl}`,
+    ].filter(Boolean);
+
+    const addrParts = [community.address_line1, community.city, community.state, community.postal_code].filter(Boolean);
+    if (addrParts.length) contactLines.push(addrParts.join(', '));
+
+    for (const line of contactLines) {
+      doc.font('Helvetica').fontSize(11).fillColor(DARK)
+         .text(line, MARGIN, doc.y);
+      doc.moveDown(0.5);
+    }
+
+    // ── Footer band (bottom of last page) ─────────────────────────────────
+    const BAND_H = 40;
+    const footerY = doc.page.height - BAND_H;
+    doc.rect(0, footerY, PW, BAND_H).fill(BRAND);
+
+    const footerText = lang === 'es'
+      ? `${bizName}  |  ${publicUrl}`
+      : `${bizName}  |  ${publicUrl}`;
+    doc.font('Helvetica').fontSize(9.5).fillColor(WHITE)
+       .text(footerText, MARGIN, footerY + 13, { width: CW, align: 'center' });
+
+    doc.end();
+  });
+
   // ── GET /community/:slug/faqs ───────────────────────────────────────────
   // Public landing-page feed of FAQs. Surfaces the merged "effective"
   // set across every active relationship type for the community (no
