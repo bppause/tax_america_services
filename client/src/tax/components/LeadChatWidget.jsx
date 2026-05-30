@@ -49,18 +49,23 @@ export default function LeadChatWidget({ community, products, preselectedProduct
   useEffect(() => {
     if (phase !== 'chat') return;
 
-    const selectedProducts = visibleProducts.filter(p => selectedSlugs.includes(p.slug));
-    const nameList = selectedProducts.map(p =>
+    const realSelected = visibleProducts.filter(p => selectedSlugs.includes(p.slug));
+    const nameList = realSelected.map(p =>
       pickI18n(p.name_i18n, locale).value || p.slug
     ).join(', ');
+    const notSure = selectedSlugs.includes('__other__');
 
-    const greeting = selectedProducts.length === 1
+    const greeting = notSure
       ? (es
-          ? `¡Hola! Estoy aquí para responder tus preguntas sobre **${nameList}**. ¿Qué te gustaría saber?`
-          : `Hi! I'm here to answer your questions about **${nameList}**. What would you like to know?`)
-      : (es
-          ? `¡Hola! Puedo ayudarte con: **${nameList}**. ¿Por dónde quieres empezar, o tienes alguna pregunta general?`
-          : `Hi! I can help you with: **${nameList}**. Where would you like to start, or do you have a general question?`);
+          ? `¡Hola! No hay problema si no estás seguro/a. Cuéntame un poco sobre tu situación — ¿eres particular o empresa, y qué necesitas resolver? Te ayudo a identificar el servicio adecuado.`
+          : `Hi! No worries if you're not sure — tell me a bit about your situation. Are you an individual or a business, and what are you trying to solve? I'll help point you to the right service.`)
+      : realSelected.length === 1
+        ? (es
+            ? `¡Hola! Estoy aquí para responder tus preguntas sobre **${nameList}**. ¿Qué te gustaría saber?`
+            : `Hi! I'm here to answer your questions about **${nameList}**. What would you like to know?`)
+        : (es
+            ? `¡Hola! Puedo ayudarte con: **${nameList}**. ¿Por dónde quieres empezar?`
+            : `Hi! I can help you with: **${nameList}**. Where would you like to start?`);
 
     setMessages([{ role: 'assistant', content: greeting }]);
     setTimeout(() => inputRef.current?.focus(), 100);
@@ -78,6 +83,10 @@ export default function LeadChatWidget({ community, products, preselectedProduct
     setPhase('chat');
   };
 
+  // Real slugs excluding the synthetic "not sure" sentinel.
+  const realSlugs = selectedSlugs.filter(s => s !== '__other__');
+  const isUnsure  = selectedSlugs.includes('__other__');
+
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || aiLoading) return;
@@ -87,12 +96,10 @@ export default function LeadChatWidget({ community, products, preselectedProduct
     setMessages(next);
     setAiLoading(true);
     try {
-      // Pass all selected slugs; server builds context from the first one
-      // and mentions others in the system prompt.
       const res = await taxApi.chatWithAi({
         communitySlug: community.id,
-        productSlug: selectedSlugs[0] || '',
-        productSlugs: selectedSlugs,
+        productSlug: realSlugs[0] || '',
+        productSlugs: realSlugs,   // empty when "not sure" → AI covers all services
         messages: next,
       });
       const updated = [...next, { role: 'assistant', content: res.message }];
@@ -131,10 +138,10 @@ export default function LeadChatWidget({ community, products, preselectedProduct
     if (form.website) { setPhase('done'); return; } // honeypot
     setPhase('submitting');
     setErr('');
-    // Use the services the lead actually selected (fall back to visible products if none).
-    const productSlugs = selectedSlugs.length
-      ? selectedSlugs
-      : visibleProducts.map(p => p.slug).slice(0, 1);
+    // Use real selected slugs; if "not sure" was picked use all products.
+    const productSlugs = realSlugs.length
+      ? realSlugs
+      : visibleProducts.map(p => p.slug).slice(0, 3);
     try {
       await taxApi.submitLead({
         communitySlug: community.id,
@@ -192,6 +199,32 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                 </button>
               );
             })}
+            {/* "Not sure" escape hatch — selects all services so the AI can help narrow down */}
+            {(() => {
+              const OTHER = '__other__';
+              const selected = selectedSlugs.includes(OTHER);
+              return (
+                <button type="button"
+                  onClick={() => {
+                    if (selected) {
+                      setSelectedSlugs([]);
+                    } else {
+                      // Select "other" exclusively; clear any specific picks
+                      setSelectedSlugs([OTHER]);
+                    }
+                  }}
+                  style={{
+                    padding: '7px 14px', borderRadius: 20, fontSize: 13, cursor: 'pointer',
+                    fontWeight: selected ? 700 : 500,
+                    border: `1.5px dashed ${selected ? 'var(--tax-brand-primary, #1d3a6d)' : 'var(--tax-border)'}`,
+                    background: selected ? 'color-mix(in srgb, var(--tax-brand-primary) 10%, #fff)' : '#fff',
+                    color: selected ? 'var(--tax-brand-primary, #1d3a6d)' : 'var(--tax-muted)',
+                    transition: 'all .12s',
+                  }}>
+                  {selected ? '✓ ' : ''}{es ? 'No estoy seguro/a' : 'Not sure / Other'}
+                </button>
+              );
+            })()}
           </div>
 
           {selectedSlugs.length > 0 && (
@@ -226,9 +259,16 @@ export default function LeadChatWidget({ community, products, preselectedProduct
           padding: '6px 0 8px', borderBottom: '1px solid var(--tax-border)', marginBottom: 4,
         }}>
           <span style={{ fontSize: 11, color: 'var(--tax-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
-            {es ? 'Servicios:' : 'Services:'}
+            {es ? 'Sobre:' : 'Topic:'}
           </span>
-          {selectedSlugs.map(slug => {
+          {isUnsure ? (
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
+              background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
+              color: 'var(--tax-brand-primary)',
+              border: '1px dashed color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)',
+            }}>{es ? 'No estoy seguro/a' : 'Not sure / Other'}</span>
+          ) : realSlugs.map(slug => {
             const p = visibleProducts.find(x => x.slug === slug);
             const name = p ? (pickI18n(p.name_i18n, locale).value || slug) : slug;
             return (

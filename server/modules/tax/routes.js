@@ -20,6 +20,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const AnthropicSDK = (() => { try { return require('@anthropic-ai/sdk'); } catch (_e) { return null; } })();
 const { warn } = require('../../../logger');
 const { isValidEmail, normalizeLanguage } = require('../../core/utils');
 const {
@@ -974,36 +975,36 @@ module.exports = function createTaxRouter(deps) {
       return `### ${name}\n${long || short}`.slice(0, 600);
     }).join('\n\n');
 
+    const isUnsure = focusSlugs.length === 0; // "not sure / other" path
+
     const systemPrompt = [
       `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
-      `Your job is to answer questions about the specific services the prospect selected, help them`,
-      `understand what fits their situation, and — when they are ready — invite them to share their`,
-      `contact details so a team member can follow up and schedule an appointment.`,
+      `Your job is to answer questions about the services offered, help the prospect understand what`,
+      `fits their situation, and — when they are ready — invite them to share their contact details so`,
+      `a team member can follow up and schedule an appointment.`,
       '',
-      focusNames.length
-        ? `The prospect has selected the following service${focusNames.length > 1 ? 's' : ''} to ask about:\n${focusLines}`
-        : `All services offered:\n${productLines || '(No services listed yet)'}`,
+      isUnsure
+        ? `The prospect is not sure which service they need. Your primary goal is to ask 1-2 short questions to understand their situation, then recommend the most relevant service(s) from the list below.\n\nAll services:\n${productLines || '(No services listed yet)'}`
+        : `The prospect selected the following service${focusNames.length > 1 ? 's' : ''} to ask about:\n${focusLines}`,
       '',
-      focusNames.length && productLines
-        ? `Other available services (for reference only):\n${productLines}`
+      !isUnsure && productLines
+        ? `Other available services (mention only if the prospect asks):\n${productLines}`
         : '',
       '',
       `Behavior guidelines:`,
-      `- Focus your answers on the selected service(s) above. Only discuss other services if the prospect asks.`,
-      `- Be concise and friendly. Answer honestly; do not invent fees, timelines, or guarantees.`,
-      `- Ask one short clarifying question at a time to understand the prospect's specific situation.`,
-      `- After 3 or more exchanges, or when the prospect expresses clear readiness, end your reply with`,
+      isUnsure
+        ? `- Ask one short question at a time to identify the right service. Once you've recommended a service, answer follow-up questions about it.`
+        : `- Focus on the selected service(s). Only discuss others if asked.`,
+      `- Be concise and friendly. Do not invent fees, timelines, or guarantees.`,
+      `- After 3 or more exchanges, or when the prospect expresses readiness, end your reply with`,
       `  the token [READY_TO_CONNECT] on its own line to trigger the appointment booking step.`,
-      `- Include [READY_TO_CONNECT] immediately if the user says they want to be contacted or schedule.`,
+      `- Include [READY_TO_CONNECT] immediately if the user asks to be contacted or to schedule.`,
       `- Do NOT include [READY_TO_CONNECT] on the very first reply.`,
       `- Reply in the same language the user writes in (English or Spanish).`,
     ].filter(Boolean).join('\n');
 
-    let Anthropic;
-    try { Anthropic = require('@anthropic-ai/sdk'); }
-    catch { return res.status(503).json({ error: 'AI SDK not installed.' }); }
-
-    const client = new Anthropic.default({ apiKey });
+    if (!AnthropicSDK) return res.status(503).json({ error: 'AI assistant unavailable.' });
+    const client = new AnthropicSDK({ apiKey });
     let aiText;
     try {
       const aiRes = await client.messages.create({
