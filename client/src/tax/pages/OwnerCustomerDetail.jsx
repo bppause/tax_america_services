@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
@@ -33,6 +34,82 @@ function SectionCard({ title, icon, children, action }) {
       </div>
       {children}
     </div>
+  );
+}
+
+function ReportEditorDrawer({ open, onClose, taskTitle, children }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => setMounted(true), 16);
+    } else {
+      setMounted(false);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return createPortal(
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.3)',
+          zIndex: 1100,
+          opacity: mounted ? 1 : 0,
+          transition: 'opacity 0.25s cubic-bezier(0.4,0,0.2,1)',
+        }}
+      />
+      {/* Drawer panel */}
+      <div style={{
+        position: 'fixed', top: 0, right: 0,
+        height: '100%', width: 'min(92vw, 900px)',
+        background: '#fff',
+        boxShadow: '-4px 0 32px rgba(0,0,0,.18)',
+        zIndex: 1101,
+        display: 'flex', flexDirection: 'column',
+        transform: mounted ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 0.25s cubic-bezier(0.4,0,0.2,1)',
+      }}>
+        {/* Header */}
+        <div style={{
+          flexShrink: 0, height: 56,
+          background: 'var(--tax-brand-primary)',
+          display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 20px',
+        }}>
+          <span style={{ color: '#fff', fontWeight: 700, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            📊 {taskTitle}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: 'transparent', border: 0,
+              color: '#fff', fontSize: 22, lineHeight: 1,
+              cursor: 'pointer', padding: '0 4px', flexShrink: 0,
+            }}
+            aria-label="Close"
+          >×</button>
+        </div>
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+          {children}
+        </div>
+      </div>
+    </>,
+    document.body,
   );
 }
 
@@ -221,6 +298,7 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [data, setData] = useState(null);
   const [types, setTypes] = useState([]);
   const [err, setErr] = useState('');
+  const [reportDrawer, setReportDrawer] = useState(null); // null = closed; { taskTitle, initialReportId, nonce } = open
 
   const load = () => {
     if (!employee || !community) return;
@@ -261,7 +339,11 @@ export default function OwnerCustomerDetail({ customerId }) {
       </SectionCard>
 
       <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊">
-        <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0} />
+        <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0}
+          onEditRequest={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })}
+          onNewRequest={() => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: null, nonce: Date.now() })}
+          drawerMode
+        />
       </SectionCard>
 
       <SectionCard title={t('owner.customer.section.services')} icon="🏷️">
@@ -297,6 +379,21 @@ export default function OwnerCustomerDetail({ customerId }) {
       <SectionCard title={t('owner.customer.section.profile')} icon="👤">
         <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
       </SectionCard>
+
+      <ReportEditorDrawer
+        open={reportDrawer !== null}
+        onClose={() => setReportDrawer(null)}
+        taskTitle={reportDrawer?.taskTitle || 'Financial Report Editor'}
+      >
+        {reportDrawer !== null && (
+          <BookkeepingReportsSection
+            auth={auth} customerId={customerId} customer={c}
+            refreshNonce={reportDrawer.nonce || 0}
+            initialReportId={reportDrawer.initialReportId || null}
+            drawerMode
+          />
+        )}
+      </ReportEditorDrawer>
     </EmployeeShell>
   );
 }
@@ -1974,8 +2071,11 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
                                       try {
                                         const d = await taxApi.adminOpenReportForTask(auth, task.id);
                                         if (d.reportId) {
-                                          window.location.hash = `bookkeeping-edit=${encodeURIComponent(d.reportId)}`;
-                                          window.dispatchEvent(new HashChangeEvent('hashchange'));
+                                          setReportDrawer({
+                                            taskTitle: `${task.title}`,
+                                            initialReportId: d.reportId,
+                                            nonce: Date.now(),
+                                          });
                                         }
                                       } catch (err) { alert(err?.message || 'Could not open report editor.'); }
                                     }}>

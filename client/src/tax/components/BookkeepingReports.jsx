@@ -283,7 +283,7 @@ const SECTION_TITLE_KEY = {
   other_expense: 'owner.customer.bookkeeping.section.other_expense',
 };
 
-export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce }) {
+export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce, initialReportId, drawerMode, onEditRequest, onNewRequest }) {
   const { t, locale } = useT();
   const [reports, setReports] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
@@ -307,6 +307,24 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }));
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId, refreshNonce]);
+
+  const triedInitialId = useRef(null);
+  useEffect(() => {
+    if (!initialReportId || !reports) return;
+    if (triedInitialId.current === initialReportId) return;
+    const row = reports.find(r => r.id === initialReportId);
+    if (row) {
+      triedInitialId.current = initialReportId;
+      startEdit(row);
+    } else {
+      // Not in list yet (newly created) — re-fetch once
+      if (triedInitialId.current !== `retry:${initialReportId}`) {
+        triedInitialId.current = `retry:${initialReportId}`;
+        load();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialReportId, reports]);
 
   const resetPl = () => {
     if (!confirm(t('owner.customer.bookkeeping.confirm.resetPl'))) return;
@@ -549,7 +567,9 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <h3 style={{ margin: 0 }}>{t('owner.customer.bookkeeping.heading')}</h3>
         {bookkeepingActive && !creating && !editingId && (
-          <button type="button" className="tax-btn tax-btn--primary" onClick={startCreate} disabled={busy}>
+          <button type="button" className="tax-btn tax-btn--primary"
+                  onClick={drawerMode ? () => onNewRequest?.() : startCreate}
+                  disabled={busy}>
             {t('owner.customer.bookkeeping.newBtn')}
           </button>
         )}
@@ -598,7 +618,14 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         </div>
       )}
 
-      {(creating || editingId) && (
+      {!drawerMode && (creating || editingId) && (
+        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
+                    editing={!!editingId} onUploadPdf={uploadAndParsePdf}
+                    onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
+                    contactName={customer?.business_name || customer?.name || null}
+                    reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
+      )}
+      {drawerMode && (creating || editingId) && (
         <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
                     editing={!!editingId} onUploadPdf={uploadAndParsePdf}
                     onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
