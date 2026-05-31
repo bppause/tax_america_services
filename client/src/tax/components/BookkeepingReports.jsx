@@ -283,7 +283,7 @@ const SECTION_TITLE_KEY = {
   other_expense: 'owner.customer.bookkeeping.section.other_expense',
 };
 
-export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce, initialReportId, drawerMode, onEditRequest, onNewRequest }) {
+export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce, initialReportId, drawerMode, onEditRequest, onNewRequest, onDone }) {
   const { t, locale } = useT();
   const [reports, setReports] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
@@ -422,6 +422,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
 
   const saveAndClose = async () => {
     clearTimeout(autoSaveTimerRef.current);
+    const finalId = editingId; // capture before cancel clears it
     if ((editingId || creating) && form.period_label && form.period_start && form.period_end) {
       setAutoSaveStatus('saving');
       try {
@@ -435,6 +436,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       } catch (_e) {}
     }
     cancel();
+    onDone?.(finalId || null); // close drawer and scroll to this report
   };
 
   const triedHashIds = useRef(new Set());
