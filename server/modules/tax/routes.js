@@ -1602,8 +1602,8 @@ module.exports = function createTaxRouter(deps) {
       return `<div style="margin-bottom:20px;padding:14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0">
   <p style="margin:0 0 6px;font-size:16px;font-weight:700">${emoji} ${escHtml(name)}</p>
   <p style="margin:0 0 8px;color:#374151">${escHtml(desc)}</p>
-  <p style="margin:0 0 4px">🔗 <a href="${pageUrl}" style="color:#1e3a8a">${learnMoreLabel}</a></p>
-  <p style="margin:0">🤖 <a href="${agentUrl}" style="color:#1e3a8a">${aiChatLabel}</a></p>
+  <p style="margin:0 0 4px">${learnMoreLabel} 🔗 <a href="${pageUrl}" style="color:#1e3a8a">${pageUrl}</a></p>
+  <p style="margin:0">🤖 ${aiChatLabel}: <a href="${agentUrl}" style="color:#1e3a8a">${agentUrl}</a></p>
 </div>`;
     }).join('');
 
