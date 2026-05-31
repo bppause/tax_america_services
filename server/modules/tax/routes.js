@@ -12700,12 +12700,14 @@ ${closingHtml}
       tokenInfo = await ensureAccessToken(rpt.community_id, rpt.customer_id, { rotate: true });
     }
     const viewUrl = reportViewUrl(rpt.community_id, tokenInfo.raw);
+    const custLang = cust?.locale === 'en' ? 'en' : 'es';
+    const reportUrl = `${viewUrl}#report=${encodeURIComponent(rpt.id)}&lang=${custLang}`;
 
     let sendResult = { sent: false, skipped: true, reason: 'sender_not_configured' };
     if (typeof sendTaxBookkeepingReportEmail === 'function') {
       try {
         sendResult = await sendTaxBookkeepingReportEmail({
-          community: comm, customer: cust, report: rpt, viewUrl,
+          community: comm, customer: cust, report: rpt, viewUrl, reportUrl,
           isResend: rpt.status === 'sent',
         });
       } catch (e) {
