@@ -170,6 +170,12 @@ function plHasMismatch(plData) {
   }
   return false;
 }
+// Returns list of affected file labels (e.g. ['P&L']) for the publish-block message.
+function mismatchedFiles(rpt) {
+  const files = [];
+  if (plHasMismatch(rpt.pl_data)) files.push('P&L');
+  return files;
+}
 
 // Compute totals from the section/group tree. Sums groups within each
 // section, derives the canonical totals (gross_profit, net_income,
@@ -488,7 +494,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const publish = async (r) => {
     setBusy(true);
     let missing = [];
-    let mismatch = false;
+    let badFiles = [];
     try {
       const d = await taxApi.adminGetFinancialReport(auth, r.id);
       const rpt = d.report;
@@ -496,12 +502,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       const balOk = rpt.balance_data && Object.values(rpt.balance_data).some(v => v != null && v !== '' && Number(v) !== 0);
       if (!plOk) missing.push('P&L');
       if (!balOk) missing.push('balance sheet');
-      mismatch = plHasMismatch(rpt.pl_data);
+      badFiles = mismatchedFiles(rpt);
     } catch (_e) { /* fetch failed — skip checks, let publish proceed */ }
     finally { setBusy(false); }
 
-    if (mismatch) {
-      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.publishMismatch') });
+    if (badFiles.length > 0) {
+      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.publishMismatch', { files: badFiles.join(' and ') }) });
       return;
     }
 
@@ -954,23 +960,23 @@ function SectionEditor({ t, sectionKey, title, section, onChange, readOnly }) {
   const hasItems = section.groups.some(g => (g.items || []).length > 0);
   const validationBadge = readOnly && hasItems
     ? sectionHasMismatch
-      ? <span style={{ fontSize: 11, color: '#b45309', fontWeight: 700, background: '#fef3c7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>⚠ {t('owner.customer.bookkeeping.section.mismatch')}</span>
+      ? <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700, background: '#fee2e2', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✗ {t('owner.customer.bookkeeping.section.mismatch')}</span>
       : <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, background: '#dcfce7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✓ {t('owner.customer.bookkeeping.section.valid')}</span>
     : null;
   return (
-    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#ef4444' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
       <div
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '9px 12px', cursor: 'pointer', userSelect: 'none',
-          background: sectionHasMismatch ? '#fef3c7' : '#fafafa',
-          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}` }}
+          background: sectionHasMismatch ? '#fee2e2' : '#fafafa',
+          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#ef4444' : '#e2e8f0'}` }}
         onClick={() => setCollapsed(c => !c)}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1, width: 14, textAlign: 'center' }}>{collapsed ? '▶' : '▼'}</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>{title}</span>
           {collapsed && validationBadge}
-          {!readOnly && sectionHasMismatch && collapsed && <span style={{ color: '#b45309', fontSize: 14, lineHeight: 1 }}>⚠</span>}
+          {!readOnly && sectionHasMismatch && collapsed && <span style={{ color: '#b91c1c', fontSize: 14, lineHeight: 1 }}>✗</span>}
         </div>
         <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
       </div>
@@ -1009,8 +1015,8 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
   const mismatch = declaredTotal != null && group.items.length > 0 && Math.abs(declaredTotal - itemSum) > 0.5;
   const match = !mismatch && declaredTotal != null && group.items.length > 0;
-  const borderColor = mismatch ? '#f59e0b' : match ? '#16a34a' : '#e2e8f0';
-  const headerBg  = mismatch ? '#fef3c7' : match ? '#f0fdf4' : '#f8fafc';
+  const borderColor = mismatch ? '#ef4444' : match ? '#16a34a' : '#e2e8f0';
+  const headerBg  = mismatch ? '#fee2e2' : match ? '#f0fdf4' : '#f8fafc';
   return (
     <div style={{ marginTop: 8, border: `1px solid ${borderColor}`, borderRadius: 6, overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 10px',
@@ -1026,7 +1032,7 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
           : <input type="text" value={group.name} onChange={e => onChange({ ...group, name: e.target.value })}
                    placeholder={t('owner.customer.bookkeeping.group.namePlaceholder')}
                    style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
-                   onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#f59e0b' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
+                   onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#ef4444' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
                    onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
         }
         {readOnly
@@ -1036,13 +1042,13 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
                         placeholder={fmtInputNum(itemSum) || '0.00'}
                         title={t('owner.customer.bookkeeping.group.totalHint')}
                         width={110}
-                        borderColor={mismatch ? '#f59e0b' : undefined}
+                        borderColor={mismatch ? '#ef4444' : undefined}
                         extraInputStyle={{ fontWeight: 700 }} />
         }
         {match && <span style={{ color: '#16a34a', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>✓</span>}
         {mismatch && (
           <span title={t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
-                style={{ color: '#b45309', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>⚠</span>
+                style={{ color: '#b91c1c', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>✗</span>
         )}
         {!readOnly && (
           <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
@@ -1052,8 +1058,8 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
       {!collapsed && (
         <div style={{ padding: '8px 10px', background: '#fff' }}>
           {mismatch && (
-            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fef3c7', borderRadius: 4, fontSize: 11, color: '#b45309', fontWeight: 600 }}>
-              ⚠ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fee2e2', borderRadius: 4, fontSize: 11, color: '#b91c1c', fontWeight: 600 }}>
+              ✗ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
             </div>
           )}
           {group.items.length > 0 && (
