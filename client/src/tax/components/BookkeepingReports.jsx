@@ -822,6 +822,83 @@ function AutoSaveStatus({ status }) {
   return <span style={{ fontSize: 12, color: s.color, fontWeight: 500 }}>{s.text}</span>;
 }
 
+
+// ── Import summary bar ────────────────────────────────────────────────────
+// Shown after xlsx import. Lists every P&L section with pass/fail; clicking
+// a row scrolls to that section. Mismatches include a "fix the source file"
+// instruction.
+function ImportSummary({ t, plData, sectionRefs }) {
+  if (!plData?._companyName || !plData?.sections) return null;
+
+  const LABELS = {
+    income:        t('owner.customer.bookkeeping.section.income'),
+    cogs:          t('owner.customer.bookkeeping.section.cogs'),
+    expenses:      t('owner.customer.bookkeeping.section.expenses'),
+    other_income:  t('owner.customer.bookkeeping.section.other_income'),
+    other_expense: t('owner.customer.bookkeeping.section.other_expense'),
+  };
+
+  const rows = SECTION_KEYS.map(key => {
+    const sec = plData.sections[key] || {};
+    const groups = sec.groups || [];
+    const hasAnyTotal = groups.some(g => g.total != null && g.total !== '');
+    const mismatchGroups = groups.filter(g => {
+      const itemSum = (g.items || []).reduce((s, i) => s + num(i.amount), 0);
+      const declared = g.total != null && g.total !== '' ? num(g.total) : null;
+      return declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5;
+    });
+    const pass = hasAnyTotal && mismatchGroups.length === 0;
+    const fail = mismatchGroups.length > 0;
+    const empty = groups.length === 0 || !hasAnyTotal;
+    return { key, label: LABELS[key], pass, fail, empty, mismatchGroups };
+  });
+
+  const anyFail = rows.some(r => r.fail);
+
+  const scrollTo = (key) => {
+    const el = sectionRefs?.[key]?.current;
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  return (
+    <div style={{ marginBottom: 14, border: `1px solid ${anyFail ? '#fca5a5' : '#bbf7d0'}`, borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ padding: '8px 12px', background: anyFail ? '#fef2f2' : '#f0fdf4', borderBottom: `1px solid ${anyFail ? '#fca5a5' : '#bbf7d0'}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontWeight: 700, fontSize: 12, color: anyFail ? '#b91c1c' : '#15803d' }}>
+          {anyFail ? '✗ Import check — fix required' : '✓ Import check — all sections match'}
+        </span>
+        <span style={{ fontSize: 11, color: '#64748b' }}>Click a section to jump to it</span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 0 }}>
+        {rows.map(r => (
+          <button key={r.key} type="button" onClick={() => scrollTo(r.key)}
+            style={{
+              flex: '1 1 160px', display: 'flex', alignItems: 'center', gap: 6,
+              padding: '8px 12px', background: r.fail ? '#fef2f2' : r.pass ? '#f0fdf4' : '#f8fafc',
+              border: 0, borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0',
+              cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+            }}>
+            <span style={{ fontSize: 14 }}>{r.fail ? '✗' : r.pass ? '✓' : '–'}</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: r.fail ? '#b91c1c' : r.pass ? '#15803d' : '#64748b' }}>{r.label}</div>
+              {r.fail && (
+                <div style={{ fontSize: 10, color: '#b91c1c', marginTop: 1 }}>
+                  {r.mismatchGroups.length} group{r.mismatchGroups.length > 1 ? 's' : ''} don't add up
+                </div>
+              )}
+              {r.empty && <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 1 }}>No data</div>}
+            </div>
+          </button>
+        ))}
+      </div>
+      {anyFail && (
+        <div style={{ padding: '8px 12px', background: '#fef2f2', borderTop: '1px solid #fca5a5', fontSize: 12, color: '#991b1b' }}>
+          ⚠️ <strong>The source file needs to be corrected.</strong> One or more sections have line items that don't add up to the group totals. Correct the xlsx file in QuickBooks and re-upload — this report cannot be published until mismatches are resolved.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus, autoSaveStatus }) {
   const [plCollapsed, setPlCollapsed] = useState(false);
   const [balCollapsed, setBalCollapsed] = useState(false);
@@ -829,6 +906,12 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
   const setSection = (key, sec) => {
     setForm(prev => ({ ...prev, pl_data: { ...prev.pl_data, sections: { ...prev.pl_data.sections, [key]: sec } } }));
   };
+  const refIncome       = useRef(null);
+  const refCogs         = useRef(null);
+  const refExpenses     = useRef(null);
+  const refOtherIncome  = useRef(null);
+  const refOtherExpense = useRef(null);
+  const sectionRefs = { income: refIncome, cogs: refCogs, expenses: refExpenses, other_income: refOtherIncome, other_expense: refOtherExpense };
   const totals = computeTotals(form.pl_data);
   const plReadOnly = !!form.pl_data._companyName;
   const balReadOnly = !!form.balance_data._companyName;
@@ -880,6 +963,8 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
         )}
       </FormGroup>
 
+      <ImportSummary t={t} plData={form.pl_data} sectionRefs={sectionRefs} />
+
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pl')}
                  collapsed={plCollapsed} onToggle={() => setPlCollapsed(c => !c)}
                  action={plReadOnly
@@ -891,13 +976,15 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
                      </button>
                  }>
         {SECTION_KEYS.map(sectionKey => (
-          <SectionEditor key={sectionKey} t={t}
-            sectionKey={sectionKey}
-            title={t(SECTION_TITLE_KEY[sectionKey])}
-            section={form.pl_data.sections[sectionKey]}
-            onChange={s => setSection(sectionKey, s)}
-            readOnly={plReadOnly}
-          />
+          <div key={sectionKey} ref={sectionRefs[sectionKey]}>
+            <SectionEditor t={t}
+              sectionKey={sectionKey}
+              title={t(SECTION_TITLE_KEY[sectionKey])}
+              section={form.pl_data.sections[sectionKey]}
+              onChange={s => setSection(sectionKey, s)}
+              readOnly={plReadOnly}
+            />
+          </div>
         ))}
       </FormGroup>
 
