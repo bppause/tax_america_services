@@ -226,9 +226,9 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const [products, setProducts] = useState([]);
   const [selected, setSelected] = useState({});
   const [serviceFilter, setServiceFilter] = useState('');
-  const [channel, setChannel] = useState('email');
   const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
   const [status, setStatus] = useState('idle');
+  const [storedWa, setStoredWa] = useState(customer?.whatsapp || ''); // reactive; updates after save
   const [waOverride, setWaOverride] = useState('');
   const [waSaveStatus, setWaSaveStatus] = useState('idle'); // idle | saving | saved | error
   const [preview, setPreview] = useState(null);   // null = closed; string = modal open
@@ -238,7 +238,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
 
   const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
   const normalizeWa = (raw) => '+' + String(raw || '').replace(/^\+/, '').replace(/\D+/g, '');
-  const effectiveWa = customer.whatsapp || (waOverride.trim() ? normalizeWa(waOverride) : '');
+  const effectiveWa = storedWa || (waOverride.trim() ? normalizeWa(waOverride) : '');
   const waValid = !waOverride.trim() || WHATSAPP_E164.test(normalizeWa(waOverride));
 
   const saveWaNumber = async () => {
@@ -247,7 +247,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
     setWaSaveStatus('saving');
     try {
       await taxApi.adminUpdateCustomer(auth, customer.id, { whatsapp: normalized });
-      customer.whatsapp = normalized; // reflect locally so field hides immediately
+      setStoredWa(normalized); // triggers re-render; hides input, shows number
       setWaOverride('');
       setWaSaveStatus('saved');
       setTimeout(() => setWaSaveStatus('idle'), 3000);
@@ -297,7 +297,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
     try {
       const r = await taxApi.adminSendServiceInquiry(auth, customer.id, {
         productIds: selectedIds, channel: 'whatsapp', lang,
-        waOverride: !customer.whatsapp ? effectiveWa : undefined,
+        waOverride: !storedWa ? effectiveWa : undefined,
       });
       if (r.waUrl) { window.open(r.waUrl, '_blank', 'noopener'); setStatus('sent'); }
       else setStatus(r.error || 'Failed');
@@ -343,8 +343,13 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
           </select>
         </div>
 
-        {/* WhatsApp number if needed */}
-        {channel === 'whatsapp' && !customer.whatsapp && (
+        {/* WhatsApp — show stored number or input to enter one */}
+        {storedWa ? (
+          <div style={{ alignSelf: 'flex-end', paddingBottom: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 2 }}>WhatsApp</span>
+            <span style={{ fontSize: 13, color: 'var(--tax-text)' }}>💬 {storedWa}</span>
+          </div>
+        ) : (
           <div>
             <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 3 }}>
               {t('owner.customer.inquiry.enterWhatsapp')}
@@ -364,24 +369,22 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
             {waSaveStatus === 'error' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>Save failed</p>}
           </div>
         )}
-        {channel === 'whatsapp' && customer.whatsapp && (
-          <p style={{ margin: 0, fontSize: 12, color: 'var(--tax-muted)', alignSelf: 'flex-end', paddingBottom: 8 }}>→ {customer.whatsapp}</p>
-        )}
 
         {/* Action buttons — right-aligned */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          {/* WhatsApp */}
+          {/* WhatsApp — disabled if no number available yet */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
             <button type="button"
                     onClick={openWhatsApp}
-                    disabled={status === 'sending' || selectedIds.length === 0 || (channel === 'whatsapp' && !effectiveWa)}
+                    disabled={status === 'sending' || selectedIds.length === 0 || !effectiveWa}
                     style={{
                       padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                       background: '#25d366', color: '#fff', border: 'none',
-                      opacity: selectedIds.length === 0 ? 0.5 : 1,
+                      opacity: (selectedIds.length === 0 || !effectiveWa) ? 0.5 : 1,
                     }}>
               💬 {t('owner.customer.inquiry.openWhatsapp')}
             </button>
+            {!storedWa && !effectiveWa && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>Enter number above</p>}
           </div>
           {/* Preview & Send Email */}
           <button type="button"
