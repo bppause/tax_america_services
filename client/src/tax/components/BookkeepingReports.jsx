@@ -952,19 +952,18 @@ function SectionEditor({ t, sectionKey, title, section, onChange, readOnly }) {
     return declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5;
   });
   const hasItems = section.groups.some(g => (g.items || []).length > 0);
-  // For read-only xlsx imports: show green ✓ if all group totals match their items, red ✗ if any don't.
   const validationBadge = readOnly && hasItems
     ? sectionHasMismatch
-      ? <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700, background: '#fee2e2', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✗ {t('owner.customer.bookkeeping.section.mismatch')}</span>
+      ? <span style={{ fontSize: 11, color: '#b45309', fontWeight: 700, background: '#fef3c7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>⚠ {t('owner.customer.bookkeeping.section.mismatch')}</span>
       : <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, background: '#dcfce7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✓ {t('owner.customer.bookkeeping.section.valid')}</span>
     : null;
   return (
-    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? (readOnly ? '#ef4444' : '#f59e0b') : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
       <div
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '9px 12px', cursor: 'pointer', userSelect: 'none',
-          background: sectionHasMismatch ? (readOnly ? '#fee2e2' : '#fef3c7') : '#fafafa',
-          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? (readOnly ? '#ef4444' : '#f59e0b') : '#e2e8f0'}` }}
+          background: sectionHasMismatch ? '#fef3c7' : '#fafafa',
+          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}` }}
         onClick={() => setCollapsed(c => !c)}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1010,8 +1009,8 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
   const mismatch = declaredTotal != null && group.items.length > 0 && Math.abs(declaredTotal - itemSum) > 0.5;
   const match = !mismatch && declaredTotal != null && group.items.length > 0;
-  const borderColor = mismatch ? (readOnly ? '#ef4444' : '#f59e0b') : match ? '#16a34a' : '#e2e8f0';
-  const headerBg  = mismatch ? (readOnly ? '#fee2e2' : '#fef3c7') : match ? '#f0fdf4' : '#f8fafc';
+  const borderColor = mismatch ? '#f59e0b' : match ? '#16a34a' : '#e2e8f0';
+  const headerBg  = mismatch ? '#fef3c7' : match ? '#f0fdf4' : '#f8fafc';
   return (
     <div style={{ marginTop: 8, border: `1px solid ${borderColor}`, borderRadius: 6, overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 10px',
@@ -1041,12 +1040,9 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
                         extraInputStyle={{ fontWeight: 700 }} />
         }
         {match && <span style={{ color: '#16a34a', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>✓</span>}
-        {mismatch && !readOnly && (
+        {mismatch && (
           <span title={t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
                 style={{ color: '#b45309', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>⚠</span>
-        )}
-        {mismatch && readOnly && (
-          <span style={{ color: '#b91c1c', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>✗</span>
         )}
         {!readOnly && (
           <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
@@ -1056,8 +1052,8 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
       {!collapsed && (
         <div style={{ padding: '8px 10px', background: '#fff' }}>
           {mismatch && (
-            <div style={{ marginBottom: 6, padding: '5px 8px', background: readOnly ? '#fee2e2' : '#fef3c7', borderRadius: 4, fontSize: 11, color: readOnly ? '#b91c1c' : '#b45309', fontWeight: 600 }}>
-              {readOnly ? '✗' : '⚠'} {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fef3c7', borderRadius: 4, fontSize: 11, color: '#b45309', fontWeight: 600 }}>
+              ⚠ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
             </div>
           )}
           {group.items.length > 0 && (
