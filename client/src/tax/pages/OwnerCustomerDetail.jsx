@@ -230,6 +230,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
   const [status, setStatus] = useState('idle');
   const [waOverride, setWaOverride] = useState('');
+  const [waSaveStatus, setWaSaveStatus] = useState('idle'); // idle | saving | saved | error
   const [preview, setPreview] = useState(null);   // null = closed; string = modal open
   const [previewing, setPreviewing] = useState(false);
   const [sendingFromPreview, setSendingFromPreview] = useState(false);
@@ -239,6 +240,21 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const normalizeWa = (raw) => '+' + String(raw || '').replace(/^\+/, '').replace(/\D+/g, '');
   const effectiveWa = customer.whatsapp || (waOverride.trim() ? normalizeWa(waOverride) : '');
   const waValid = !waOverride.trim() || WHATSAPP_E164.test(normalizeWa(waOverride));
+
+  const saveWaNumber = async () => {
+    const normalized = normalizeWa(waOverride);
+    if (!waOverride.trim() || !WHATSAPP_E164.test(normalized)) return;
+    setWaSaveStatus('saving');
+    try {
+      await taxApi.adminUpdateCustomer(auth, customer.id, { whatsapp: normalized });
+      customer.whatsapp = normalized; // reflect locally so field hides immediately
+      setWaOverride('');
+      setWaSaveStatus('saved');
+      setTimeout(() => setWaSaveStatus('idle'), 3000);
+    } catch (_) {
+      setWaSaveStatus('error');
+    }
+  };
 
   useEffect(() => {
     if (!community?.id) return;
@@ -334,14 +350,18 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
               {t('owner.customer.inquiry.enterWhatsapp')}
             </label>
             <input type="tel" value={waOverride} placeholder="+14155551234"
-                   onChange={e => { setWaOverride(e.target.value); setStatus('idle'); }}
+                   onChange={e => { setWaOverride(e.target.value); setStatus('idle'); setWaSaveStatus('idle'); }}
+                   onBlur={saveWaNumber}
                    maxLength={20}
                    style={{
                      padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 170,
                      border: `1px solid ${waOverride && !waValid ? 'var(--tax-error)' : 'var(--tax-border)'}`,
                    }} />
             {waOverride && !waValid && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>{t('portal.profile.whatsapp.invalid')}</p>}
-            {waOverride && waValid && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>→ {normalizeWa(waOverride)}</p>}
+            {waOverride && waValid && waSaveStatus === 'idle' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>→ {normalizeWa(waOverride)}</p>}
+            {waSaveStatus === 'saving' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</p>}
+            {waSaveStatus === 'saved' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved to contact</p>}
+            {waSaveStatus === 'error' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>Save failed</p>}
           </div>
         )}
         {channel === 'whatsapp' && customer.whatsapp && (
