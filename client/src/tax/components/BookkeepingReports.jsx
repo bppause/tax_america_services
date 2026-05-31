@@ -618,14 +618,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         </div>
       )}
 
-      {!drawerMode && (creating || editingId) && (
-        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
-                    editing={!!editingId} onUploadPdf={uploadAndParsePdf}
-                    onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
-                    contactName={customer?.business_name || customer?.name || null}
-                    reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
-      )}
-      {drawerMode && (creating || editingId) && (
+      {(creating || editingId) && (
         <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
                     editing={!!editingId} onUploadPdf={uploadAndParsePdf}
                     onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
@@ -643,7 +636,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
             <div style={{ marginTop: 8 }}>
               {reports.map(r => (
                 <ReportRow key={r.id} r={r} t={t} locale={locale}
-                  onEdit={() => startEdit(r)}
+                  onEdit={drawerMode ? () => onEditRequest?.(r.id) : () => startEdit(r)}
                   onPublish={() => publish(r)}
                   onSend={() => send(r, false)}
                   onResend={() => send(r, true)}
