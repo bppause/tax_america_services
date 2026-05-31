@@ -295,7 +295,10 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const [msg, setMsg] = useState({ kind: '', text: '' });
   const [pdfMeta, setPdfMeta] = useState({ pl: null, balance: null }); // { fileName, companyName, mismatch }
   const [taskId, setTaskId] = useState(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState('idle'); // 'idle'|'pending'|'saving'|'saved'|'error'
   const sectionRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
+  const ignoreNextFormChangeRef = useRef(false);
 
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
@@ -326,6 +329,35 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialReportId, reports]);
 
+  // Auto-save: fires 1.5s after last form change while editing/creating
+  useEffect(() => {
+    if (!editingId && !creating) return;
+    if (ignoreNextFormChangeRef.current) { ignoreNextFormChangeRef.current = false; return; }
+    if (!form.period_label || !form.period_start || !form.period_end) return;
+    setAutoSaveStatus('pending');
+    const timer = setTimeout(async () => {
+      setAutoSaveStatus('saving');
+      try {
+        const payload = formToPayload(form);
+        if (editingId) {
+          await taxApi.adminUpdateFinancialReport(auth, editingId, payload);
+        } else {
+          const d = await taxApi.adminCreateFinancialReport(auth, customerId, payload);
+          ignoreNextFormChangeRef.current = true;
+          setEditingId(d.report.id);
+          setCreating(false);
+        }
+        setAutoSaveStatus('saved');
+        load();
+        setTimeout(() => setAutoSaveStatus(s => s === 'saved' ? 'idle' : s), 3000);
+      } catch (_e) {
+        setAutoSaveStatus('error');
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
+
   const resetPl = () => {
     if (!confirm(t('owner.customer.bookkeeping.confirm.resetPl'))) return;
     setForm(prev => ({ ...prev, pl_data: emptyPlData() }));
@@ -340,13 +372,20 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const startCreate = () => {
+    ignoreNextFormChangeRef.current = true;
+    setAutoSaveStatus('idle');
+    clearTimeout(autoSaveTimerRef.current);
     setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
   };
   const startEdit = (r) => {
     setPdfMeta({ pl: null, balance: null });
+    ignoreNextFormChangeRef.current = true;
+    setAutoSaveStatus('idle');
+    clearTimeout(autoSaveTimerRef.current);
     setBusy(true);
     taxApi.adminGetFinancialReport(auth, r.id)
       .then(d => {
+        ignoreNextFormChangeRef.current = true;
         setForm(reportToForm(d.report));
         setEditingId(r.id);
         setCreating(false);
@@ -374,7 +413,29 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
       .finally(() => setBusy(false));
   };
-  const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null); };
+  const cancel = () => {
+    clearTimeout(autoSaveTimerRef.current);
+    ignoreNextFormChangeRef.current = true;
+    setAutoSaveStatus('idle');
+    setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
+  };
+
+  const saveAndClose = async () => {
+    clearTimeout(autoSaveTimerRef.current);
+    if ((editingId || creating) && form.period_label && form.period_start && form.period_end) {
+      setAutoSaveStatus('saving');
+      try {
+        const payload = formToPayload(form);
+        if (editingId) {
+          await taxApi.adminUpdateFinancialReport(auth, editingId, payload);
+        } else {
+          await taxApi.adminCreateFinancialReport(auth, customerId, payload);
+        }
+        load();
+      } catch (_e) {}
+    }
+    cancel();
+  };
 
   const triedHashIds = useRef(new Set());
   useEffect(() => {
@@ -618,13 +679,22 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         </div>
       )}
 
-      {(creating || editingId) && (
-        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
-                    editing={!!editingId} onUploadPdf={uploadAndParsePdf}
-                    onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
-                    contactName={customer?.business_name || customer?.name || null}
-                    reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
-      )}
+      {(creating || editingId) && (() => {
+        const currentReport = editingId ? (reports?.find(r => r.id === editingId) || null) : null;
+        const rptStatus = currentReport?.status || 'draft';
+        return (
+          <ReportForm t={t} form={form} setForm={setForm} onSaveAndClose={saveAndClose} onCancel={cancel} busy={busy}
+                      editing={!!editingId} onUploadPdf={uploadAndParsePdf}
+                      onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
+                      contactName={customer?.business_name || customer?.name || null}
+                      reportStatus={rptStatus}
+                      autoSaveStatus={autoSaveStatus}
+                      onPublish={currentReport ? () => publish(currentReport) : null}
+                      onPreview={currentReport ? () => preview(currentReport) : null}
+                      onSend={currentReport ? () => send(currentReport, false) : null}
+                      onResend={currentReport ? () => send(currentReport, true) : null} />
+        );
+      })()}
 
       {!creating && !editingId && (
         <>
@@ -717,7 +787,19 @@ function SaveButtons({ t, onSave, onCancel, busy, editing, sm }) {
   );
 }
 
-function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus }) {
+function AutoSaveStatus({ status }) {
+  const map = {
+    pending: { text: '● Unsaved', color: '#94a3b8' },
+    saving:  { text: '⟳ Saving…', color: '#2563eb' },
+    saved:   { text: '✓ Saved',   color: '#16a34a' },
+    error:   { text: '⚠ Save failed', color: '#dc2626' },
+  };
+  const s = map[status];
+  if (!s) return null;
+  return <span style={{ fontSize: 12, color: s.color, fontWeight: 500 }}>{s.text}</span>;
+}
+
+function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus, autoSaveStatus, onPublish, onPreview, onSend, onResend }) {
   const [plCollapsed, setPlCollapsed] = useState(false);
   const [balCollapsed, setBalCollapsed] = useState(false);
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -727,10 +809,10 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
   const totals = computeTotals(form.pl_data);
 
   return (
-    <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa' }}>
+    <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
         <h4 style={{ margin: 0 }}>{t(editing ? 'owner.customer.bookkeeping.form.heading.edit' : 'owner.customer.bookkeeping.form.heading.create')}</h4>
-        <SaveButtons t={t} onSave={onSave} onCancel={onCancel} busy={busy} editing={editing} sm />
+        <AutoSaveStatus status={autoSaveStatus} />
       </div>
 
       {(reportStatus === 'published' || reportStatus === 'sent') && (
@@ -822,8 +904,45 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
         {t('owner.customer.bookkeeping.form.verifyBanner')}
       </div>
 
-      <div style={{ marginTop: 14 }}>
-        <SaveButtons t={t} onSave={onSave} onCancel={onCancel} busy={busy} editing={editing} />
+      {/* Sticky workflow bar */}
+      <div style={{
+        position: 'sticky', bottom: 0,
+        background: '#f8fafc',
+        borderTop: '1px solid var(--tax-border)',
+        padding: '12px 0 0',
+        marginTop: 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AutoSaveStatus status={autoSaveStatus} />
+          {!editing && autoSaveStatus === 'idle' && (
+            <span style={{ fontSize: 12, color: '#94a3b8' }}>Fill period fields to enable auto-save</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button type="button" className="tax-btn tax-btn--ghost"
+                  onClick={onSaveAndClose || onCancel} disabled={busy}>
+            {autoSaveStatus === 'saving' ? t('owner.customer.bookkeeping.action.saving') : 'Close'}
+          </button>
+          {reportStatus === 'draft' && onPublish && (
+            <button type="button" className="tax-btn tax-btn--primary" onClick={onPublish}
+                    disabled={busy || autoSaveStatus === 'pending' || autoSaveStatus === 'saving'}>
+              {t('owner.customer.bookkeeping.action.publish')} →
+            </button>
+          )}
+          {reportStatus === 'published' && (
+            <>
+              {onPreview && <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>{t('owner.customer.bookkeeping.action.preview')}</button>}
+              {onSend && <button type="button" className="tax-btn tax-btn--primary" onClick={onSend} disabled={busy}>{t('owner.customer.bookkeeping.action.send')} →</button>}
+            </>
+          )}
+          {reportStatus === 'sent' && (
+            <>
+              {onPreview && <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>{t('owner.customer.bookkeeping.action.preview')}</button>}
+              {onResend && <button type="button" className="tax-btn" onClick={onResend} disabled={busy}>{t('owner.customer.bookkeeping.action.resend')}</button>}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
