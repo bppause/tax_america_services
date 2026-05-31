@@ -1982,11 +1982,22 @@ module.exports = function createTaxSenders(deps) {
     const practiceName = community?.name || 'Tax America Services';
 
     const pl = report?.pl_data || {};
-    const revenueChannels = (pl.revenue && typeof pl.revenue === 'object') ? pl.revenue : {};
-    const totalRevenue = Number(pl.total_income)
-      || Object.values(revenueChannels).reduce((s, v) => s + (Number(v) || 0), 0);
-    const netIncome = Number(pl.net_income) || 0;
-    const cogs = Number(pl.cogs) || 0;
+    // Support both new sectional shape ({sections, totals}) and legacy flat shape.
+    let totalRevenue, netIncome, cogs;
+    if (pl.sections) {
+      const tots = pl.totals || {};
+      const sectionSum = (key) => (pl.sections[key]?.groups || [])
+        .reduce((s, g) => s + (Number(g.total) || (g.items || []).reduce((a, i) => a + (Number(i.amount) || 0), 0)), 0);
+      totalRevenue = Number(tots.total_income) || sectionSum('income');
+      cogs         = Number(tots.total_cogs)   || sectionSum('cogs');
+      netIncome    = Number(tots.net_income)   || 0;
+    } else {
+      const revenueChannels = (pl.revenue && typeof pl.revenue === 'object') ? pl.revenue : {};
+      totalRevenue = Number(pl.total_income)
+        || Object.values(revenueChannels).reduce((s, v) => s + (Number(v) || 0), 0);
+      netIncome = Number(pl.net_income) || 0;
+      cogs = Number(pl.cogs) || 0;
+    }
     const grossProfit = totalRevenue - cogs;
     const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
 

@@ -45,6 +45,7 @@ import OwnerRelationshipWorkflows from './pages/OwnerRelationshipWorkflows';
 import OwnerRelationshipTypes from './pages/OwnerRelationshipTypes';
 import OwnerSetup from './pages/OwnerSetup';
 import OwnerWhatsApp from './pages/OwnerWhatsApp';
+import TaxReport from './pages/TaxReport';
 import PlatformDashboard from './pages/PlatformDashboard';
 import PlatformCommunityCreate from './pages/PlatformCommunityCreate';
 import { TaxPlatformAuthProvider, useTaxPlatformAuth } from './auth/PlatformAuthProvider';
@@ -109,6 +110,9 @@ function parseTaxPath() {
     if (parts[3] === 'inbox')    return { route: 'employee-inbox', slug };
     return { route: 'owner-dashboard', slug };
   }
+  if (parts[2] === 'r' && parts[3]) {
+    return { route: 'report-access', slug, token: parts[3] };
+  }
   if (parts[2] === 'portal') {
     if (parts[3] === 'profile') return { route: 'portal-profile', slug };
     if (parts[3] === 'faqs') return { route: 'portal-faqs', slug };
@@ -131,19 +135,21 @@ export default function TaxApp() {
     <TaxLocaleProvider>
       {parsed.route === 'respond'
         ? <Respond token={parsed.token} />
-        : parsed.route.startsWith('platform')
-          ? <PlatformRoot parsed={parsed} />
-          : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))
-            ? <EmployeeRoot parsed={parsed} />
-            : parsed.route.startsWith('portal')
-              ? <PortalRoot parsed={parsed} />
-              : parsed.route === 'public-faqs'
-                ? <PublicFaqs communitySlug={parsed.slug} />
-                : parsed.route === 'public-articles'
-                  ? <PublicArticles communitySlug={parsed.slug} />
-                  : parsed.route === 'public-calendar'
-                    ? <PublicCalendar communitySlug={parsed.slug} />
-                    : <Landing communitySlug={parsed.slug} />}
+        : parsed.route === 'report-access'
+          ? <TaxReport communitySlug={parsed.slug} token={parsed.token} />
+          : parsed.route.startsWith('platform')
+            ? <PlatformRoot parsed={parsed} />
+            : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))
+              ? <EmployeeRoot parsed={parsed} />
+              : parsed.route.startsWith('portal')
+                ? <PortalRoot parsed={parsed} />
+                : parsed.route === 'public-faqs'
+                  ? <PublicFaqs communitySlug={parsed.slug} />
+                  : parsed.route === 'public-articles'
+                    ? <PublicArticles communitySlug={parsed.slug} />
+                    : parsed.route === 'public-calendar'
+                      ? <PublicCalendar communitySlug={parsed.slug} />
+                      : <Landing communitySlug={parsed.slug} />}
     </TaxLocaleProvider>
   );
 }
