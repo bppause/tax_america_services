@@ -603,12 +603,17 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const preview = async (r) => {
+    // Open window synchronously before any await to avoid browser popup blocking.
+    const win = window.open('', '_blank', 'noopener');
     setBusy(true);
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
-      window.open(d.viewUrl + '#report=' + encodeURIComponent(r.id), '_blank', 'noopener');
-    } catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') }); }
+      win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id);
+    } catch (e) {
+      win.close();
+      setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') });
+    }
     finally { setBusy(false); }
   };
 

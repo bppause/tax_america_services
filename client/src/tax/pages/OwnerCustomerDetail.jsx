@@ -1996,18 +1996,32 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey }) {
     const key = isResend ? 'owner.customer.bookkeeping.confirm.resend' : 'owner.customer.bookkeeping.confirm.send';
     if (!confirm(t(key, { period: r.period_label }))) return;
     setBusy(true); setErrMsg('');
-    try { await taxApi.adminSendFinancialReport(auth, r.id); load(); }
+    try {
+      const d = await taxApi.adminSendFinancialReport(auth, r.id);
+      if (!d.sent) {
+        const reason = d.reason || '';
+        if (reason === 'customer_email_missing') setErrMsg('Customer has no email address on file — report was not sent.');
+        else if (reason === 'email_not_configured') setErrMsg('Email sending is not configured on this account. Contact support.');
+        else setErrMsg(`Report marked sent but email was not delivered: ${reason}`);
+      }
+      load();
+    }
     catch (e) { setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.sendFailed')); }
     finally { setBusy(false); }
   };
 
   const preview = async (r) => {
+    // Open window synchronously before any await to avoid browser popup blocking.
+    const win = window.open('', '_blank', 'noopener');
     setBusy(true); setErrMsg('');
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
-      window.open(d.viewUrl + '#report=' + encodeURIComponent(r.id), '_blank', 'noopener');
-    } catch (e) { setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.previewFailed')); }
+      win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id);
+    } catch (e) {
+      win.close();
+      setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.previewFailed'));
+    }
     finally { setBusy(false); }
   };
 
