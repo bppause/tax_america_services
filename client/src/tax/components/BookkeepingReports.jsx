@@ -694,11 +694,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
                       onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
                       contactName={customer?.business_name || customer?.name || null}
                       reportStatus={rptStatus}
-                      autoSaveStatus={autoSaveStatus}
-                      onPublish={currentReport ? () => publish(currentReport) : null}
-                      onPreview={currentReport ? () => preview(currentReport) : null}
-                      onSend={currentReport ? () => send(currentReport, false) : null}
-                      onResend={currentReport ? () => send(currentReport, true) : null} />
+                      autoSaveStatus={autoSaveStatus} />
         );
       })()}
 
@@ -805,7 +801,7 @@ function AutoSaveStatus({ status }) {
   return <span style={{ fontSize: 12, color: s.color, fontWeight: 500 }}>{s.text}</span>;
 }
 
-function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus, autoSaveStatus, onPublish, onPreview, onSend, onResend }) {
+function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus, autoSaveStatus }) {
   const [plCollapsed, setPlCollapsed] = useState(false);
   const [balCollapsed, setBalCollapsed] = useState(false);
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -910,7 +906,7 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
         {t('owner.customer.bookkeeping.form.verifyBanner')}
       </div>
 
-      {/* Sticky workflow bar */}
+      {/* Sticky close bar — workflow actions (Publish/Preview/Send) live on the summary */}
       <div style={{
         position: 'sticky', bottom: 0,
         background: '#f8fafc',
@@ -919,36 +915,11 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
         marginTop: 16,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <AutoSaveStatus status={autoSaveStatus} />
-          {!editing && autoSaveStatus === 'idle' && (
-            <span style={{ fontSize: 12, color: '#94a3b8' }}>Fill period fields to enable auto-save</span>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <button type="button" className="tax-btn tax-btn--ghost"
-                  onClick={onSaveAndClose || onCancel} disabled={busy}>
-            {autoSaveStatus === 'saving' ? t('owner.customer.bookkeeping.action.saving') : 'Close'}
-          </button>
-          {reportStatus === 'draft' && onPublish && (
-            <button type="button" className="tax-btn tax-btn--primary" onClick={onPublish}
-                    disabled={busy || autoSaveStatus === 'pending' || autoSaveStatus === 'saving'}>
-              {t('owner.customer.bookkeeping.action.publish')} →
-            </button>
-          )}
-          {reportStatus === 'published' && (
-            <>
-              {onPreview && <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>{t('owner.customer.bookkeeping.action.preview')}</button>}
-              {onSend && <button type="button" className="tax-btn tax-btn--primary" onClick={onSend} disabled={busy}>{t('owner.customer.bookkeeping.action.send')} →</button>}
-            </>
-          )}
-          {reportStatus === 'sent' && (
-            <>
-              {onPreview && <button type="button" className="tax-btn" onClick={onPreview} disabled={busy}>{t('owner.customer.bookkeeping.action.preview')}</button>}
-              {onResend && <button type="button" className="tax-btn" onClick={onResend} disabled={busy}>{t('owner.customer.bookkeeping.action.resend')}</button>}
-            </>
-          )}
-        </div>
+        <AutoSaveStatus status={autoSaveStatus} />
+        <button type="button" className="tax-btn tax-btn--ghost"
+                onClick={onSaveAndClose || onCancel} disabled={busy}>
+          {autoSaveStatus === 'saving' ? t('owner.customer.bookkeeping.action.saving') : 'Close'}
+        </button>
       </div>
     </div>
   );
