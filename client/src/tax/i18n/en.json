@@ -945,6 +945,7 @@
   "owner.customer.inquiry.whatsappOpened": "WhatsApp opened — review and send the message.",
   "owner.customer.inquiry.emailSent": "Email sent",
   "owner.customer.inquiry.previewBtn": "Preview message",
+  "owner.customer.inquiry.previewAndSend": "Preview & Send Email",
   "owner.customer.inquiry.preview": "Message preview (editable)",
   "owner.customer.inquiry.closePreview": "Close preview",
   "owner.customer.back": "Back to customers",
