@@ -1991,6 +1991,10 @@ function ServicesSection({ community, auth, customerId, locale, t }) {
   };
   const onRemove = async (link) => {
     const name = pickI18n(link.product?.name_i18n, locale).value || link.product?.slug || '';
+    if (services.length <= 1) {
+      setErr(t('owner.customer.services.errLastService'));
+      return;
+    }
     if (!window.confirm(t('owner.customer.services.removeConfirm', { name }))) return;
     setBusyId(link.id); setErr(''); setMsg('');
     try {

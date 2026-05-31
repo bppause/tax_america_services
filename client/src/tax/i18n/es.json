@@ -347,6 +347,7 @@
   "owner.customer.services.removedNamed": "{{name}} quitado.",
   "owner.customer.services.removedWithTasks": "{{name}} quitado. {{count}} tarea(s) abierta(s) limpiada(s).",
   "owner.customer.services.removeConfirm": "¿Quitar {{name}} de este cliente? Las tareas automáticas sin tocar para este servicio se eliminarán (las asignadas / en curso / con notas se conservan).",
+  "owner.customer.services.errLastService": "Un cliente debe tener al menos un servicio. Agregue otro servicio antes de eliminar este.",
   "employee.nav.progress": "Progreso",
   "employee.nav.reminders": "Recordatorios",
   "employee.nav.groupHomepage": "Página pública",

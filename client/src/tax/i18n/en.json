@@ -347,6 +347,7 @@
   "owner.customer.services.removedNamed": "{{name}} removed.",
   "owner.customer.services.removedWithTasks": "{{name}} removed. {{count}} open task(s) cleaned up.",
   "owner.customer.services.removeConfirm": "Remove {{name}} from this customer? Untouched auto-tasks for this service will be deleted (assigned / in-progress / with notes are kept).",
+  "owner.customer.services.errLastService": "A customer must have at least one service. Add another service before removing this one.",
   "employee.nav.progress": "Progress",
   "employee.nav.reminders": "Reminders",
   "employee.nav.groupHomepage": "Homepage (public site)",
