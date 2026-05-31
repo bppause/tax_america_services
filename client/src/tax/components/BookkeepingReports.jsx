@@ -957,8 +957,9 @@ function SectionEditor({ t, sectionKey, title, section, onChange, readOnly }) {
     const declared = g.total != null && g.total !== '' ? num(g.total) : null;
     return declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5;
   });
-  const hasItems = section.groups.some(g => (g.items || []).length > 0);
-  const validationBadge = readOnly && hasItems
+  // Show badge when any group has a declared total (summary-only groups count as valid)
+  const hasAnyTotal = section.groups.some(g => g.total != null && g.total !== '');
+  const validationBadge = readOnly && hasAnyTotal
     ? sectionHasMismatch
       ? <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700, background: '#fee2e2', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✗ {t('owner.customer.bookkeeping.section.mismatch')}</span>
       : <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, background: '#dcfce7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✓ {t('owner.customer.bookkeeping.section.valid')}</span>
@@ -1014,7 +1015,8 @@ function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
   const itemSum = group.items.reduce((s, i) => s + num(i.amount), 0);
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
   const mismatch = declaredTotal != null && group.items.length > 0 && Math.abs(declaredTotal - itemSum) > 0.5;
-  const match = !mismatch && declaredTotal != null && group.items.length > 0;
+  // No items = summary-only group; treat declared total as correct → green
+  const match = !mismatch && declaredTotal != null;
   const borderColor = mismatch ? '#ef4444' : match ? '#16a34a' : '#e2e8f0';
   const headerBg  = mismatch ? '#fee2e2' : match ? '#f0fdf4' : '#f8fafc';
   return (
