@@ -199,6 +199,270 @@ export default function OwnerCustomerDetail({ customerId }) {
 // of notes, signatures, filings, threads, and email engagement so staff
 // can answer "what's been going on with this customer?" in one scan
 // instead of scrolling 7 sibling sections.
+// ── Service Inquiry Sender ───────────────────────────────────────────────────
+// Lets the owner pick services and send an inquiry message to the customer
+// via email or WhatsApp (wa.me pre-fill). Language defaults to the customer's
+// locale but can be overridden.
+function ServiceInquirySection({ customer, auth, community, locale, t }) {
+  const [products, setProducts] = useState([]);
+  const [selected, setSelected] = useState({});        // { productId: true } — starts empty
+  const [serviceFilter, setServiceFilter] = useState('');
+  const [channel, setChannel] = useState('email');
+  const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
+  const [status, setStatus] = useState('idle');
+  const [waOverride, setWaOverride] = useState('');
+
+  const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
+  const normalizeWa = (raw) => '+' + String(raw || '').replace(/^\+/, '').replace(/\D+/g, '');
+  const effectiveWa = customer.whatsapp || (waOverride.trim() ? normalizeWa(waOverride) : '');
+  const waValid = !waOverride.trim() || WHATSAPP_E164.test(normalizeWa(waOverride));
+
+  useEffect(() => {
+    if (!community?.id) return;
+    taxApi.adminListProducts(auth, community.id)
+      .then(d => setProducts((d.products || []).filter(p => p.enabled !== false)))
+      .catch(() => {});
+  }, [community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const CATEGORY_EMOJI = { individual: '📋', business: '🏢', general: '📚', audit: '📋' };
+
+  const filteredProducts = serviceFilter.trim()
+    ? products.filter(p => {
+        const name = (p.name_i18n?.[lang] || p.name_i18n?.en || p.name_i18n?.es || p.slug).toLowerCase();
+        return name.includes(serviceFilter.toLowerCase());
+      })
+    : products;
+
+  const toggle = (id) => setSelected(prev => ({ ...prev, [id]: !prev[id] }));
+  const selectedIds = Object.keys(selected).filter(k => selected[k]);
+
+  const [preview, setPreview] = useState(null);   // null = no preview; string = editable text
+  const [previewing, setPreviewing] = useState(false);
+
+  const onPreview = async () => {
+    if (!selectedIds.length) return;
+    setPreviewing(true);
+    try {
+      const r = await taxApi.adminPreviewServiceInquiry(auth, customer.id, {
+        productIds: selectedIds, lang,
+      });
+      setPreview(r.text || '');
+    } catch (e) {
+      setStatus(e?.message || 'Preview failed');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const onSend = async () => {
+    if (!selectedIds.length) return;
+    if (channel === 'whatsapp') {
+      if (!effectiveWa) { setStatus(t('owner.customer.inquiry.provideWhatsapp')); return; }
+      if (!WHATSAPP_E164.test(effectiveWa)) { setStatus(t('portal.profile.whatsapp.invalid')); return; }
+    }
+    setStatus('sending');
+    try {
+      const r = await taxApi.adminSendServiceInquiry(auth, customer.id, {
+        productIds: selectedIds, channel, lang,
+        waOverride: channel === 'whatsapp' && !customer.whatsapp ? effectiveWa : undefined,
+        customMessage: preview !== null ? preview : undefined,
+      });
+      if (channel === 'whatsapp' && r.waUrl) {
+        window.open(r.waUrl, '_blank', 'noopener');
+        setStatus('sent');
+      } else if (r.ok) {
+        setStatus('sent');
+      } else if (r.skipped) {
+        setStatus('Email not configured on this server.');
+      } else {
+        setStatus(r.error || 'Send failed');
+      }
+    } catch (e) {
+      setStatus(e?.message || 'Send failed');
+    }
+  };
+
+  return (
+    <div style={{ padding: 16, border: '1px solid var(--tax-border)', borderRadius: 8 }}>
+          {/* Language + channel selectors */}
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+                {t('owner.customer.inquiry.language')}
+              </label>
+              <select value={lang} onChange={e => setLang(e.target.value)}
+                      style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--tax-border)' }}>
+                <option value="es">Español</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+                {t('owner.customer.inquiry.channel')}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['email', 'whatsapp'].map(ch => (
+                  <button key={ch} type="button"
+                          onClick={() => setChannel(ch)}
+                          style={{
+                            padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                            cursor: 'pointer',
+                            background: channel === ch ? 'var(--tax-brand-primary)' : '#fff',
+                            color: channel === ch ? '#fff' : 'var(--tax-text)',
+                            border: `1px solid ${channel === ch ? 'var(--tax-brand-primary)' : 'var(--tax-border)'}`,
+                          }}>
+                    {ch === 'email' ? '📧 Email' : '💬 WhatsApp'}
+                  </button>
+                ))}
+              </div>
+              {channel === 'whatsapp' && customer.whatsapp && (
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--tax-muted)' }}>
+                  → {customer.whatsapp}
+                </p>
+              )}
+              {channel === 'whatsapp' && !customer.whatsapp && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+                    {t('owner.customer.inquiry.enterWhatsapp')}
+                  </label>
+                  <input type="tel" value={waOverride} placeholder="+14155551234"
+                         onChange={e => { setWaOverride(e.target.value); setStatus('idle'); }}
+                         maxLength={20}
+                         style={{
+                           padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 180,
+                           border: `1px solid ${waOverride && !waValid ? 'var(--tax-error)' : 'var(--tax-border)'}`,
+                         }} />
+                  {waOverride && !waValid && (
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>
+                      {t('portal.profile.whatsapp.invalid')}
+                    </p>
+                  )}
+                  {waOverride && waValid && (
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                      → {normalizeWa(waOverride)}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Service checklist with filter */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+                {t('owner.customer.inquiry.services')}
+                <span style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 999,
+                               background: selectedIds.length === 0 ? '#fee2e2' : '#dcfce7',
+                               color: selectedIds.length === 0 ? '#991b1b' : '#166534', fontSize: 11 }}>
+                  {selectedIds.length}/{products.length}
+                </span>
+              </label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="search" value={serviceFilter}
+                       onChange={e => setServiceFilter(e.target.value)}
+                       placeholder={t('owner.customer.inquiry.filterPlaceholder')}
+                       style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--tax-border)', fontSize: 12, width: 140 }} />
+                <button type="button" onClick={() => setSelected(Object.fromEntries(products.map(p => [p.id, true])))}
+                        style={{ fontSize: 11, color: 'var(--tax-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}>
+                  {t('owner.customer.inquiry.selectAll')}
+                </button>
+                <button type="button" onClick={() => setSelected({})}
+                        style={{ fontSize: 11, color: 'var(--tax-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  {t('owner.customer.inquiry.clearAll')}
+                </button>
+              </div>
+            </div>
+            {products.length === 0 && (
+              <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>Loading services…</p>
+            )}
+            <div style={{ display: 'grid', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
+              {filteredProducts.map(p => {
+                const name = p.name_i18n?.[lang] || p.name_i18n?.en || p.name_i18n?.es || p.slug;
+                const desc = p.description_i18n?.[lang] || p.description_i18n?.en || '';
+                const emoji = CATEGORY_EMOJI[p.category] || '📄';
+                return (
+                  <label key={p.id} style={{
+                    display: 'flex', gap: 10, alignItems: 'flex-start',
+                    padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                    background: selected[p.id] ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#f9fafb',
+                    border: `1px solid ${selected[p.id] ? 'color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)' : 'var(--tax-border)'}`,
+                  }}>
+                    <input type="checkbox" checked={!!selected[p.id]} onChange={() => toggle(p.id)}
+                           style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{emoji} {name}</div>
+                      {desc && <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>{desc}</div>}
+                    </div>
+                  </label>
+                );
+              })}
+              {filteredProducts.length === 0 && serviceFilter && (
+                <p style={{ color: 'var(--tax-muted)', fontSize: 13, padding: '8px 0' }}>No services match "{serviceFilter}"</p>
+              )}
+            </div>
+          </div>
+
+          {/* Preview area */}
+          {preview !== null && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+                  {t('owner.customer.inquiry.preview')}
+                </label>
+                <button type="button" onClick={() => setPreview(null)}
+                        style={{ fontSize: 11, color: 'var(--tax-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                  ✕ {t('owner.customer.inquiry.closePreview')}
+                </button>
+              </div>
+              <textarea
+                value={preview}
+                onChange={e => setPreview(e.target.value)}
+                rows={18}
+                style={{
+                  width: '100%', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: 12,
+                  padding: 10, borderRadius: 6, border: '1px solid var(--tax-border)',
+                  resize: 'vertical', lineHeight: 1.5,
+                }} />
+            </div>
+          )}
+
+          {/* Send button + status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {preview === null ? (
+              <button type="button" className="tax-btn tax-btn--sm"
+                      onClick={onPreview}
+                      disabled={previewing || selectedIds.length === 0}
+                      style={{ background: '#f1f5f9', border: '1px solid var(--tax-border)', color: 'var(--tax-text)', cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer' }}>
+                {previewing ? '…' : `👁 ${t('owner.customer.inquiry.previewBtn')}`}
+              </button>
+            ) : (
+              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                      onClick={onSend}
+                      disabled={status === 'sending' || selectedIds.length === 0}>
+                {status === 'sending' ? t('lead.submitting')
+                  : channel === 'whatsapp' ? t('owner.customer.inquiry.openWhatsapp')
+                  : t('owner.customer.inquiry.sendEmail')}
+              </button>
+            )}
+            {preview === null && selectedIds.length > 0 && (
+              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                      onClick={onSend}
+                      disabled={status === 'sending'}>
+                {status === 'sending' ? t('lead.submitting')
+                  : channel === 'whatsapp' ? t('owner.customer.inquiry.openWhatsapp')
+                  : t('owner.customer.inquiry.sendEmail')}
+              </button>
+            )}
+            {status === 'sent' && <span style={{ fontSize: 12, color: 'var(--tax-success, #166534)' }}>✓ {channel === 'whatsapp' ? t('owner.customer.inquiry.whatsappOpened') : t('owner.customer.inquiry.emailSent')}</span>}
+            {status !== 'idle' && status !== 'sending' && status !== 'sent' && (
+              <span style={{ fontSize: 12, color: 'var(--tax-error)' }}>{status}</span>
+            )}
+          </div>
+        </div>
+  );
+}
+
 function ActivityTimelineSection({ auth, customerId, locale, t }) {
   const [events, setEvents] = useState(null);
   const [filter, setFilter] = useState('all');
