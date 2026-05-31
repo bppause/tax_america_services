@@ -299,6 +299,7 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [types, setTypes] = useState([]);
   const [err, setErr] = useState('');
   const [reportDrawer, setReportDrawer] = useState(null); // null = closed; { taskTitle, initialReportId, nonce } = open
+  const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
 
   const load = () => {
     if (!employee || !community) return;
@@ -346,7 +347,7 @@ export default function OwnerCustomerDetail({ customerId }) {
             Manage reports →
           </button>
         }>
-        <BookkeepingReportsSummary auth={auth} customerId={customerId}
+        <BookkeepingReportsSummary auth={auth} customerId={customerId} refreshKey={summaryRefreshKey}
           onOpen={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })} />
       </SectionCard>
 
@@ -386,7 +387,7 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <ReportEditorDrawer
         open={reportDrawer !== null}
-        onClose={() => setReportDrawer(null)}
+        onClose={() => { setReportDrawer(null); setSummaryRefreshKey(k => k + 1); }}
         taskTitle={reportDrawer?.taskTitle || 'Financial Report Editor'}
       >
         {reportDrawer !== null && (
@@ -1969,15 +1970,46 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t, asMenuItem }) 
 // Phase: per-customer task list. Inline-edit status, add new tasks, mark
 // complete. Filters down to this customer's tasks via customerId on the
 // /admin/tasks endpoint.
-function BookkeepingReportsSummary({ auth, customerId, onOpen }) {
+function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey }) {
   const { t } = useT();
   const [reports, setReports] = useState(null);
-  useEffect(() => {
+  const [busy, setBusy] = useState(false);
+  const [errMsg, setErrMsg] = useState('');
+
+  const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
       .then(d => setReports(d.reports || []))
       .catch(() => setReports([]));
+  };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId]);
+  useEffect(() => { load(); }, [customerId, refreshKey]);
+
+  const publish = async (r) => {
+    if (!confirm(t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label }))) return;
+    setBusy(true); setErrMsg('');
+    try { await taxApi.adminPublishFinancialReport(auth, r.id); load(); }
+    catch (e) { setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.publishFailed')); }
+    finally { setBusy(false); }
+  };
+
+  const send = async (r, isResend) => {
+    const key = isResend ? 'owner.customer.bookkeeping.confirm.resend' : 'owner.customer.bookkeeping.confirm.send';
+    if (!confirm(t(key, { period: r.period_label }))) return;
+    setBusy(true); setErrMsg('');
+    try { await taxApi.adminSendFinancialReport(auth, r.id); load(); }
+    catch (e) { setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.sendFailed')); }
+    finally { setBusy(false); }
+  };
+
+  const preview = async (r) => {
+    setBusy(true); setErrMsg('');
+    try {
+      const d = await taxApi.adminPreviewReportAccess(auth, customerId);
+      document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
+      window.open(d.viewUrl + '#report=' + encodeURIComponent(r.id), '_blank', 'noopener');
+    } catch (e) { setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.previewFailed')); }
+    finally { setBusy(false); }
+  };
 
   if (reports === null) return <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('loading')}</p>;
   if (reports.length === 0) return (
@@ -1991,12 +2023,17 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen }) {
 
   return (
     <div style={{ display: 'grid', gap: 8 }}>
+      {errMsg && (
+        <div style={{ padding: '8px 12px', background: '#fee2e2', borderRadius: 6, fontSize: 13, color: '#b91c1c' }}>
+          {errMsg}
+        </div>
+      )}
       {reports.map(r => {
         const status = r.status || 'draft';
         return (
           <div key={r.id} style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            gap: 12, padding: '10px 14px', borderRadius: 8,
+            gap: 12, padding: '10px 14px', borderRadius: 8, flexWrap: 'wrap',
             background: '#f8fafc', border: '1px solid var(--tax-border)',
           }}>
             <div style={{ minWidth: 0 }}>
@@ -2020,10 +2057,39 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen }) {
                 </div>
               )}
             </div>
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={() => onOpen(r.id)}>
-              {t('owner.customer.bookkeeping.action.edit')}
-            </button>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {status === 'draft' && (
+                <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                        onClick={() => publish(r)} disabled={busy}>
+                  {t('owner.customer.bookkeeping.action.publish')}
+                </button>
+              )}
+              {status === 'published' && (
+                <>
+                  <button type="button" className="tax-btn tax-btn--sm" onClick={() => preview(r)} disabled={busy}>
+                    {t('owner.customer.bookkeeping.action.preview')}
+                  </button>
+                  <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                          onClick={() => send(r, false)} disabled={busy}>
+                    {t('owner.customer.bookkeeping.action.send')}
+                  </button>
+                </>
+              )}
+              {status === 'sent' && (
+                <>
+                  <button type="button" className="tax-btn tax-btn--sm" onClick={() => preview(r)} disabled={busy}>
+                    {t('owner.customer.bookkeeping.action.preview')}
+                  </button>
+                  <button type="button" className="tax-btn tax-btn--sm" onClick={() => send(r, true)} disabled={busy}>
+                    {t('owner.customer.bookkeeping.action.resend')}
+                  </button>
+                </>
+              )}
+              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                      onClick={() => onOpen(r.id)} disabled={busy}>
+                {t('owner.customer.bookkeeping.action.edit')}
+              </button>
+            </div>
           </div>
         );
       })}
