@@ -920,7 +920,7 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
                   style={{ width: '100%', padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
       </FormGroup>
 
-      <TotalsBar t={t} totals={totals} />
+      <TotalsBar t={t} plData={form.pl_data} computedTotals={totals} />
 
       <div style={{ marginTop: 14, padding: '10px 12px', background: '#fef3c7', borderLeft: '3px solid #b45309', borderRadius: 6, fontSize: 13, color: '#78350f' }}>
         {t('owner.customer.bookkeeping.form.verifyBanner')}
@@ -1187,15 +1187,58 @@ function FormGroup({ title, children, action, collapsed, onToggle }) {
     </div>
   );
 }
-function TotalsBar({ t, totals }) {
+function TotalsBar({ t, plData, computedTotals }) {
+  // Prefer xlsx-parsed QB totals when available — they match what the customer
+  // will see in the dashboard and what QB actually reported.
+  const stored = plData?.totals;
+  const isXlsx = !!plData?._companyName;
+  const display = (stored && isXlsx) ? stored : computedTotals;
+
+  // Validation: does every group's declared total match its item sum?
+  const groupMismatches = [];
+  for (const [secKey, sec] of Object.entries(plData?.sections || {})) {
+    for (const g of (sec?.groups || [])) {
+      const itemSum = (g.items || []).reduce((s, i) => s + num(i.amount), 0);
+      const declared = g.total != null && g.total !== '' ? num(g.total) : null;
+      if (declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5) {
+        groupMismatches.push(g.name);
+      }
+    }
+  }
+  const allMatch = groupMismatches.length === 0;
+
+  // When xlsx totals are used, check if computed net income differs from stored
+  // (e.g. Sales Tax Collected/Remitted treatment). Show a note when they diverge.
+  const netDiffers = isXlsx && stored && Math.abs((stored.net_income || 0) - (computedTotals.net_income || 0)) > 0.5;
+
+  const statusColor = allMatch ? '#15803d' : '#b91c1c';
+  const statusBg    = allMatch ? '#dcfce7'  : '#fee2e2';
+  const statusIcon  = allMatch ? '✓' : '✗';
+  const statusText  = allMatch
+    ? t('owner.customer.bookkeeping.form.totals.valid')
+    : t('owner.customer.bookkeeping.form.totals.mismatch', { count: groupMismatches.length });
+
   return (
-    <div style={{ marginTop: 14, padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-        <Total label={t('owner.customer.bookkeeping.form.totals.revenue')}     value={totals.total_income} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.cogs')}        value={totals.total_cogs} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.grossProfit')} value={totals.gross_profit} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.opex')}        value={totals.total_expense} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.netIncome')}   value={totals.net_income} bold />
+    <div style={{ marginTop: 14, borderRadius: 6, border: `1px solid ${allMatch ? '#bbf7d0' : '#fecaca'}`, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px',
+                    background: statusBg, borderBottom: `1px solid ${allMatch ? '#bbf7d0' : '#fecaca'}` }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>{statusIcon} {statusText}</span>
+        {isXlsx && <span style={{ fontSize: 11, color: '#64748b' }}>{t('owner.customer.bookkeeping.form.totals.xlsxSource')}</span>}
+      </div>
+      <div style={{ padding: '10px 12px', background: '#f8fafc' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+          <Total label={t('owner.customer.bookkeeping.form.totals.revenue')}     value={display.total_income} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.cogs')}        value={display.total_cogs} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.grossProfit')} value={display.gross_profit} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.opex')}        value={display.total_expense} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.netIncome')}   value={display.net_income} bold />
+        </div>
+        {netDiffers && (
+          <div style={{ marginTop: 8, fontSize: 11, color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
+            {t('owner.customer.bookkeeping.form.totals.netIncomeNote',
+              { qb: fmtMoney(stored.net_income), computed: fmtMoney(computedTotals.net_income) })}
+          </div>
+        )}
       </div>
     </div>
   );
