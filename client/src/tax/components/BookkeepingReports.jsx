@@ -285,7 +285,6 @@ function fmtPeriodLabel(label, start, end, locale) {
   if (!start || !end) return label || '';
   return `${label} · ${fmtDate(start, locale)} – ${fmtDate(end, locale)}`;
 }
-}
 
 const STATUS_STYLE = {
   draft:     { bg: '#f1f5f9', color: '#334155' },
