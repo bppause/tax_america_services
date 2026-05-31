@@ -16,21 +16,22 @@ const CATEGORY_KEY = {
   audit: 'portal.profile.category.audit',
 };
 
-function CollapsibleSection({ title, defaultOpen = false, children }) {
-  const [open, setOpen] = useState(defaultOpen);
+function SectionCard({ title, icon, children, action }) {
   return (
-    <section style={{ marginTop: 28 }}>
-      <button type="button" onClick={() => setOpen(o => !o)}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none',
-                       border: 'none', padding: 0, cursor: 'pointer', width: '100%',
-                       textAlign: 'left' }}>
-        <span style={{ fontSize: 13, color: 'var(--tax-muted)', width: 14, flexShrink: 0 }}>
-          {open ? '▾' : '▸'}
-        </span>
-        <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
-      </button>
-      {open && <div style={{ marginTop: 12 }}>{children}</div>}
-    </section>
+    <div style={{
+      background: '#fff', border: '1px solid var(--tax-border)',
+      borderRadius: 12, padding: '20px 24px', marginTop: 20,
+      boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {icon && <span style={{ fontSize: 18 }}>{icon}</span>}
+          {title}
+        </h3>
+        {action}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -79,6 +80,138 @@ function fmtDate(iso) {
 // for all the read-only data, then per-action mutations via the matching
 // /admin/* endpoints. Each section is independently re-fetched on action so
 // we don't reload unrelated chunks.
+function CustomerHeaderCard({ c, auth, community, load, t }) {
+  const { locale } = useT();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (e) => {
+      if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [moreOpen]);
+
+  // Avatar initials
+  const initials = (() => {
+    if (c.customer_type === 'business' && c.business_name) {
+      return c.business_name.slice(0, 2).toUpperCase();
+    }
+    const f = c.first_name?.[0] || '';
+    const l = c.last_name?.[0] || '';
+    return (f + l).toUpperCase() || (c.email?.[0] || '?').toUpperCase();
+  })();
+
+  const displayName = displayPersonName(c) || c.email;
+  const typeLabel = c.customer_type === 'business'
+    ? t('owner.customers.customerType.business')
+    : t('owner.customers.customerType.individual');
+
+  const STATUS_STYLE = {
+    archived: { bg: '#fee2e2', fg: '#b91c1c', label: t('owner.customer.profile.status.archived') },
+    paused:   { bg: '#fef3c7', fg: '#854d0e', label: t('owner.customer.profile.status.paused') },
+  };
+  const statusStyle = STATUS_STYLE[c.status];
+
+  const chips = [
+    c.email && { icon: '✉', value: c.email },
+    c.phone && { icon: '📞', value: c.phone },
+    c.whatsapp && { icon: '💬', value: `WA ${c.whatsapp}` },
+    { icon: '🌐', value: c.locale === 'en' ? 'English' : 'Español' },
+    { icon: '🕐', value: formatLastSignIn(c.last_sign_in_at, locale, t) },
+  ].filter(Boolean);
+
+  return (
+    <div style={{
+      background: '#fff', border: '1px solid var(--tax-border)',
+      borderRadius: 14, padding: '20px 24px', marginTop: 12,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+      display: 'flex', alignItems: 'flex-start', gap: 16,
+    }}>
+      {/* Avatar */}
+      <div style={{
+        width: 48, height: 48, borderRadius: '50%', flexShrink: 0,
+        background: 'var(--tax-brand-primary)', color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 18, fontWeight: 700,
+      }}>{initials}</div>
+
+      {/* Name + meta */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800 }}>{displayName}</h2>
+          {/* Customer type pill */}
+          <span style={{
+            padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+            background: 'color-mix(in srgb, var(--tax-brand-primary) 10%, #fff)',
+            color: 'var(--tax-brand-primary)',
+            border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 22%, #fff)',
+          }}>{typeLabel}</span>
+          {/* Status badge — only when non-active */}
+          {statusStyle && (
+            <span style={{
+              padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+              background: statusStyle.bg, color: statusStyle.fg,
+            }}>{statusStyle.label}</span>
+          )}
+        </div>
+
+        {/* Contact-person sub-line for businesses */}
+        {c.business_name && (c.first_name || c.last_name) && (
+          <p style={{ margin: '2px 0 0', fontSize: 13, color: 'var(--tax-muted)' }}>
+            {t('owner.customer.contactPerson')}: {[c.first_name, c.last_name].filter(Boolean).join(' ')}
+          </p>
+        )}
+
+        {/* Info chips */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+          {chips.map((chip, i) => (
+            <span key={i} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '3px 10px', borderRadius: 999, fontSize: 12,
+              background: '#f1f5f9', color: 'var(--tax-text)',
+            }}>
+              <span style={{ fontSize: 13 }}>{chip.icon}</span>
+              {chip.value}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+        <ImpersonateCustomerButton customer={c} auth={auth} community={community} t={t} />
+        <SendWelcomeButton customer={c} auth={auth} t={t} />
+
+        {/* ⋯ more menu */}
+        <div ref={moreRef} style={{ position: 'relative' }}>
+          <button type="button"
+                  onClick={() => setMoreOpen(o => !o)}
+                  style={{
+                    padding: '6px 10px', borderRadius: 8, fontSize: 18, lineHeight: 1,
+                    background: '#fff', border: '1px solid var(--tax-border)',
+                    cursor: 'pointer', color: 'var(--tax-text)',
+                  }}>⋯</button>
+          {moreOpen && (
+            <div style={{
+              position: 'absolute', top: '110%', right: 0, zIndex: 200,
+              background: '#fff', border: '1px solid var(--tax-border)',
+              borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+              minWidth: 180, overflow: 'hidden',
+            }}>
+              <PromoteToStaffButton customer={c} auth={auth} onChanged={() => { setMoreOpen(false); load(); }} t={t} asMenuItem />
+              <ArchiveCustomerButton customer={c} auth={auth} onChanged={() => { setMoreOpen(false); load(); }} t={t} asMenuItem />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function OwnerCustomerDetail({ customerId }) {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -116,88 +249,49 @@ export default function OwnerCustomerDetail({ customerId }) {
   return (
     <EmployeeShell community={community} active="customers">
       <a href={back} style={{ fontSize: 14, color: 'var(--tax-muted)' }}>← {t('owner.customer.back')}</a>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginTop: 8 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <h2 style={{ margin: 0, marginBottom: 4 }}>{displayPersonName(c) || c.email}</h2>
-          {c.business_name && (c.first_name || c.last_name) && (
-            <p style={{ color: 'var(--tax-muted)', margin: '0 0 4px', fontSize: 13 }}>
-              {t('owner.customer.contactPerson')}: {[c.first_name, c.last_name].filter(Boolean).join(' ')}
-            </p>
-          )}
-          <p style={{ color: 'var(--tax-muted)', marginTop: 0, fontSize: 13 }}>
-            {c.email}{c.phone ? ` • ${c.phone}` : ''}{c.whatsapp ? ` • WhatsApp ${c.whatsapp}` : ''}
-            {' • '}{c.locale === 'en' ? 'English' : 'Español'}
-            {' • '}{formatLastSignIn(c.last_sign_in_at, locale, t)}
-          </p>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end', flexShrink: 0 }}>
-          <ImpersonateCustomerButton customer={c} auth={auth} community={community} t={t} />
-          <SendWelcomeButton customer={c} auth={auth} t={t} />
-          <PromoteToStaffButton customer={c} auth={auth} onChanged={load} t={t} />
-          <ArchiveCustomerButton customer={c} auth={auth} onChanged={load} t={t} />
-        </div>
-      </div>
 
-      {c.status === 'archived' && (
-        <div className="tax-msg" style={{
-          background: 'color-mix(in srgb, #b91c1c 8%, #fff)',
-          borderLeft: '3px solid #b91c1c', color: '#7f1d1d',
-          padding: '10px 14px', marginTop: 8,
-        }}>
-          <strong>{t('owner.customer.archivedBanner.title')}</strong>
-          <div style={{ marginTop: 4, fontSize: 13 }}>
-            {t('owner.customer.archivedBanner.body')}
-          </div>
-        </div>
-      )}
+      {/* Modern header card */}
+      <CustomerHeaderCard c={c} auth={auth} community={community} load={load} t={t} />
 
-      {/* Phase 4n.41: simplified customer record. Retired sections
-          (Workflow Overrides, Reminder Activity, Inbox Threads,
-          Filings, Subscription Offsets) live as dead code below but
-          no longer render — workflows and customer-facing reminders
-          are gone, and tasks replaced filing-periods. The order
-          mirrors the new task-first model: Profile → who they are,
-          Relationships → which services drive their tasks, Tasks →
-          the work itself, Notes → internal commentary, the rest as
-          supporting context. */}
-      <CollapsibleSection title={t('owner.customer.section.profile')}>
-        <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
-      </CollapsibleSection>
-
-      <CollapsibleSection title={t('owner.customer.section.services')}>
-        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t} />
-      </CollapsibleSection>
-
-      <CollapsibleSection title={t('owner.customer.inquiry.heading')}>
-        <ServiceInquirySection customer={c} auth={auth} community={community} locale={locale} t={t} />
-      </CollapsibleSection>
-
-      <CollapsibleSection title={t('owner.customer.section.tasks')} defaultOpen>
+      {/* Flat section cards — task-first order */}
+      <SectionCard title={t('owner.customer.section.tasks')} icon="✅">
         <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
                       isAdmin={employee?.role === 'admin'} locale={locale} t={t} />
-      </CollapsibleSection>
+      </SectionCard>
 
-      <CollapsibleSection title={t('owner.customer.section.notes')}>
+      <SectionCard title={t('owner.customer.section.services')} icon="🏷️">
+        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t} />
+      </SectionCard>
+
+      <SectionCard title={t('owner.customer.inquiry.heading')} icon="📤">
+        <ServiceInquirySection customer={c} auth={auth} community={community} locale={locale} t={t} />
+      </SectionCard>
+
+      <SectionCard title={t('owner.customer.section.notes')} icon="📝">
         <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
-      </CollapsibleSection>
+      </SectionCard>
 
-      <CollapsibleSection title={t('owner.customer.section.documents')}>
+      <SectionCard title={t('owner.customer.section.documents')} icon="📄">
         <DocumentsSection data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
-      </CollapsibleSection>
+      </SectionCard>
 
       {community?.tax_customer_portal_enabled && (
-        <CollapsibleSection title={t('owner.customer.section.signatures')}>
+        <SectionCard title={t('owner.customer.section.signatures')} icon="✍️">
           <SignatureRequestsSection auth={auth} customerId={customerId} locale={locale} t={t} />
-        </CollapsibleSection>
+        </SectionCard>
       )}
 
-      <CollapsibleSection title={t('owner.customer.section.assignments')}>
+      <SectionCard title={t('owner.customer.section.assignments')} icon="👥">
         <AssignmentsSection data={data} t={t} />
-      </CollapsibleSection>
+      </SectionCard>
 
-      <CollapsibleSection title={t('owner.customer.section.threads')}>
+      <SectionCard title={t('owner.customer.section.threads')} icon="🕐">
         <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
-      </CollapsibleSection>
+      </SectionCard>
+
+      <SectionCard title={t('owner.customer.section.profile')} icon="👤">
+        <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
+      </SectionCard>
     </EmployeeShell>
   );
 }
@@ -1564,7 +1658,7 @@ function ImpersonateCustomerButton({ customer, auth, community, t }) {
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
       <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
               onClick={onClick} disabled={busy}
-              style={{ color: '#b91c1c', borderColor: '#b91c1c', flexShrink: 0 }}>
+              style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)', flexShrink: 0 }}>
         {busy ? t('impersonation.starting') : t('impersonation.viewAsCustomer')}
       </button>
       {err && <span style={{ color: 'var(--tax-error)', fontSize: 11 }}>{err}</span>}
@@ -1625,7 +1719,7 @@ function SendWelcomeButton({ customer: c, auth, t }) {
 // tax_employees row keyed by the same email so the existing dual-role
 // switch (staffAccess banner on the customer portal) lights up
 // automatically. Sends the welcome email by default.
-function PromoteToStaffButton({ customer: c, auth, onChanged, t }) {
+function PromoteToStaffButton({ customer: c, auth, onChanged, t, asMenuItem }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
@@ -1656,6 +1750,28 @@ function PromoteToStaffButton({ customer: c, auth, onChanged, t }) {
     }
   };
 
+  if (asMenuItem) {
+    return (
+      <>
+        <button type="button" onClick={onClick} disabled={busy}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '10px 16px', fontSize: 13, fontWeight: 500,
+                  background: 'none', border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  color: 'var(--tax-text)',
+                }}>
+          {busy ? t('lead.submitting') : t('owner.customer.promote.button')}
+        </button>
+        {msg.text && (
+          <div style={{ padding: '4px 16px 8px', fontSize: 11,
+                        color: msg.kind === 'success' ? 'var(--tax-success)' : 'var(--tax-error)' }}>
+            {msg.text}
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
       <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
@@ -1676,7 +1792,7 @@ function PromoteToStaffButton({ customer: c, auth, onChanged, t }) {
 // Phase 4n.15: archive (status='archived') a customer. Records retained;
 // relationships are deactivated so the cron stops generating periods.
 // When already archived, swaps to a "Restore" affordance.
-function ArchiveCustomerButton({ customer: c, auth, onChanged, t }) {
+function ArchiveCustomerButton({ customer: c, auth, onChanged, t, asMenuItem }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
   const isArchived = c.status === 'archived';
@@ -1700,6 +1816,31 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t }) {
       setTimeout(() => setMsg({ kind: 'idle', text: '' }), 6000);
     }
   };
+
+  if (asMenuItem) {
+    return (
+      <>
+        <button type="button" onClick={onClick} disabled={busy}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left',
+                  padding: '10px 16px', fontSize: 13, fontWeight: 500,
+                  background: 'none', border: 'none', cursor: busy ? 'wait' : 'pointer',
+                  color: isArchived ? 'var(--tax-text)' : '#b91c1c',
+                  borderTop: '1px solid var(--tax-border)',
+                }}>
+          {busy
+            ? t('lead.submitting')
+            : (isArchived ? t('owner.customer.archive.restoreBtn') : t('owner.customer.archive.button'))}
+        </button>
+        {msg.text && (
+          <div style={{ padding: '4px 16px 8px', fontSize: 11,
+                        color: msg.kind === 'success' ? 'var(--tax-success)' : 'var(--tax-error)' }}>
+            {msg.text}
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
