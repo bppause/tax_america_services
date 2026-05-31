@@ -3060,8 +3060,20 @@ ${closingHtml}
       update.middle_name = np.middle;
       update.last_name = np.last;
     }
+    if (body.customerType !== undefined) {
+      const ct = String(body.customerType || '').toLowerCase() === 'business' ? 'business' : 'individual';
+      update.customer_type = ct;
+    }
     if (body.businessName !== undefined) {
-      update.business_name = trim(body.businessName, 200);
+      const ct = body.customerType !== undefined
+        ? (String(body.customerType).toLowerCase() === 'business' ? 'business' : 'individual')
+        : null;
+      const name = trim(body.businessName, 200);
+      if (ct === 'business' && !name) {
+        return res.status(400).json({ error: 'business_name_required',
+          message: 'Business name is required for a business customer.' });
+      }
+      update.business_name = ct === 'individual' ? '' : name;
     }
     if (body.phone !== undefined) update.phone = trim(body.phone, MAX_PHONE_LEN);
 

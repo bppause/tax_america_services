@@ -1053,6 +1053,7 @@ function SignatureRequestsSection({ auth, customerId, locale, t }) {
 // (typos, fill-in before customer sign-in, etc.).
 function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
   const [form, setForm] = useState({
+    customerType: c.customer_type || 'individual',
     businessName: c.business_name || '',
     firstName: c.first_name || '',
     middleName: c.middle_name || '',
@@ -1076,6 +1077,10 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
 
   doSave.current = async (overrides) => {
     const f = overrides ? { ...form, ...overrides } : form;
+    if (f.customerType === 'business' && !f.businessName.trim()) {
+      setSaveStatus('error');
+      return;
+    }
     setSaveStatus('saving');
     const address = {};
     for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
@@ -1084,7 +1089,8 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
     }
     try {
       await taxApi.adminUpdateCustomer(auth, customerId, {
-        businessName: f.businessName.trim(),
+        customerType: f.customerType,
+        businessName: f.customerType === 'business' ? f.businessName.trim() : '',
         firstName: f.firstName.trim(),
         middleName: f.middleName.trim(),
         lastName: f.lastName.trim(),
@@ -1131,19 +1137,43 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, minHeight: 22 }}>
         {saveStatus === 'saving' && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>Saving…</span>}
         {saveStatus === 'saved'  && <span style={{ fontSize: 12, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
-        {saveStatus === 'error'  && <span style={{ fontSize: 12, color: 'var(--tax-error)' }}>Save failed</span>}
+        {saveStatus === 'error'  && <span style={{ fontSize: 12, color: 'var(--tax-error)' }}>
+          {form.customerType === 'business' && !form.businessName.trim()
+            ? t('owner.customers.errBusinessNameRequired')
+            : 'Save failed'}
+        </span>}
       </div>
       <div className="tax-form" style={{ maxWidth: 720 }}>
         <div>
-          <label>{t('owner.customers.fieldBusinessName')}</label>
+          <label>{t('owner.customers.fieldCustomerType')}</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {['individual', 'business'].map(opt => (
+              <button key={opt} type="button"
+                onClick={() => setField('customerType', opt, true)}
+                style={{
+                  padding: '6px 16px', borderRadius: 20, fontSize: 13, cursor: 'pointer', border: '1.5px solid',
+                  borderColor: form.customerType === opt ? 'var(--tax-brand-primary, #1d3a6d)' : 'var(--tax-border)',
+                  background: form.customerType === opt ? 'var(--tax-brand-primary, #1d3a6d)' : '#fff',
+                  color: form.customerType === opt ? '#fff' : 'inherit', fontWeight: form.customerType === opt ? 600 : 400,
+                }}>
+                {t(`owner.customers.customerType.${opt}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+        {form.customerType === 'business' && (
+        <div>
+          <label>{t('owner.customers.fieldBusinessName')} <span style={{ color: 'var(--tax-error)' }}>*</span></label>
           <input type="text" value={form.businessName}
                  onChange={e => setField('businessName', e.target.value)}
                  maxLength={200}
-                 placeholder={t('owner.customers.fieldBusinessNamePlaceholder')} />
-          <small style={{ color: 'var(--tax-muted)' }}>
-            {t('owner.customers.fieldBusinessNameHint')}
-          </small>
+                 placeholder={t('owner.customers.fieldBusinessNamePlaceholder')}
+                 style={form.customerType === 'business' && !form.businessName.trim() ? { borderColor: 'var(--tax-error)' } : {}} />
+          {form.customerType === 'business' && !form.businessName.trim() && (
+            <small style={{ color: 'var(--tax-error)' }}>{t('owner.customers.errBusinessNameRequired')}</small>
+          )}
         </div>
+        )}
         <div className="tax-form__row3">
           <div>
             <label>{t('owner.customers.fieldFirstName')}</label>

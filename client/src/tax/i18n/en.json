@@ -864,6 +864,7 @@
   "owner.customers.addedSuccess": "Customer created.",
   "owner.customers.errEmailRequired": "Email is required.",
   "owner.customers.errServiceRequired": "Pick at least one service so this customer's tasks can be generated.",
+  "owner.customers.errBusinessNameRequired": "Business name is required for a business customer.",
   "owner.customers.subsLabel": "subscriptions",
   "owner.customers.importBtn": "Import from CSV",
   "owner.customers.cancelImport": "Close importer",
