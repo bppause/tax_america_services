@@ -160,7 +160,7 @@ export default function OwnerCustomerDetail({ customerId }) {
           Relationships → which services drive their tasks, Tasks →
           the work itself, Notes → internal commentary, the rest as
           supporting context. */}
-      <CollapsibleSection title={t('owner.customer.section.profile')} defaultOpen>
+      <CollapsibleSection title={t('owner.customer.section.profile')}>
         <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
       </CollapsibleSection>
 
