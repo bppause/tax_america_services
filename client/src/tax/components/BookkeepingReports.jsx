@@ -345,6 +345,8 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const sectionRef = useRef(null);
   const autoSaveTimerRef = useRef(null);
   const ignoreNextFormChangeRef = useRef(false);
+  // Tracks last-known task status so auto-save can move completed → in_progress on re-edit.
+  const taskStatusRef = useRef(null);
 
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
@@ -387,6 +389,11 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         const payload = formToPayload(form);
         if (editingId) {
           await taxApi.adminUpdateFinancialReport(auth, editingId, payload);
+          // If the report was previously sent (completed), move task back to in_progress.
+          if (taskId && taskStatusRef.current === 'completed') {
+            taskStatusRef.current = 'in_progress';
+            taxApi.adminUpdateTask(auth, taskId, { statusKey: 'in_progress' }).catch(() => {});
+          }
         } else {
           const d = await taxApi.adminCreateFinancialReport(auth, customerId, payload);
           ignoreNextFormChangeRef.current = true;
@@ -421,7 +428,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     ignoreNextFormChangeRef.current = true;
     setAutoSaveStatus('idle');
     clearTimeout(autoSaveTimerRef.current);
-    setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
+    setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null); taskStatusRef.current = null;
   };
   const startEdit = (r) => {
     setPdfMeta({ pl: null, balance: null });
@@ -439,6 +446,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         const rpt = d.report;
         const tid = rpt.task_id || null;
         setTaskId(tid);
+        taskStatusRef.current = 'in_progress';
         if (tid) taxApi.adminUpdateTask(auth, tid, { statusKey: 'in_progress' }).catch(() => {});
         const biz = customer?.business_name || customer?.name || null;
         const plCn = rpt.pl_data?._companyName || null;
@@ -466,7 +474,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     clearTimeout(autoSaveTimerRef.current);
     ignoreNextFormChangeRef.current = true;
     setAutoSaveStatus('idle');
-    setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
+    setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null); taskStatusRef.current = null;
   };
 
   const saveAndClose = async () => {
@@ -571,7 +579,10 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       const d = await taxApi.adminSendFinancialReport(auth, r.id);
       if (d.sent) {
         const tid = r.task_id || taskId || null;
-        if (tid) taxApi.adminUpdateTask(auth, tid, { statusKey: 'completed' }).catch(() => {});
+        if (tid) {
+          taskStatusRef.current = 'completed';
+          taxApi.adminUpdateTask(auth, tid, { statusKey: 'completed' }).catch(() => {});
+        }
         setMsg({ kind: 'ok', text: t(isResend ? 'owner.customer.bookkeeping.msg.sendOk.resend' : 'owner.customer.bookkeeping.msg.sendOk.send') });
       } else {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.sendSkipped', { reason: d.reason || '?', url: d.viewUrl || '' }) });
