@@ -77,6 +77,8 @@ module.exports = function createTaxRouter(deps) {
     isEnvGlobalAdminEmail,
     runReminderCron,
     fireReminderForPeriod,
+    emailConfigured,
+    sendSpanishEmail,
   } = deps;
 
   const router = express.Router();
@@ -1417,6 +1419,13 @@ module.exports = function createTaxRouter(deps) {
     // toggle never leaves a stale company name on the customer.
     const businessName = customerType === 'business' ? trim(body.businessName, 200) : '';
     const phone = trim(body.phone, MAX_PHONE_LEN);
+    let whatsapp = '';
+    if (body.whatsapp !== undefined && String(body.whatsapp || '').trim() !== '') {
+      const norm = normalizeWhatsapp(String(body.whatsapp));
+      if (!norm) return res.status(400).json({ error: 'whatsapp_invalid',
+        message: 'WhatsApp must be E.164 format, e.g. +14155551234' });
+      whatsapp = norm;
+    }
     const locale = (body.locale === 'en') ? 'en' : 'es';
     // Phase: relationships (array of type ids) + sendWelcomeEmail (bool,
     // default true). Both are optional but the Add form sends them.
@@ -1446,7 +1455,7 @@ module.exports = function createTaxRouter(deps) {
       name: np.name, first_name: np.first, middle_name: np.middle, last_name: np.last,
       business_name: businessName,
       customer_type: customerType,
-      phone, locale, status: 'active',
+      phone, whatsapp, locale, status: 'active',
     });
     if (error) return sendSupabaseError(res, error);
 
@@ -1532,6 +1541,165 @@ module.exports = function createTaxRouter(deps) {
       return res.status(500).json({ ok: false, ...result });
     }
     res.json({ ok: true, ...result });
+  });
+
+  // ── POST /admin/customers/:id/send-inquiry ───────────────────────────────
+  // Builds a bilingual service-inquiry message and either sends it via
+  // email (Resend) or returns a pre-filled wa.me URL for the owner to
+  // open in WhatsApp. The message body is generated server-side so both
+  // channels share the same content and language logic.
+  router.post('/admin/customers/:id/send-inquiry', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const customerId = trim(req.params.id, 200);
+    const body = req.body || {};
+    const channel = body.channel === 'whatsapp' ? 'whatsapp' : 'email';
+    const productIds = Array.isArray(body.productIds) ? body.productIds.map(String) : [];
+    if (!productIds.length) return res.status(400).json({ error: 'productIds required' });
+
+    const [{ data: cust, error: cErr }, { data: community, error: comErr }] = await Promise.all([
+      supabase.from('tax_customers')
+        .select('id, community_id, email, first_name, last_name, name, locale, whatsapp, preferred_communication_email')
+        .eq('id', customerId).maybeSingle(),
+      (async () => {
+        const { data: c } = await supabase.from('tax_customers')
+          .select('community_id').eq('id', customerId).maybeSingle();
+        if (!c) return { data: null, error: 'not found' };
+        return supabase.from('communities')
+          .select('id, name, name_en, phone, whatsapp, contact_email, website_url, brand_primary_color')
+          .eq('id', c.community_id).maybeSingle();
+      })(),
+    ]);
+    if (cErr || !cust) return res.status(404).json({ error: 'Customer not found' });
+    if (comErr || !community) return res.status(404).json({ error: 'Community not found' });
+
+    if (channel === 'whatsapp' && !cust.whatsapp) {
+      return res.status(400).json({ error: 'Customer has no WhatsApp number on file' });
+    }
+
+    const { data: products } = await supabase.from('tax_products')
+      .select('id, slug, category, name_i18n, description_i18n')
+      .in('id', productIds).eq('community_id', cust.community_id);
+
+    const lang = (body.lang === 'en') ? 'en' : ((cust.locale === 'en') ? 'en' : 'es');
+    const pick = (obj) => obj?.[lang] || obj?.en || obj?.es || '';
+    const slug = cust.community_id;
+    const appBase = (typeof publicAppUrl === 'function' ? publicAppUrl() : (process.env.PUBLIC_APP_URL || '')).replace(/\/$/, '');
+    const publicUrl = (community.website_url || `${appBase}/tax/${slug}`).replace(/\/$/, '');
+    const bizName = lang === 'es' ? (community.name || community.name_en || '') : (community.name_en || community.name || '');
+    const firstName = cust.first_name || cust.name?.split(' ')[0] || '';
+    const brochureUrl = `${appBase}/api/m/tax/community/${slug}/brochure.pdf`;
+
+    const categoryEmoji = (cat) => ({ individual: '📋', business: '🏢', audit: '📋', general: '📚' }[cat] || '📄');
+
+    const EMOJI_AI = '🤖';
+    const EMOJI_LINK = '🔗';
+
+    const headerEn = `Hi ${firstName ? firstName + ',' : 'there,'} greetings from *${bizName}*!\n\nWe are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.\n\nOur services:\n`;
+    const headerEs = `Hola${firstName ? ' ' + firstName + ',' : ','} ¡saludos de parte de *${bizName}*!\n\nSomos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.\n\nNuestros servicios:\n`;
+
+    const serviceLines = (products || []).map(p => {
+      const name = pick(p.name_i18n);
+      const desc = pick(p.description_i18n);
+      const serviceSlug = p.slug;
+      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
+      const emoji = categoryEmoji(p.category);
+      const aiLabel = lang === 'es' ? `¿Preguntas sobre *${name}*? Chatea con nuestro asistente de IA` : `Questions about *${name}*? Chat with our AI assistant`;
+      return `${emoji} *${name}*\n${desc}\n${EMOJI_LINK} ${pageUrl}\n${EMOJI_AI} ${aiLabel}: ${agentUrl}`;
+    }).join('\n\n');
+
+    const waDigits = (community.whatsapp || '').replace(/\D/g, '');
+    const footerEn = [
+      `${EMOJI_AI} *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}`,
+      community.phone ? `📞 Phone: ${community.phone}` : '',
+      waDigits ? `💬 WhatsApp: https://wa.me/${waDigits}` : '',
+      community.contact_email ? `📧 Email: ${community.contact_email}` : '',
+      `🌐 ${publicUrl}`,
+      `📄 Services portfolio: ${brochureUrl}?lang=en`,
+      `We are happy to answer any questions with no obligation. Looking forward to hearing from you!\n\nWarm regards,\n*${bizName}*`,
+    ].filter(Boolean).join('\n');
+
+    const footerEs = [
+      `${EMOJI_AI} *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}`,
+      community.phone ? `📞 Teléfono: ${community.phone}` : '',
+      waDigits ? `💬 WhatsApp: https://wa.me/${waDigits}` : '',
+      community.contact_email ? `📧 Email: ${community.contact_email}` : '',
+      `🌐 ${publicUrl}`,
+      `📄 Portafolio de servicios: ${brochureUrl}?lang=es`,
+      `Estamos felices de responder cualquier pregunta sin ningún compromiso. ¡Esperamos saber de usted!\n\nSaludos cordiales,\n*${bizName}*`,
+    ].filter(Boolean).join('\n');
+
+    const header = lang === 'es' ? headerEs : headerEn;
+    const footer = lang === 'es' ? footerEs : footerEn;
+    const plainText = `${header}\n${serviceLines}\n\n${footer}`;
+
+    if (channel === 'whatsapp') {
+      const waNumber = (cust.whatsapp || '').replace(/\D/g, '');
+      const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(plainText)}`;
+      return res.json({ ok: true, channel: 'whatsapp', waUrl });
+    }
+
+    // ── Email send ─────────────────────────────────────────────────────────
+    if (!emailConfigured) return res.json({ ok: false, skipped: true, reason: 'Email not configured' });
+    const to = String(cust.preferred_communication_email || cust.email || '').trim();
+    const subject = lang === 'es'
+      ? `Servicios de ${bizName}`
+      : `Services from ${bizName}`;
+
+    // Build simple HTML for email
+    const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const nl2p = (s) => s.split('\n').map(l => l.trim() ? `<p style="margin:4px 0">${escHtml(l)}</p>` : '').join('');
+
+    const serviceHtml = (products || []).map(p => {
+      const name = pick(p.name_i18n);
+      const desc = pick(p.description_i18n);
+      const serviceSlug = p.slug;
+      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
+      const emoji = categoryEmoji(p.category);
+      const aiLabel = lang === 'es'
+        ? `¿Preguntas sobre <strong>${escHtml(name)}</strong>? Chatea con nuestro asistente de IA`
+        : `Questions about <strong>${escHtml(name)}</strong>? Chat with our AI assistant`;
+      return `<div style="margin-bottom:20px;padding:14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0">
+  <p style="margin:0 0 6px;font-size:16px;font-weight:700">${emoji} ${escHtml(name)}</p>
+  <p style="margin:0 0 8px;color:#374151">${escHtml(desc)}</p>
+  <p style="margin:0 0 4px">🔗 <a href="${pageUrl}" style="color:#1e3a8a">${pageUrl}</a></p>
+  <p style="margin:0">🤖 ${aiLabel}: <a href="${agentUrl}" style="color:#1e3a8a">${agentUrl}</a></p>
+</div>`;
+    }).join('');
+
+    const introHtml = lang === 'es'
+      ? `<p>Hola${firstName ? ' <strong>' + escHtml(firstName) + '</strong>,' : ','} ¡saludos de parte de <strong>${escHtml(bizName)}</strong>!</p><p>Somos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.</p><h3 style="color:#1e3a8a">Nuestros servicios:</h3>`
+      : `<p>Hi${firstName ? ' <strong>' + escHtml(firstName) + '</strong>,' : ' there,'} greetings from <strong>${escHtml(bizName)}</strong>!</p><p>We are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.</p><h3 style="color:#1e3a8a">Our services:</h3>`;
+
+    const footerItems = [
+      community.phone ? (lang === 'es' ? `📞 Teléfono: ${community.phone}` : `📞 Phone: ${community.phone}`) : '',
+      waDigits ? `💬 WhatsApp: <a href="https://wa.me/${waDigits}">https://wa.me/${waDigits}</a>` : '',
+      community.contact_email ? `📧 Email: <a href="mailto:${community.contact_email}">${community.contact_email}</a>` : '',
+      `🌐 <a href="${publicUrl}">${publicUrl}</a>`,
+      `📄 <a href="${brochureUrl}?lang=${lang}">${lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio'}</a>`,
+    ].filter(Boolean);
+
+    const closingHtml = lang === 'es'
+      ? `<p>Estamos felices de responder cualquier pregunta sin ningún compromiso. ¡Esperamos saber de usted!</p><p>Saludos cordiales,<br><strong>${escHtml(bizName)}</strong></p>`
+      : `<p>We are happy to answer any questions with no obligation. Looking forward to hearing from you!</p><p>Warm regards,<br><strong>${escHtml(bizName)}</strong></p>`;
+
+    const html = `<!doctype html><html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;color:#1e293b">
+${introHtml}
+${serviceHtml}
+<div style="margin-top:20px;padding:14px;border-radius:8px;background:#f0f9ff;border:1px solid #bae6fd">
+  <p style="margin:0 0 6px;font-weight:700">🤖 ${lang === 'es' ? '¿Preguntas? Nuestro asistente de IA está disponible 24/7' : 'Have questions? Our AI assistant is available 24/7'}</p>
+  ${footerItems.map(i => `<p style="margin:4px 0">${i}</p>`).join('')}
+</div>
+${closingHtml}
+</body></html>`;
+
+    try {
+      await sendSpanishEmail({ to, subject, text: plainText, html, lang });
+      res.json({ ok: true, channel: 'email', to });
+    } catch (e) {
+      res.status(500).json({ ok: false, error: e?.message || 'Send failed' });
+    }
   });
 
   // ── Task generator for (customer, relationship_type) ────────────────────

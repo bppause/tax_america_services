@@ -166,6 +166,8 @@ export default function OwnerCustomerDetail({ customerId }) {
         <SignatureRequestsSection auth={auth} customerId={customerId} locale={locale} t={t} />
       )}
 
+      <ServiceInquirySection customer={c} auth={auth} community={community} locale={locale} t={t} />
+
       <AssignmentsSection data={data} t={t} />
 
       <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
@@ -189,6 +191,191 @@ export default function OwnerCustomerDetail({ customerId }) {
 // of notes, signatures, filings, threads, and email engagement so staff
 // can answer "what's been going on with this customer?" in one scan
 // instead of scrolling 7 sibling sections.
+// ── Service Inquiry Sender ───────────────────────────────────────────────────
+// Lets the owner pick services and send an inquiry message to the customer
+// via email or WhatsApp (wa.me pre-fill). Language defaults to the customer's
+// locale but can be overridden.
+function ServiceInquirySection({ customer, auth, community, locale, t }) {
+  const [products, setProducts] = useState([]);
+  const [selected, setSelected] = useState({});   // { productId: true }
+  const [channel, setChannel] = useState('email');
+  const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
+  const [status, setStatus] = useState('idle');    // 'idle'|'sending'|'sent'|error string
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open || !community?.id) return;
+    taxApi.adminListProducts(auth, community.id)
+      .then(d => setProducts((d.products || []).filter(p => p.enabled !== false)))
+      .catch(() => {});
+  }, [open, community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = (id) => setSelected(prev => ({ ...prev, [id]: !prev[id] }));
+  const selectedIds = Object.keys(selected).filter(k => selected[k]);
+
+  const CATEGORY_EMOJI = { individual: '📋', business: '🏢', general: '📚', audit: '📋' };
+
+  const onSend = async () => {
+    if (!selectedIds.length) return;
+    if (channel === 'whatsapp' && !customer.whatsapp) {
+      setStatus('Customer has no WhatsApp number on file. Add it in the Profile section first.');
+      return;
+    }
+    setStatus('sending');
+    try {
+      const r = await taxApi.adminSendServiceInquiry(auth, customer.id, {
+        productIds: selectedIds, channel, lang,
+      });
+      if (channel === 'whatsapp' && r.waUrl) {
+        window.open(r.waUrl, '_blank', 'noopener');
+        setStatus('sent');
+      } else if (r.ok) {
+        setStatus('sent');
+      } else if (r.skipped) {
+        setStatus('Email not configured on this server.');
+      } else {
+        setStatus(r.error || 'Send failed');
+      }
+    } catch (e) {
+      setStatus(e?.message || 'Send failed');
+    }
+  };
+
+  return (
+    <section style={{ marginTop: 32 }}>
+      <button type="button"
+              onClick={() => { setOpen(o => !o); setStatus('idle'); }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                background: 'none', border: 'none', padding: 0,
+                cursor: 'pointer', fontSize: 16, fontWeight: 700,
+                color: 'var(--tax-text)',
+              }}>
+        <span>{open ? '▾' : '▸'}</span>
+        📤 {t('owner.customer.inquiry.heading')}
+      </button>
+      {!open && (
+        <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--tax-muted)' }}>
+          {t('owner.customer.inquiry.hint')}
+        </p>
+      )}
+
+      {open && (
+        <div style={{ marginTop: 12, padding: 16, border: '1px solid var(--tax-border)', borderRadius: 8 }}>
+          {/* Language + channel selectors */}
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+                {t('owner.customer.inquiry.language')}
+              </label>
+              <select value={lang} onChange={e => setLang(e.target.value)}
+                      style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--tax-border)' }}>
+                <option value="es">Español</option>
+                <option value="en">English</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+                {t('owner.customer.inquiry.channel')}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['email', 'whatsapp'].map(ch => (
+                  <button key={ch} type="button"
+                          onClick={() => setChannel(ch)}
+                          style={{
+                            padding: '6px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+                            cursor: 'pointer',
+                            background: channel === ch ? 'var(--tax-brand-primary)' : '#fff',
+                            color: channel === ch ? '#fff' : 'var(--tax-text)',
+                            border: `1px solid ${channel === ch ? 'var(--tax-brand-primary)' : 'var(--tax-border)'}`,
+                          }}>
+                    {ch === 'email' ? '📧 Email' : '💬 WhatsApp'}
+                  </button>
+                ))}
+              </div>
+              {channel === 'whatsapp' && !customer.whatsapp && (
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--tax-error)' }}>
+                  {t('owner.customer.inquiry.noWhatsapp')}
+                </p>
+              )}
+              {channel === 'whatsapp' && customer.whatsapp && (
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--tax-muted)' }}>
+                  → {customer.whatsapp}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Service checklist */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+                {t('owner.customer.inquiry.services')}
+                {selectedIds.length > 0 && (
+                  <span style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 999,
+                                 background: '#dcfce7', color: '#166534', fontSize: 11 }}>
+                    {selectedIds.length}
+                  </span>
+                )}
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setSelected(Object.fromEntries(products.map(p => [p.id, true])))}
+                        style={{ fontSize: 11, color: 'var(--tax-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  {t('owner.customer.inquiry.selectAll')}
+                </button>
+                <button type="button" onClick={() => setSelected({})}
+                        style={{ fontSize: 11, color: 'var(--tax-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                  {t('owner.customer.inquiry.clearAll')}
+                </button>
+              </div>
+            </div>
+            {products.length === 0 && (
+              <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>Loading services…</p>
+            )}
+            <div style={{ display: 'grid', gap: 4 }}>
+              {products.map(p => {
+                const name = p.name_i18n?.[lang] || p.name_i18n?.en || p.name_i18n?.es || p.slug;
+                const desc = p.description_i18n?.[lang] || p.description_i18n?.en || '';
+                const emoji = CATEGORY_EMOJI[p.category] || '📄';
+                return (
+                  <label key={p.id} style={{
+                    display: 'flex', gap: 10, alignItems: 'flex-start',
+                    padding: '8px 10px', borderRadius: 6, cursor: 'pointer',
+                    background: selected[p.id] ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#f9fafb',
+                    border: `1px solid ${selected[p.id] ? 'color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)' : 'var(--tax-border)'}`,
+                  }}>
+                    <input type="checkbox" checked={!!selected[p.id]} onChange={() => toggle(p.id)}
+                           style={{ marginTop: 2, flexShrink: 0 }} />
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{emoji} {name}</div>
+                      {desc && <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>{desc}</div>}
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Send button + status */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                    onClick={onSend}
+                    disabled={status === 'sending' || selectedIds.length === 0}>
+              {status === 'sending' ? t('lead.submitting')
+                : channel === 'whatsapp' ? t('owner.customer.inquiry.openWhatsapp')
+                : t('owner.customer.inquiry.sendEmail')}
+            </button>
+            {status === 'sent' && <span style={{ fontSize: 12, color: 'var(--tax-success, #166534)' }}>✓ {channel === 'whatsapp' ? t('owner.customer.inquiry.whatsappOpened') : t('owner.customer.inquiry.emailSent')}</span>}
+            {status !== 'idle' && status !== 'sending' && status !== 'sent' && (
+              <span style={{ fontSize: 12, color: 'var(--tax-error)' }}>{status}</span>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ActivityTimelineSection({ auth, customerId, locale, t }) {
   const [events, setEvents] = useState(null);
   const [filter, setFilter] = useState('all');

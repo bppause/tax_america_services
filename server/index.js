@@ -186,6 +186,8 @@ const taxRouter = taxModule.createRouter({
   getTemplateDefaults,
   publicAppUrl: () => publicAppUrl(),
   emailFrom: EMAIL_FROM,
+  emailConfigured,
+  sendSpanishEmail,
   isGlobalAdmin,
   isEnvGlobalAdminEmail,
   runReminderCron: taxRemindersCron.run,

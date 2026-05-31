@@ -6,6 +6,12 @@ import EmployeeShell from '../components/EmployeeShell';
 import { formatLastSignInCompact } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
 
+const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
+function normalizeWhatsappInput(raw) {
+  const trimmed = String(raw || '').trim();
+  return '+' + trimmed.replace(/^\+/, '').replace(/\D+/g, '');
+}
+
 // Category display order — surface business / individual first since most
 // customers are tagged with one of those. The relationship types themselves
 // already carry display_order, used as a tiebreak inside each category.
@@ -85,7 +91,7 @@ export default function OwnerCustomers() {
     customerType: 'individual',
     businessName: '',
     firstName: '', middleName: '', lastName: '',
-    email: '', phone: '', locale: 'es',
+    email: '', phone: '', whatsapp: '', locale: 'es',
     relationshipTypeIds: [],
     sendWelcomeEmail: true,                       // default behavior per owner spec
   });
@@ -250,6 +256,13 @@ export default function OwnerCustomers() {
       setAddMsg({ kind: 'error', text: t('owner.customers.errServiceRequired') });
       return;
     }
+    if (form.whatsapp.trim()) {
+      const wn = normalizeWhatsappInput(form.whatsapp);
+      if (!WHATSAPP_E164.test(wn)) {
+        setAddMsg({ kind: 'error', text: t('portal.profile.whatsapp.invalid') });
+        return;
+      }
+    }
     setBusyAdd(true); setAddMsg({ kind: 'idle', text: '' });
     try {
       const r = await taxApi.adminCreateCustomer(auth, {
@@ -261,6 +274,7 @@ export default function OwnerCustomers() {
         middleName: form.middleName.trim(),
         lastName: form.lastName.trim(),
         phone: form.phone.trim(),
+        whatsapp: form.whatsapp.trim(),
         locale: form.locale,
         relationshipTypeIds: form.relationshipTypeIds,
         sendWelcomeEmail: form.sendWelcomeEmail,
@@ -271,7 +285,7 @@ export default function OwnerCustomers() {
       setAddMsg({ kind: 'success', text: t('owner.customers.addedSuccess') });
       setForm({ customerType: 'individual', businessName: '',
                 firstName: '', middleName: '', lastName: '',
-                email: '', phone: '', locale: 'es',
+                email: '', phone: '', whatsapp: '', locale: 'es',
                 relationshipTypeIds: [], sendWelcomeEmail: true });
       window.location.href = `/tax/${community.id}/employee/customers/${encodeURIComponent(r.id)}`;
     } catch (err) {
@@ -383,7 +397,7 @@ export default function OwnerCustomers() {
                      onChange={e => setForm(p => ({ ...p, lastName: e.target.value }))} maxLength={80} />
             </div>
           </div>
-          <div className="tax-form__row2">
+          <div className="tax-form__row3">
             <div>
               <label htmlFor="oc-email">{t('owner.customers.fieldEmail')} *</label>
               <input id="oc-email" type="email" required value={form.email}
@@ -393,6 +407,19 @@ export default function OwnerCustomers() {
               <label htmlFor="oc-phone-row">{t('owner.customers.fieldPhone')}</label>
               <input id="oc-phone-row" type="tel" value={form.phone}
                      onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} maxLength={40} />
+            </div>
+            <div>
+              <label htmlFor="oc-whatsapp-row">
+                {t('portal.profile.whatsapp')}
+                <span style={{ color: 'var(--tax-muted)', fontWeight: 400, marginLeft: 6, fontSize: 11 }}>
+                  {t('portal.profile.whatsapp.format')}
+                </span>
+              </label>
+              <input id="oc-whatsapp-row" type="tel" value={form.whatsapp}
+                     placeholder="+14155551234"
+                     onChange={e => setForm(p => ({ ...p, whatsapp: e.target.value }))} maxLength={20}
+                     style={form.whatsapp && !WHATSAPP_E164.test(normalizeWhatsappInput(form.whatsapp))
+                       ? { borderColor: 'var(--tax-error)' } : undefined} />
             </div>
           </div>
           <div>
