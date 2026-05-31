@@ -1604,17 +1604,17 @@ module.exports = function createTaxRouter(deps) {
     const headerEn = `Hi ${firstName ? firstName + ',' : 'there,'} greetings from *${bizName}*!\n\nWe are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.\n\nOur services:\n`;
     const headerEs = `Hola${firstName ? ' ' + firstName + ',' : ','} ¡saludos de parte de *${bizName}*!\n\nSomos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.\n\nNuestros servicios:\n`;
 
-    const learnMoreLabel = lang === 'es' ? 'Más información' : 'Learn more';
-    const aiChatLabel = lang === 'es' ? 'Chatea con nuestro asistente de IA' : 'Chat with our AI assistant';
+    const ctaLabel = lang === 'es'
+      ? `Más información y chatea con nuestro asistente de IA ${EMOJI_AI}`
+      : `Learn More & Chat with our AI assistant ${EMOJI_AI}`;
 
     const serviceLines = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
       const pageUrl = `${publicUrl}#service-${serviceSlug}`;
-      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
       const emoji = categoryEmoji(p.category);
-      return `${emoji} *${name}*\n${desc}\n${learnMoreLabel} ${EMOJI_LINK} ${pageUrl}\n${EMOJI_AI} ${aiChatLabel}: ${agentUrl}`;
+      return `${emoji} *${name}*\n${desc}\n${ctaLabel} ${pageUrl}`;
     }).join('\n\n');
 
     const waDigits = (community.whatsapp || '').replace(/\D/g, '');
@@ -1669,18 +1669,19 @@ module.exports = function createTaxRouter(deps) {
     // Build simple HTML for email
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+    const ctaLabelHtml = lang === 'es'
+      ? `Más información y chatea con nuestro asistente de IA 🤖`
+      : `Learn More &amp; Chat with our AI assistant 🤖`;
     const serviceHtml = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
       const pageUrl = `${publicUrl}#service-${serviceSlug}`;
-      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
       const emoji = categoryEmoji(p.category);
       return `<div style="margin-bottom:20px;padding:14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0">
   <p style="margin:0 0 6px;font-size:16px;font-weight:700">${emoji} ${escHtml(name)}</p>
   <p style="margin:0 0 8px;color:#374151">${escHtml(desc)}</p>
-  <p style="margin:0 0 4px">${learnMoreLabel} 🔗 <a href="${pageUrl}" style="color:#1e3a8a">${pageUrl}</a></p>
-  <p style="margin:0">🤖 ${aiChatLabel}: <a href="${agentUrl}" style="color:#1e3a8a">${agentUrl}</a></p>
+  <p style="margin:0">${ctaLabelHtml} <a href="${pageUrl}" style="color:#1e3a8a">${pageUrl}</a></p>
 </div>`;
     }).join('');
 
@@ -1777,8 +1778,9 @@ ${closingHtml}
     const firstName = cust.first_name || cust.name?.split(' ')[0] || '';
     const brochureUrl = `${appBase}/api/m/tax/community/${slug}/brochure.pdf`;
     const categoryEmoji2 = (cat) => ({ individual: '📋', business: '🏢', audit: '📋', general: '📚' }[cat] || '📄');
-    const learnMoreLbl = lang === 'es' ? 'Más información' : 'Learn more';
-    const aiChatLbl = lang === 'es' ? 'Chatea con nuestro asistente de IA' : 'Chat with our AI assistant';
+    const ctaLabel2 = lang === 'es'
+      ? `Más información y chatea con nuestro asistente de IA 🤖`
+      : `Learn More & Chat with our AI assistant 🤖`;
 
     const headerEn2 = `Hi ${firstName ? firstName + ',' : 'there,'} greetings from *${bizName}*!\n\nWe are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.\n\nOur services:\n`;
     const headerEs2 = `Hola${firstName ? ' ' + firstName + ',' : ','} ¡saludos de parte de *${bizName}*!\n\nSomos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.\n\nNuestros servicios:\n`;
@@ -1788,9 +1790,8 @@ ${closingHtml}
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
       const pageUrl = `${publicUrl}#service-${serviceSlug}`;
-      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
       const emoji = categoryEmoji2(p.category);
-      return `${emoji} *${name}*\n${desc}\n${learnMoreLbl} 🔗 ${pageUrl}\n🤖 ${aiChatLbl}: ${agentUrl}`;
+      return `${emoji} *${name}*\n${desc}\n${ctaLabel2} ${pageUrl}`;
     }).join('\n\n');
 
     const waDigits2 = (community.whatsapp || '').replace(/\D/g, '');

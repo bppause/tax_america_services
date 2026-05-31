@@ -38,20 +38,19 @@ function interpolate(text, name) {
   return (text || '').replace(/\{name\}/g, name);
 }
 
-function buildServicesBlock(locale, products) {
+function buildServicesBlock(locale, products, selectedIds) {
   const enabled = products
-    .filter(p => p.enabled)
+    .filter(p => p.enabled && selectedIds.has(p.id))
     .sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
   return enabled.map(p => {
     const pname = pickI18n(p.name_i18n, locale).value || p.slug;
     const pdesc = pickI18n(p.description_i18n, locale).value || '';
     const emoji = CATEGORY_EMOJI[p.category] || '•';
-    // Each service ends with an AI chat nudge deep-linking to that service
-    const aiLine = locale === 'es'
-      ? `🤖 ¿Preguntas sobre *${pname}*? Chatea con nuestro asistente: {SITE}?service=${p.slug}`
-      : `🤖 Questions about *${pname}*? Chat with our AI assistant: {SITE}?service=${p.slug}`;
-    return [`${emoji} *${pname}*`, pdesc, `🔗 {SITE}#service-${p.slug}`, aiLine]
-      .filter(Boolean).join('\n');
+    const ctaLabel = locale === 'es'
+      ? `Más información y chatea con nuestro asistente de IA 🤖`
+      : `Learn More & Chat with our AI assistant 🤖`;
+    const ctaLine = `${ctaLabel} {SITE}#service-${p.slug}`;
+    return [`${emoji} *${pname}*`, pdesc, ctaLine].filter(Boolean).join('\n');
   }).join('\n\n');
 }
 
@@ -81,13 +80,13 @@ function buildContactBlock(locale, settings) {
   ].filter(Boolean).join('\n');
 }
 
-function buildMessage(locale, settings, products, publicUrl, pdfUrl, template) {
+function buildMessage(locale, settings, products, publicUrl, pdfUrl, template, selectedIds) {
   const name = locale === 'es'
     ? (settings.name || settings.name_en || '')
     : (settings.name_en || settings.name || '');
   const tpl = (field) => interpolate(template[locale]?.[field] ?? DEFAULTS[locale][field], name);
   const svcLabel   = locale === 'es' ? 'Nuestros servicios:' : 'Our services:';
-  const svcBlock   = buildServicesBlock(locale, products).replace(/\{SITE\}/g, publicUrl);
+  const svcBlock   = buildServicesBlock(locale, products, selectedIds).replace(/\{SITE\}/g, publicUrl);
   const ctaBlock   = buildContactBlock(locale, settings).replace(/\{SITE\}/g, publicUrl);
   const aiCta      = buildAiCtaBlock(locale, publicUrl);
   const brochLine  = locale === 'es'
@@ -164,6 +163,8 @@ export default function OwnerWhatsApp() {
   const [saveOk,      setSaveOk]      = useState(false);
   const [copied,      setCopied]      = useState(false);
   const [pdfVersion,  setPdfVersion]  = useState(() => Date.now());
+  const [selectedIds, setSelectedIds] = useState(new Set()); // none selected by default
+  const [svcFilter,   setSvcFilter]   = useState('');
 
   useEffect(() => {
     if (!fbUser || !community) return;
@@ -200,14 +201,28 @@ export default function OwnerWhatsApp() {
     ? (msgLocale === 'es' ? (settings.name || settings.name_en || '') : (settings.name_en || settings.name || ''))
     : '';
 
-  const hasServices = products.some(p => p.enabled);
-  const svcPreview  = settings ? buildServicesBlock(msgLocale, products).replace(/\{SITE\}/g, publicUrl) : '';
+  const enabledProducts = products.filter(p => p.enabled).sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+  const filteredProducts = svcFilter.trim()
+    ? enabledProducts.filter(p => {
+        const n = (pickI18n(p.name_i18n, msgLocale).value || p.slug).toLowerCase();
+        return n.includes(svcFilter.toLowerCase());
+      })
+    : enabledProducts;
+  const toggleSvc = (id) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const hasServices = enabledProducts.length > 0;
+  const hasSelected = selectedIds.size > 0;
+  const svcPreview  = settings ? buildServicesBlock(msgLocale, enabledProducts, selectedIds).replace(/\{SITE\}/g, publicUrl) : '';
   const aiCtaPreview = buildAiCtaBlock(msgLocale, publicUrl);
   const ctaPreview  = settings ? buildContactBlock(msgLocale, settings).replace(/\{SITE\}/g, publicUrl) : '';
   const brochLine   = msgLocale === 'es' ? `📄 Portafolio de servicios: ${pdfUrl}` : `📄 Services portfolio: ${pdfUrl}`;
 
-  const message = settings && hasServices
-    ? buildMessage(msgLocale, settings, products, publicUrl, pdfUrl, template)
+  const message = settings && hasSelected
+    ? buildMessage(msgLocale, settings, enabledProducts, publicUrl, pdfUrl, template, selectedIds)
     : '';
 
   const save = async () => {
@@ -300,12 +315,65 @@ export default function OwnerWhatsApp() {
               rows={6}
             />
 
-            {/* Services — locked, from service catalog */}
+            {/* Service selector — pick which services to include */}
+            {hasServices && (
+              <div style={{ borderLeft: '3px solid var(--tax-border)', paddingLeft: 12, marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexWrap: 'wrap', gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--tax-muted)' }}>
+                    {t('owner.whatsapp.block.services')}
+                    <span style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 999, fontSize: 10,
+                                   background: hasSelected ? '#dcfce7' : '#fee2e2',
+                                   color: hasSelected ? '#166534' : '#991b1b' }}>
+                      {selectedIds.size}/{enabledProducts.length}
+                    </span>
+                  </span>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input type="search" value={svcFilter} onChange={e => setSvcFilter(e.target.value)}
+                           placeholder="Filter…"
+                           style={{ padding: '3px 7px', borderRadius: 5, border: '1px solid var(--tax-border)', fontSize: 12, width: 110 }} />
+                    <button type="button" onClick={() => setSelectedIds(new Set(enabledProducts.map(p => p.id)))}
+                            style={{ fontSize: 11, color: 'var(--tax-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                      All
+                    </button>
+                    <button type="button" onClick={() => setSelectedIds(new Set())}
+                            style={{ fontSize: 11, color: 'var(--tax-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                      None
+                    </button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gap: 3, maxHeight: 240, overflowY: 'auto' }}>
+                  {filteredProducts.map(p => {
+                    const pname = pickI18n(p.name_i18n, msgLocale).value || p.slug;
+                    const checked = selectedIds.has(p.id);
+                    return (
+                      <label key={p.id} style={{
+                        display: 'flex', gap: 8, alignItems: 'center', padding: '5px 8px',
+                        borderRadius: 5, cursor: 'pointer', fontSize: 13,
+                        background: checked ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#f9fafb',
+                        border: `1px solid ${checked ? 'color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)' : 'var(--tax-border)'}`,
+                      }}>
+                        <input type="checkbox" checked={checked} onChange={() => toggleSvc(p.id)} style={{ flexShrink: 0 }} />
+                        {CATEGORY_EMOJI[p.category] || '📄'} {pname}
+                      </label>
+                    );
+                  })}
+                  {filteredProducts.length === 0 && svcFilter && (
+                    <p style={{ fontSize: 12, color: 'var(--tax-muted)', padding: '4px 0' }}>No services match "{svcFilter}"</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Services preview — shows only selected */}
             <TemplateBlock
               label={t('owner.whatsapp.block.services')}
               hintHref={`${base}/service-catalog`}
               hintText={t('owner.whatsapp.block.services.edit')}>
-              {hasServices ? svcPreview : <span style={{ color: 'var(--tax-muted)', fontStyle: 'italic' }}>{t('owner.whatsapp.noServices')}</span>}
+              {!hasServices
+                ? <span style={{ color: 'var(--tax-muted)', fontStyle: 'italic' }}>{t('owner.whatsapp.noServices')}</span>
+                : !hasSelected
+                  ? <span style={{ color: 'var(--tax-muted)', fontStyle: 'italic' }}>Select services above to preview them here.</span>
+                  : svcPreview}
             </TemplateBlock>
 
             {/* AI assistant CTA — auto, drives lead to chat widget */}
