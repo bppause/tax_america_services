@@ -260,7 +260,7 @@ export default function OwnerCustomerDetail({ customerId }) {
                       isAdmin={employee?.role === 'admin'} locale={locale} t={t} />
       </SectionCard>
 
-      <SectionCard title="Financial Reports (P&amp;L / Balance Sheet)" icon="📊">
+      <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊">
         <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0} />
       </SectionCard>
 
