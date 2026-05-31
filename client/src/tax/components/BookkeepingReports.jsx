@@ -76,7 +76,7 @@ function normalizePlData(pl) {
     // New shape — fill in any missing section so the editor has all five.
     const sections = {};
     for (const k of SECTION_KEYS) sections[k] = pl.sections[k] ? cloneSection(pl.sections[k]) : emptySection();
-    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined };
+    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined, _fileName: pl._fileName || undefined };
   }
   // Legacy shape — synthesize sections from the flat fields.
   const out = emptyPlData();
@@ -170,6 +170,12 @@ function plHasMismatch(plData) {
   }
   return false;
 }
+// Returns list of affected file labels (e.g. ['P&L']) for the publish-block message.
+function mismatchedFiles(rpt) {
+  const files = [];
+  if (plHasMismatch(rpt.pl_data)) files.push('P&L');
+  return files;
+}
 
 // Compute totals from the section/group tree. Sums groups within each
 // section, derives the canonical totals (gross_profit, net_income,
@@ -202,8 +208,12 @@ function computeTotals(pl) {
 function formToPayload(f) {
   const pl_data = {
     sections: {},
-    totals: computeTotals(f.pl_data),
+    // Preserve QB-reported totals for xlsx imports — recomputing overwrites
+    // net_income with a different figure (Sales Tax Collected/Remitted treatment).
+    totals: f.pl_data._companyName && f.pl_data.totals ? f.pl_data.totals : computeTotals(f.pl_data),
   };
+  if (f.pl_data._companyName) pl_data._companyName = f.pl_data._companyName;
+  if (f.pl_data._fileName) pl_data._fileName = f.pl_data._fileName;
   for (const k of SECTION_KEYS) {
     const sec = f.pl_data.sections[k] || emptySection();
     pl_data.sections[k] = {
@@ -221,6 +231,8 @@ function formToPayload(f) {
   }
   const balance_data = {};
   for (const k of BALANCE_KEYS) balance_data[k] = num(f.balance_data[k]);
+  if (f.balance_data._companyName) balance_data._companyName = f.balance_data._companyName;
+  if (f.balance_data._fileName) balance_data._fileName = f.balance_data._fileName;
   return {
     period_label: f.period_label.trim(),
     period_start: f.period_start,
@@ -283,7 +295,7 @@ const SECTION_TITLE_KEY = {
   other_expense: 'owner.customer.bookkeeping.section.other_expense',
 };
 
-export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce }) {
+export default function BookkeepingReportsSection({ auth, customerId, customer, refreshNonce, initialReportId, drawerMode, onEditRequest, onNewRequest, onDone }) {
   const { t, locale } = useT();
   const [reports, setReports] = useState(null);
   const [accessToken, setAccessToken] = useState(null);
@@ -295,7 +307,10 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const [msg, setMsg] = useState({ kind: '', text: '' });
   const [pdfMeta, setPdfMeta] = useState({ pl: null, balance: null }); // { fileName, companyName, mismatch }
   const [taskId, setTaskId] = useState(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState('idle'); // 'idle'|'pending'|'saving'|'saved'|'error'
   const sectionRef = useRef(null);
+  const autoSaveTimerRef = useRef(null);
+  const ignoreNextFormChangeRef = useRef(false);
 
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
@@ -307,6 +322,53 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }));
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [customerId, refreshNonce]);
+
+  const triedInitialId = useRef(null);
+  useEffect(() => {
+    if (!initialReportId || !reports) return;
+    if (triedInitialId.current === initialReportId) return;
+    const row = reports.find(r => r.id === initialReportId);
+    if (row) {
+      triedInitialId.current = initialReportId;
+      startEdit(row);
+    } else {
+      // Not in list yet (newly created) — re-fetch once
+      if (triedInitialId.current !== `retry:${initialReportId}`) {
+        triedInitialId.current = `retry:${initialReportId}`;
+        load();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialReportId, reports]);
+
+  // Auto-save: fires 1.5s after last form change while editing/creating
+  useEffect(() => {
+    if (!editingId && !creating) return;
+    if (ignoreNextFormChangeRef.current) { ignoreNextFormChangeRef.current = false; return; }
+    if (!form.period_label || !form.period_start || !form.period_end) return;
+    setAutoSaveStatus('pending');
+    const timer = setTimeout(async () => {
+      setAutoSaveStatus('saving');
+      try {
+        const payload = formToPayload(form);
+        if (editingId) {
+          await taxApi.adminUpdateFinancialReport(auth, editingId, payload);
+        } else {
+          const d = await taxApi.adminCreateFinancialReport(auth, customerId, payload);
+          ignoreNextFormChangeRef.current = true;
+          setEditingId(d.report.id);
+          setCreating(false);
+        }
+        setAutoSaveStatus('saved');
+        load();
+        setTimeout(() => setAutoSaveStatus(s => s === 'saved' ? 'idle' : s), 3000);
+      } catch (_e) {
+        setAutoSaveStatus('error');
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form]);
 
   const resetPl = () => {
     if (!confirm(t('owner.customer.bookkeeping.confirm.resetPl'))) return;
@@ -322,13 +384,20 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const startCreate = () => {
+    ignoreNextFormChangeRef.current = true;
+    setAutoSaveStatus('idle');
+    clearTimeout(autoSaveTimerRef.current);
     setForm(emptyForm()); setCreating(true); setEditingId(''); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
   };
   const startEdit = (r) => {
     setPdfMeta({ pl: null, balance: null });
+    ignoreNextFormChangeRef.current = true;
+    setAutoSaveStatus('idle');
+    clearTimeout(autoSaveTimerRef.current);
     setBusy(true);
     taxApi.adminGetFinancialReport(auth, r.id)
       .then(d => {
+        ignoreNextFormChangeRef.current = true;
         setForm(reportToForm(d.report));
         setEditingId(r.id);
         setCreating(false);
@@ -342,12 +411,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         const balCn = rpt.balance_data?._companyName || null;
         setPdfMeta({
           pl: rpt.pl_pdf_path ? {
-            fileName: t('owner.customer.bookkeeping.pdf.onFile'),
+            fileName: rpt.pl_data?._fileName || t('owner.customer.bookkeeping.pdf.onFile'),
             companyName: plCn,
             mismatch: !!(plCn && biz && !companyNamesMatch(plCn, biz)),
           } : null,
           balance: rpt.balance_pdf_path ? {
-            fileName: t('owner.customer.bookkeeping.pdf.onFile'),
+            fileName: rpt.balance_data?._fileName || t('owner.customer.bookkeeping.pdf.onFile'),
             companyName: balCn,
             mismatch: !!(balCn && biz && !companyNamesMatch(balCn, biz)),
           } : null,
@@ -356,7 +425,31 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       .catch(e => setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.loadFailed') }))
       .finally(() => setBusy(false));
   };
-  const cancel = () => { setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null); };
+  const cancel = () => {
+    clearTimeout(autoSaveTimerRef.current);
+    ignoreNextFormChangeRef.current = true;
+    setAutoSaveStatus('idle');
+    setCreating(false); setEditingId(''); setForm(emptyForm()); setMsg({ kind: '', text: '' }); setPdfMeta({ pl: null, balance: null }); setTaskId(null);
+  };
+
+  const saveAndClose = async () => {
+    clearTimeout(autoSaveTimerRef.current);
+    const finalId = editingId; // capture before cancel clears it
+    if ((editingId || creating) && form.period_label && form.period_start && form.period_end) {
+      setAutoSaveStatus('saving');
+      try {
+        const payload = formToPayload(form);
+        if (editingId) {
+          await taxApi.adminUpdateFinancialReport(auth, editingId, payload);
+        } else {
+          await taxApi.adminCreateFinancialReport(auth, customerId, payload);
+        }
+        load();
+      } catch (_e) {}
+    }
+    cancel();
+    onDone?.(finalId || null); // close drawer and scroll to this report
+  };
 
   const triedHashIds = useRef(new Set());
   useEffect(() => {
@@ -405,7 +498,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   const publish = async (r) => {
     setBusy(true);
     let missing = [];
-    let mismatch = false;
+    let badFiles = [];
     try {
       const d = await taxApi.adminGetFinancialReport(auth, r.id);
       const rpt = d.report;
@@ -413,12 +506,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       const balOk = rpt.balance_data && Object.values(rpt.balance_data).some(v => v != null && v !== '' && Number(v) !== 0);
       if (!plOk) missing.push('P&L');
       if (!balOk) missing.push('balance sheet');
-      mismatch = plHasMismatch(rpt.pl_data);
+      badFiles = mismatchedFiles(rpt);
     } catch (_e) { /* fetch failed — skip checks, let publish proceed */ }
     finally { setBusy(false); }
 
-    if (mismatch) {
-      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.publishMismatch') });
+    if (badFiles.length > 0) {
+      setMsg({ kind: 'err', text: t('owner.customer.bookkeeping.msg.publishMismatch', { files: badFiles.join(' and ') }) });
       return;
     }
 
@@ -504,9 +597,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
           : { ...prev, balance_data: Object.fromEntries(BALANCE_KEYS.map(k => [k, ''])) };
         const merged = mergeParsedIntoForm(cleared, parseResult.parsed, kind);
         // Persist company name in the JSONB so it survives a page reload / re-edit.
-        if (companyName) {
-          if (kind === 'pl') merged.pl_data._companyName = companyName;
-          else merged.balance_data._companyName = companyName;
+        if (kind === 'pl') {
+          if (companyName) merged.pl_data._companyName = companyName;
+          merged.pl_data._fileName = file.name;
+        } else {
+          if (companyName) merged.balance_data._companyName = companyName;
+          merged.balance_data._fileName = file.name;
         }
         return merged;
       });
@@ -524,12 +620,18 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const preview = async (r) => {
+    // Open blank tab synchronously (user-gesture context) to avoid popup blocking,
+    // then navigate once the API resolves. No noopener — we need the reference to redirect.
+    const win = window.open('about:blank', '_blank');
     setBusy(true);
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
-      window.open(d.viewUrl + '#report=' + encodeURIComponent(r.id), '_blank', 'noopener');
-    } catch (e) { setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') }); }
+      if (win) win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id) + '&ownerSend=1';
+    } catch (e) {
+      if (win) win.close();
+      setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') });
+    }
     finally { setBusy(false); }
   };
 
@@ -549,7 +651,9 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
         <h3 style={{ margin: 0 }}>{t('owner.customer.bookkeeping.heading')}</h3>
         {bookkeepingActive && !creating && !editingId && (
-          <button type="button" className="tax-btn tax-btn--primary" onClick={startCreate} disabled={busy}>
+          <button type="button" className="tax-btn tax-btn--primary"
+                  onClick={drawerMode ? () => onNewRequest?.() : startCreate}
+                  disabled={busy}>
             {t('owner.customer.bookkeeping.newBtn')}
           </button>
         )}
@@ -598,13 +702,18 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         </div>
       )}
 
-      {(creating || editingId) && (
-        <ReportForm t={t} form={form} setForm={setForm} onSave={save} onCancel={cancel} busy={busy}
-                    editing={!!editingId} onUploadPdf={uploadAndParsePdf}
-                    onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
-                    contactName={customer?.business_name || customer?.name || null}
-                    reportStatus={editingId ? (reports?.find(r => r.id === editingId)?.status || 'draft') : 'draft'} />
-      )}
+      {(creating || editingId) && (() => {
+        const currentReport = editingId ? (reports?.find(r => r.id === editingId) || null) : null;
+        const rptStatus = currentReport?.status || 'draft';
+        return (
+          <ReportForm t={t} form={form} setForm={setForm} onSaveAndClose={saveAndClose} onCancel={cancel} busy={busy}
+                      editing={!!editingId} onUploadPdf={uploadAndParsePdf}
+                      onResetPl={resetPl} onResetBalance={resetBalance} pdfMeta={pdfMeta}
+                      contactName={customer?.business_name || customer?.name || null}
+                      reportStatus={rptStatus}
+                      autoSaveStatus={autoSaveStatus} />
+        );
+      })()}
 
       {!creating && !editingId && (
         <>
@@ -616,7 +725,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
             <div style={{ marginTop: 8 }}>
               {reports.map(r => (
                 <ReportRow key={r.id} r={r} t={t} locale={locale}
-                  onEdit={() => startEdit(r)}
+                  onEdit={drawerMode ? () => onEditRequest?.(r.id) : () => startEdit(r)}
                   onPublish={() => publish(r)}
                   onSend={() => send(r, false)}
                   onResend={() => send(r, true)}
@@ -697,7 +806,19 @@ function SaveButtons({ t, onSave, onCancel, busy, editing, sm }) {
   );
 }
 
-function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus }) {
+function AutoSaveStatus({ status }) {
+  const map = {
+    pending: { text: '● Unsaved', color: '#94a3b8' },
+    saving:  { text: '⟳ Saving…', color: '#2563eb' },
+    saved:   { text: '✓ Saved',   color: '#16a34a' },
+    error:   { text: '⚠ Save failed', color: '#dc2626' },
+  };
+  const s = map[status];
+  if (!s) return null;
+  return <span style={{ fontSize: 12, color: s.color, fontWeight: 500 }}>{s.text}</span>;
+}
+
+function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing, onUploadPdf, onResetPl, onResetBalance, pdfMeta, contactName, reportStatus, autoSaveStatus }) {
   const [plCollapsed, setPlCollapsed] = useState(false);
   const [balCollapsed, setBalCollapsed] = useState(false);
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
@@ -705,12 +826,14 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
     setForm(prev => ({ ...prev, pl_data: { ...prev.pl_data, sections: { ...prev.pl_data.sections, [key]: sec } } }));
   };
   const totals = computeTotals(form.pl_data);
+  const plReadOnly = !!form.pl_data._companyName;
+  const balReadOnly = !!form.balance_data._companyName;
 
   return (
-    <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa' }}>
+    <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
         <h4 style={{ margin: 0 }}>{t(editing ? 'owner.customer.bookkeeping.form.heading.edit' : 'owner.customer.bookkeeping.form.heading.create')}</h4>
-        <SaveButtons t={t} onSave={onSave} onCancel={onCancel} busy={busy} editing={editing} sm />
+        <AutoSaveStatus status={autoSaveStatus} />
       </div>
 
       {(reportStatus === 'published' || reportStatus === 'sent') && (
@@ -755,12 +878,13 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
 
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pl')}
                  collapsed={plCollapsed} onToggle={() => setPlCollapsed(c => !c)}
-                 action={
-                   <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                           onClick={e => { e.stopPropagation(); onResetPl(); }} disabled={busy}
-                           style={{ fontSize: 11, color: '#b91c1c' }}>
-                     {t('owner.customer.bookkeeping.action.resetPl')}
-                   </button>
+                 action={plReadOnly
+                   ? <span style={{ fontSize: 11, color: '#0f766e', fontWeight: 600, background: '#ccfbf1', padding: '2px 8px', borderRadius: 4 }}>📊 {t('owner.customer.bookkeeping.form.xlsxReadOnly')}</span>
+                   : <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                             onClick={e => { e.stopPropagation(); onResetPl(); }} disabled={busy}
+                             style={{ fontSize: 11, color: '#b91c1c' }}>
+                       {t('owner.customer.bookkeeping.action.resetPl')}
+                     </button>
                  }>
         {SECTION_KEYS.map(sectionKey => (
           <SectionEditor key={sectionKey} t={t}
@@ -768,23 +892,30 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
             title={t(SECTION_TITLE_KEY[sectionKey])}
             section={form.pl_data.sections[sectionKey]}
             onChange={s => setSection(sectionKey, s)}
+            readOnly={plReadOnly}
           />
         ))}
       </FormGroup>
 
       <FormGroup title={t('owner.customer.bookkeeping.form.group.balance')}
                  collapsed={balCollapsed} onToggle={() => setBalCollapsed(c => !c)}
-                 action={
-                   <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                           onClick={e => { e.stopPropagation(); onResetBalance(); }} disabled={busy}
-                           style={{ fontSize: 11, color: '#b91c1c' }}>
-                     {t('owner.customer.bookkeeping.action.resetBalance')}
-                   </button>
+                 action={balReadOnly
+                   ? <span style={{ fontSize: 11, color: '#0f766e', fontWeight: 600, background: '#ccfbf1', padding: '2px 8px', borderRadius: 4 }}>📊 {t('owner.customer.bookkeeping.form.xlsxReadOnly')}</span>
+                   : <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                             onClick={e => { e.stopPropagation(); onResetBalance(); }} disabled={busy}
+                             style={{ fontSize: 11, color: '#b91c1c' }}>
+                       {t('owner.customer.bookkeeping.action.resetBalance')}
+                     </button>
                  }>
         <NumericGrid>
           {BALANCE_KEYS.map(k => (
             <Field key={k} label={t(`owner.customer.bookkeeping.balance.${k}`)}>
-              <NumericInput value={form.balance_data[k]} onChange={v => setForm(prev => ({ ...prev, balance_data: { ...prev.balance_data, [k]: v } }))} />
+              {balReadOnly
+                ? <div style={{ padding: '8px 10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14, fontVariantNumeric: 'tabular-nums', color: '#0f172a' }}>
+                    {form.balance_data[k] != null && form.balance_data[k] !== '' ? `$${Number(form.balance_data[k]).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                  </div>
+                : <NumericInput value={form.balance_data[k]} onChange={v => setForm(prev => ({ ...prev, balance_data: { ...prev.balance_data, [k]: v } }))} />
+              }
             </Field>
           ))}
         </NumericGrid>
@@ -796,20 +927,32 @@ function ReportForm({ t, form, setForm, onSave, onCancel, busy, editing, onUploa
                   style={{ width: '100%', padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
       </FormGroup>
 
-      <TotalsBar t={t} totals={totals} />
+      <TotalsBar t={t} plData={form.pl_data} computedTotals={totals} />
 
       <div style={{ marginTop: 14, padding: '10px 12px', background: '#fef3c7', borderLeft: '3px solid #b45309', borderRadius: 6, fontSize: 13, color: '#78350f' }}>
         {t('owner.customer.bookkeeping.form.verifyBanner')}
       </div>
 
-      <div style={{ marginTop: 14 }}>
-        <SaveButtons t={t} onSave={onSave} onCancel={onCancel} busy={busy} editing={editing} />
+      {/* Sticky close bar — workflow actions (Publish/Preview/Send) live on the summary */}
+      <div style={{
+        position: 'sticky', bottom: 0,
+        background: '#f8fafc',
+        borderTop: '1px solid var(--tax-border)',
+        padding: '12px 0 0',
+        marginTop: 16,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+      }}>
+        <AutoSaveStatus status={autoSaveStatus} />
+        <button type="button" className="tax-btn tax-btn--ghost"
+                onClick={onSaveAndClose || onCancel} disabled={busy}>
+          {autoSaveStatus === 'saving' ? t('owner.customer.bookkeeping.action.saving') : 'Close'}
+        </button>
       </div>
     </div>
   );
 }
 
-function SectionEditor({ t, sectionKey, title, section, onChange }) {
+function SectionEditor({ t, sectionKey, title, section, onChange, readOnly }) {
   const [collapsed, setCollapsed] = useState(false);
   const setGroup = (idx, g) => onChange({ ...section, groups: section.groups.map((x, i) => i === idx ? g : x) });
   const addGroup = () => onChange({ ...section, groups: [...section.groups, { name: '', total: null, items: [] }] });
@@ -821,24 +964,33 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
     const declared = g.total != null && g.total !== '' ? num(g.total) : null;
     return declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5;
   });
+  // Show badge when any group has a declared total (summary-only groups count as valid)
+  const hasAnyTotal = section.groups.some(g => g.total != null && g.total !== '');
+  const validationBadge = readOnly && hasAnyTotal
+    ? sectionHasMismatch
+      ? <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700, background: '#fee2e2', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✗ {t('owner.customer.bookkeeping.section.mismatch')}</span>
+      : <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, background: '#dcfce7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✓ {t('owner.customer.bookkeeping.section.valid')}</span>
+    : null;
   return (
-    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#ef4444' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
       <div
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '9px 12px', cursor: 'pointer', userSelect: 'none',
-          background: sectionHasMismatch ? '#fef3c7' : '#fafafa',
-          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}` }}
+          background: sectionHasMismatch ? '#fee2e2' : '#fafafa',
+          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#ef4444' : '#e2e8f0'}` }}
         onClick={() => setCollapsed(c => !c)}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1, width: 14, textAlign: 'center' }}>{collapsed ? '▶' : '▼'}</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>{title}</span>
-          {sectionHasMismatch && collapsed && <span style={{ color: '#b45309', fontSize: 14, lineHeight: 1 }}>⚠</span>}
+          {collapsed && validationBadge}
+          {!readOnly && sectionHasMismatch && collapsed && <span style={{ color: '#b91c1c', fontSize: 14, lineHeight: 1 }}>✗</span>}
         </div>
         <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
       </div>
       {!collapsed && (
         <div style={{ padding: 12 }}>
+          {!collapsed && validationBadge && <div style={{ marginBottom: 8 }}>{validationBadge}</div>}
           {section.groups.length === 0 && (
             <div style={{ fontSize: 12, color: 'var(--tax-muted)', fontStyle: 'italic', padding: '4px 0' }}>
               {t('owner.customer.bookkeeping.section.empty')}
@@ -847,19 +999,22 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
           {section.groups.map((g, idx) => (
             <GroupEditor key={idx} t={t} group={g}
                          onChange={ng => setGroup(idx, ng)}
-                         onDelete={() => removeGroup(idx)} />
+                         onDelete={() => removeGroup(idx)}
+                         readOnly={readOnly} />
           ))}
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addGroup}
-                  style={{ marginTop: 6, fontSize: 12 }}>
-            + {t('owner.customer.bookkeeping.section.addGroup')}
-          </button>
+          {!readOnly && (
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addGroup}
+                    style={{ marginTop: 6, fontSize: 12 }}>
+              + {t('owner.customer.bookkeeping.section.addGroup')}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function GroupEditor({ t, group, onChange, onDelete }) {
+function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
   const [collapsed, setCollapsed] = useState(false);
   const setItem = (idx, item) => onChange({ ...group, items: group.items.map((x, i) => i === idx ? item : x) });
   const addItem = () => onChange({ ...group, items: [...group.items, { name: '', amount: '' }] });
@@ -867,60 +1022,89 @@ function GroupEditor({ t, group, onChange, onDelete }) {
   const itemSum = group.items.reduce((s, i) => s + num(i.amount), 0);
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
   const mismatch = declaredTotal != null && group.items.length > 0 && Math.abs(declaredTotal - itemSum) > 0.5;
+  // No items = summary-only group; treat declared total as correct → green
+  const match = !mismatch && declaredTotal != null;
+  const borderColor = mismatch ? '#ef4444' : match ? '#16a34a' : '#e2e8f0';
+  const headerBg  = mismatch ? '#fee2e2' : match ? '#f0fdf4' : '#f8fafc';
   return (
-    <div style={{ marginTop: 8, border: `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 6, overflow: 'hidden' }}>
+    <div style={{ marginTop: 8, border: `1px solid ${borderColor}`, borderRadius: 6, overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 10px',
-                    background: mismatch ? '#fef3c7' : '#f8fafc',
-                    borderBottom: collapsed ? 'none' : `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}` }}>
+                    background: headerBg,
+                    borderBottom: collapsed ? 'none' : `1px solid ${borderColor}` }}>
         <button type="button" onClick={() => setCollapsed(c => !c)}
                 style={{ background: 'none', border: 0, cursor: 'pointer', padding: '0 2px',
                          color: '#64748b', fontSize: 13, lineHeight: 1, flexShrink: 0, width: 16 }}>
           {collapsed ? '▶' : '▼'}
         </button>
-        <input type="text" value={group.name} onChange={e => onChange({ ...group, name: e.target.value })}
-               placeholder={t('owner.customer.bookkeeping.group.namePlaceholder')}
-               style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
-               onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#f59e0b' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
-               onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
-        <MoneyInput value={group.total ?? ''}
-                    onChange={v => onChange({ ...group, total: v })}
-                    placeholder={fmtInputNum(itemSum) || '0.00'}
-                    title={t('owner.customer.bookkeeping.group.totalHint')}
-                    width={110}
-                    borderColor={mismatch ? '#f59e0b' : undefined}
-                    extraInputStyle={{ fontWeight: 700 }} />
+        {readOnly
+          ? <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: '#0f172a', padding: '4px 0' }}>{group.name || '—'}</span>
+          : <input type="text" value={group.name} onChange={e => onChange({ ...group, name: e.target.value })}
+                   placeholder={t('owner.customer.bookkeeping.group.namePlaceholder')}
+                   style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
+                   onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#ef4444' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
+                   onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
+        }
+        {readOnly
+          ? <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#0f172a', minWidth: 90, textAlign: 'right' }}>{fmtMoney(declaredTotal ?? itemSum)}</span>
+          : <MoneyInput value={group.total ?? ''}
+                        onChange={v => onChange({ ...group, total: v })}
+                        placeholder={fmtInputNum(itemSum) || '0.00'}
+                        title={t('owner.customer.bookkeeping.group.totalHint')}
+                        width={110}
+                        borderColor={mismatch ? '#ef4444' : undefined}
+                        extraInputStyle={{ fontWeight: 700 }} />
+        }
+        {match && <span style={{ color: '#16a34a', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>✓</span>}
         {mismatch && (
           <span title={t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
-                style={{ color: '#b45309', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>⚠</span>
+                style={{ color: '#b91c1c', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>✗</span>
         )}
-        <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
-                style={{ background: 'transparent', border: 0, color: '#b91c1c', cursor: 'pointer', fontSize: 18, padding: '0 2px', flexShrink: 0 }}>×</button>
+        {!readOnly && (
+          <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
+                  style={{ background: 'transparent', border: 0, color: '#b91c1c', cursor: 'pointer', fontSize: 18, padding: '0 2px', flexShrink: 0 }}>×</button>
+        )}
       </div>
       {!collapsed && (
         <div style={{ padding: '8px 10px', background: '#fff' }}>
           {mismatch && (
-            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fef3c7', borderRadius: 4, fontSize: 11, color: '#b45309', fontWeight: 600 }}>
-              ⚠ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fee2e2', borderRadius: 4, fontSize: 11, color: '#b91c1c', fontWeight: 600 }}>
+              ✗ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
             </div>
           )}
           {group.items.length > 0 && (
             <div style={{ display: 'grid', gap: 4 }}>
               {group.items.map((it, idx) => (
-                <ItemRow key={idx} t={t} item={it} onChange={i => setItem(idx, i)} onDelete={() => removeItem(idx)} />
+                <ItemRow key={idx} t={t} item={it} onChange={i => setItem(idx, i)} onDelete={() => removeItem(idx)} readOnly={readOnly} />
               ))}
             </div>
           )}
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addItem}
-                  style={{ marginTop: 6, fontSize: 11 }}>
-            + {t('owner.customer.bookkeeping.group.addItem')}
-          </button>
+          {!readOnly && (
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addItem}
+                    style={{ marginTop: 6, fontSize: 11 }}>
+              + {t('owner.customer.bookkeeping.group.addItem')}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ItemRow({ t, item, onChange, onDelete }) {
+function ItemRow({ t, item, onChange, onDelete, readOnly }) {
+  if (readOnly) {
+    return (
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0' }}>
+        <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{item.name || '—'}</span>
+        <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: '#475569', minWidth: 90, textAlign: 'right' }}>{fmtMoney(Number(item.amount) || 0)}</span>
+        {item.rollup && (
+          <span title={t('owner.customer.bookkeeping.item.rollup')}
+                style={{ fontSize: 10, fontWeight: 700, color: '#64748b', padding: '2px 6px', background: '#f1f5f9', borderRadius: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>
+            ∑
+          </span>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <input type="text" value={item.name} onChange={e => onChange({ ...item, name: e.target.value })}
@@ -1012,15 +1196,58 @@ function FormGroup({ title, children, action, collapsed, onToggle }) {
     </div>
   );
 }
-function TotalsBar({ t, totals }) {
+function TotalsBar({ t, plData, computedTotals }) {
+  // Prefer xlsx-parsed QB totals when available — they match what the customer
+  // will see in the dashboard and what QB actually reported.
+  const stored = plData?.totals;
+  const isXlsx = !!plData?._companyName;
+  const display = (stored && isXlsx) ? stored : computedTotals;
+
+  // Validation: does every group's declared total match its item sum?
+  const groupMismatches = [];
+  for (const [secKey, sec] of Object.entries(plData?.sections || {})) {
+    for (const g of (sec?.groups || [])) {
+      const itemSum = (g.items || []).reduce((s, i) => s + num(i.amount), 0);
+      const declared = g.total != null && g.total !== '' ? num(g.total) : null;
+      if (declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5) {
+        groupMismatches.push(g.name);
+      }
+    }
+  }
+  const allMatch = groupMismatches.length === 0;
+
+  // When xlsx totals are used, check if computed net income differs from stored
+  // (e.g. Sales Tax Collected/Remitted treatment). Show a note when they diverge.
+  const netDiffers = isXlsx && stored && Math.abs((stored.net_income || 0) - (computedTotals.net_income || 0)) > 0.5;
+
+  const statusColor = allMatch ? '#15803d' : '#b91c1c';
+  const statusBg    = allMatch ? '#dcfce7'  : '#fee2e2';
+  const statusIcon  = allMatch ? '✓' : '✗';
+  const statusText  = allMatch
+    ? t('owner.customer.bookkeeping.form.totals.valid')
+    : t('owner.customer.bookkeeping.form.totals.mismatch', { count: groupMismatches.length });
+
   return (
-    <div style={{ marginTop: 14, padding: '10px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 13 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
-        <Total label={t('owner.customer.bookkeeping.form.totals.revenue')}     value={totals.total_income} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.cogs')}        value={totals.total_cogs} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.grossProfit')} value={totals.gross_profit} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.opex')}        value={totals.total_expense} />
-        <Total label={t('owner.customer.bookkeeping.form.totals.netIncome')}   value={totals.net_income} bold />
+    <div style={{ marginTop: 14, borderRadius: 6, border: `1px solid ${allMatch ? '#bbf7d0' : '#fecaca'}`, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px',
+                    background: statusBg, borderBottom: `1px solid ${allMatch ? '#bbf7d0' : '#fecaca'}` }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: statusColor }}>{statusIcon} {statusText}</span>
+        {isXlsx && <span style={{ fontSize: 11, color: '#64748b' }}>{t('owner.customer.bookkeeping.form.totals.xlsxSource')}</span>}
+      </div>
+      <div style={{ padding: '10px 12px', background: '#f8fafc' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+          <Total label={t('owner.customer.bookkeeping.form.totals.revenue')}     value={display.total_income} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.cogs')}        value={display.total_cogs} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.grossProfit')} value={display.gross_profit} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.opex')}        value={display.total_expense} />
+          <Total label={t('owner.customer.bookkeeping.form.totals.netIncome')}   value={display.net_income} bold />
+        </div>
+        {netDiffers && (
+          <div style={{ marginTop: 8, fontSize: 11, color: '#64748b', borderTop: '1px solid #e2e8f0', paddingTop: 6 }}>
+            {t('owner.customer.bookkeeping.form.totals.netIncomeNote',
+              { qb: fmtMoney(stored.net_income), computed: fmtMoney(computedTotals.net_income) })}
+          </div>
+        )}
       </div>
     </div>
   );

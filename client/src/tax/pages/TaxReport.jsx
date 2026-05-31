@@ -53,8 +53,8 @@ const I18N = {
     badgeWatch: 'Atención',
     badgeRisk: 'Riesgo',
     downloads: 'Documentos fuente',
-    pdfPl: 'Estado de Resultados (PDF)',
-    pdfBalance: 'Balance General (PDF)',
+    pdfPl: 'Estado de Resultados (Excel)',
+    pdfBalance: 'Balance General (Excel)',
     footer: 'Preparado por {practice}. Responda al correo recibido para cualquier pregunta.',
     channels: { bank_deposits: 'Depósitos bancarios', cash: 'Ventas en efectivo', doordash: 'DoorDash', uber: 'Uber Eats', grubhub: 'Grubhub', menufy: 'Menufy', other: 'Otros canales' },
     expenseLabels: { payroll: 'Nómina', rent: 'Renta', utilities: 'Servicios', repairs: 'Reparaciones', depreciation: 'Depreciación', interest: 'Intereses', professional_fees: 'Honorarios prof.', merchant_services: 'Procesamiento', insurance: 'Seguros', auto: 'Auto', office: 'Oficina', office_supplies: 'Suministros', advertising: 'Publicidad', other: 'Otros' },
@@ -95,8 +95,8 @@ const I18N = {
     badgeWatch: 'Watch',
     badgeRisk: 'Risk',
     downloads: 'Source documents',
-    pdfPl: 'Profit & Loss (PDF)',
-    pdfBalance: 'Balance Sheet (PDF)',
+    pdfPl: 'Profit & Loss (Excel)',
+    pdfBalance: 'Balance Sheet (Excel)',
     footer: 'Prepared by {practice}. Reply to the email we sent you with any questions.',
     channels: { bank_deposits: 'Bank deposits', cash: 'Cash sales', doordash: 'DoorDash', uber: 'Uber Eats', grubhub: 'Grubhub', menufy: 'Menufy', other: 'Other channels' },
     expenseLabels: { payroll: 'Payroll', rent: 'Rent', utilities: 'Utilities', repairs: 'Repairs', depreciation: 'Depreciation', interest: 'Interest', professional_fees: 'Professional fees', merchant_services: 'Merchant svc', insurance: 'Insurance', auto: 'Auto', office: 'Office', office_supplies: 'Supplies', advertising: 'Advertising', other: 'Other' },
@@ -127,9 +127,55 @@ function fmtDate(iso, lang) {
 
 function readParsedHashReport() {
   // /r/{token}#report={id} — opens that specific report on load
-  // (used by the owner's "Vista previa" button to deep-link).
   const m = (window.location.hash || '').match(/report=([^&]+)/);
   return m ? decodeURIComponent(m[1]) : '';
+}
+function readOwnerSend() {
+  return /ownerSend=1/.test(window.location.hash || '');
+}
+function readHashLang() {
+  const m = (window.location.hash || '').match(/[?&]lang=(en|es)/);
+  return m ? m[1] : null;
+}
+
+function OwnerPreviewBanner({ reportId, customerName }) {
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const handleSend = () => {
+    setBusy(true);
+    try {
+      window.opener?.postMessage({ type: 'tax_rpt_send', reportId }, window.location.origin);
+      setSent(true);
+      setTimeout(() => window.close(), 1200);
+    } catch (_e) {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+      background: '#134e4a', color: '#fff',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '10px 20px', gap: 12, fontSize: 13,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+    }}>
+      <span style={{ fontWeight: 600 }}>
+        {sent ? '✓ Sending — closing preview…' : `Owner preview${customerName ? ` · ${customerName}` : ''}`}
+      </span>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {!sent && (
+          <button onClick={handleSend} disabled={busy}
+                  style={{ background: '#fff', color: '#134e4a', border: 'none', borderRadius: 6, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+            Send to customer →
+          </button>
+        )}
+        <button onClick={() => window.close()}
+                style={{ background: 'transparent', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 13 }}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function TaxReport({ communitySlug, token }) {
@@ -138,7 +184,7 @@ export default function TaxReport({ communitySlug, token }) {
   const [customer, setCustomer] = useState(null);
   const [reports, setReports] = useState([]);
   const [errCode, setErrCode] = useState('');
-  const [lang, setLang] = useState('es');
+  const [lang, setLang] = useState(() => readHashLang() || 'es');
   const [selectedId, setSelectedId] = useState('');
 
   const load = async () => {
@@ -193,9 +239,12 @@ export default function TaxReport({ communitySlug, token }) {
   }
 
   const selected = selectedId ? reports.find(r => r.id === selectedId) : null;
+  const isOwnerPreview = readOwnerSend();
+  const customerName = customer ? (customer.business_name || customer.first_name || customer.name || '') : '';
 
   return (
-    <div style={pageWrapStyle}>
+    <div style={{ ...pageWrapStyle, ...(isOwnerPreview ? { paddingTop: 60 } : {}) }}>
+      {isOwnerPreview && <OwnerPreviewBanner reportId={selectedId || readParsedHashReport()} customerName={customerName} />}
       <Header community={community} customer={customer} t={t} lang={lang} setLang={setLang} />
       {!selected ? (
         <ReportList reports={reports} t={t} onPick={id => { setSelectedId(id); window.scrollTo(0, 0); }} lang={lang} />
@@ -332,6 +381,9 @@ function ReportList({ reports, t, onPick, lang }) {
                     {fmtDate(r.period_start, lang)} — {fmtDate(r.period_end, lang)}
                     {r.revision > 1 && <> · {t.revision} {r.revision}</>}
                   </div>
+                  {r.pl?._fileName && (
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>📊 {r.pl._fileName}</div>
+                  )}
                 </div>
                 <div style={{ color: '#0f766e', fontWeight: 700, fontSize: 18 }}>→</div>
               </button>
@@ -377,6 +429,9 @@ function ReportDetail({ report: summary, token, t, lang, practice, onBack }) {
             </span>
           )}
         </div>
+        {r.pl?._fileName && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>📊 {r.pl._fileName}</div>
+        )}
       </div>
 
       <KpiStrip r={r} prior={prior} t={t} />
@@ -518,8 +573,12 @@ function Section({ title, children }) {
 
 function RevenueMix({ r, t }) {
   const { revenueChannels, revenueTotal } = totalsFromReport(r);
-  // Coalesce tiny long-tail entries into "Other" so the donut + list
-  // don't fragment into 30 slivers on customers with many channels.
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const pl = r.pl || {};
+
+  // Build group-level detail for drill-down when sectional data is available.
+  const incomeGroups = pl.sections?.income?.groups || [];
+
   const sorted = [...revenueChannels].sort((a, b) => b.amount - a.amount);
   const TOP = 6;
   const top = sorted.slice(0, TOP);
@@ -534,12 +593,35 @@ function RevenueMix({ r, t }) {
     <Section title={t.revenueMixTitle}>
       <Donut entries={entries} total={revenueTotal || entries.reduce((s, e) => s + e.amount, 0)} />
       <div style={{ marginTop: 12 }}>
-        {entries.map((e, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
-            <span><span style={{ display: 'inline-block', width: 10, height: 10, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], borderRadius: 2, marginRight: 8, verticalAlign: 'middle' }} />{(t.channels && t.channels[e.key]) || e.name}</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(e.amount)}</span>
-          </div>
-        ))}
+        {entries.map((e, i) => {
+          const group = incomeGroups.find(g => g.name === e.name);
+          const items = group ? (group.items || []).filter(it => Number(it.amount) !== 0) : [];
+          const isExpanded = expandedGroup === e.name;
+          return (
+            <div key={i}>
+              <div
+                onClick={() => items.length ? setExpandedGroup(isExpanded ? null : e.name) : null}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '6px 0', borderBottom: '1px solid #f1f5f9', cursor: items.length ? 'pointer' : 'default' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-block', width: 10, height: 10, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], borderRadius: 2, flexShrink: 0 }} />
+                  {(t.channels && t.channels[e.key]) || e.name}
+                  {items.length > 0 && <span style={{ fontSize: 10, color: '#0f766e', fontWeight: 600 }}>{isExpanded ? '▲' : '▼'}</span>}
+                </span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(e.amount)}</span>
+              </div>
+              {isExpanded && items.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: 6, margin: '4px 0 8px', padding: '4px 8px' }}>
+                  {items.map((it, j) => (
+                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: '#475569' }}>
+                      <span style={{ paddingLeft: 18 }}>{it.name}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(it.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </Section>
   );
@@ -570,24 +652,51 @@ function Donut({ entries, total }) {
 
 function ExpenseBars({ r, t }) {
   const { expenseCategories } = totalsFromReport(r);
-  const entries = [...expenseCategories]
-    .sort((a, b) => b.amount - a.amount).slice(0, 8);
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const pl = r.pl || {};
+  const expenseGroups = pl.sections?.expenses?.groups || [];
+
+  const entries = [...expenseCategories].sort((a, b) => b.amount - a.amount).slice(0, 8);
   if (entries.length === 0) return <Section title={t.expensesTitle}><div style={{ color: '#94a3b8' }}>—</div></Section>;
   const max = entries[0].amount;
   return (
     <Section title={t.expensesTitle}>
       <div style={{ display: 'grid', gap: 8 }}>
-        {entries.map((e, i) => (
-          <div key={i}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-              <span style={{ fontWeight: 600 }}>{(t.expenseLabels && t.expenseLabels[e.key]) || e.name}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>{fmtCurrencyFull(e.amount)}</span>
+        {entries.map((e, i) => {
+          const group = expenseGroups.find(g => g.name === e.name);
+          // Include rollup items (sub-group summaries like "Payroll Expenses Employee") —
+          // they are the meaningful breakdown. Filter only zero-amount items.
+          const items = group ? (group.items || []).filter(it => Number(it.amount) !== 0) : [];
+          const isExpanded = expandedGroup === e.name;
+          return (
+            <div key={i}>
+              <div
+                onClick={() => items.length ? setExpandedGroup(isExpanded ? null : e.name) : null}
+                style={{ cursor: items.length ? 'pointer' : 'default' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3, alignItems: 'center' }}>
+                  <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {(t.expenseLabels && t.expenseLabels[e.key]) || e.name}
+                    {items.length > 0 && <span style={{ fontSize: 10, color: '#0f766e', fontWeight: 600 }}>{isExpanded ? '▲' : '▼'}</span>}
+                  </span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>{fmtCurrencyFull(e.amount)}</span>
+                </div>
+                <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(e.amount / max) * 100}%`, background: '#0f766e', borderRadius: 4 }} />
+                </div>
+              </div>
+              {isExpanded && items.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: 6, marginTop: 6, padding: '4px 8px' }}>
+                  {items.map((it, j) => (
+                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: it.rollup ? '#374151' : '#475569' }}>
+                      <span style={{ paddingLeft: 18, fontWeight: it.rollup ? 600 : 400 }}>{it.name}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: it.rollup ? 600 : 400 }}>{fmtCurrencyFull(it.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${(e.amount / max) * 100}%`, background: '#0f766e', borderRadius: 4 }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Section>
   );
@@ -758,13 +867,13 @@ function DownloadsSection({ r, token, t }) {
         {r.has_pl_pdf && (
           <a href={url('pl')} target="_blank" rel="noopener noreferrer"
              style={{ padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: 10, color: '#0f766e', fontWeight: 600, fontSize: 13, textDecoration: 'none', background: '#fff' }}>
-            📄 {t.pdfPl}
+            📊 {t.pdfPl}
           </a>
         )}
         {r.has_balance_pdf && (
           <a href={url('balance')} target="_blank" rel="noopener noreferrer"
              style={{ padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: 10, color: '#0f766e', fontWeight: 600, fontSize: 13, textDecoration: 'none', background: '#fff' }}>
-            📄 {t.pdfBalance}
+            📊 {t.pdfBalance}
           </a>
         )}
       </div>
