@@ -260,6 +260,10 @@ export default function OwnerCustomerDetail({ customerId }) {
                       isAdmin={employee?.role === 'admin'} locale={locale} t={t} />
       </SectionCard>
 
+      <SectionCard title="Financial Reports (P&amp;L / Balance Sheet)" icon="📊">
+        <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0} />
+      </SectionCard>
+
       <SectionCard title={t('owner.customer.section.services')} icon="🏷️">
         <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t} />
       </SectionCard>
@@ -274,10 +278,6 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <SectionCard title={t('owner.customer.section.documents')} icon="📄">
         <DocumentsSection data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
-      </SectionCard>
-
-      <SectionCard title="📊 Financial Reports (P&amp;L / Balance Sheet)" icon="">
-        <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0} />
       </SectionCard>
 
       {community?.tax_customer_portal_enabled && (
