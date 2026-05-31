@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { writeFileSync } from 'fs'
+import { writeFileSync, mkdirSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 
@@ -13,7 +13,9 @@ export default defineConfig({
     {
       name: 'write-build-meta',
       closeBundle() {
-        writeFileSync(join(__dirname, 'dist/build-meta.json'), JSON.stringify({ buildTime: BUILD_TIME }));
+        const distDir = join(__dirname, 'dist');
+        mkdirSync(distDir, { recursive: true });
+        writeFileSync(join(distDir, 'build-meta.json'), JSON.stringify({ buildTime: BUILD_TIME }));
       },
     },
   ],
