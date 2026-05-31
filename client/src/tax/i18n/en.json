@@ -72,6 +72,8 @@
   "lead.success.body": "We will reach out at the email or phone you provided within one business day.",
   "lead.error.generic": "Something went wrong sending your request. Please try again or call us.",
   "lead.error.network": "Network error. Please check your connection and try again.",
+  "testimonials.heading": "What our clients say",
+  "testimonials.subheading": "Real feedback from clients we are proud to serve.",
   "about.heading": "About us",
   "about.body": "We help individuals and businesses navigate U.S. taxes with confidence. Our bilingual team brings years of experience in personal and business tax preparation, payroll, bookkeeping, ITIN applications, and business formation.",
   "about.point1": "Bilingual service in English and Spanish",
