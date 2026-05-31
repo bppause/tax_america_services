@@ -419,6 +419,11 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       {/* Text input — hidden once contact form is showing */}
       {phase === 'chat' && (
         <>
+          <div style={{ fontSize: 10, color: 'var(--tax-muted)', textAlign: 'center', padding: '6px 8px 0', lineHeight: 1.4 }}>
+            {es
+              ? 'Este asistente de IA ofrece información general. No constituye asesoramiento legal ni fiscal.'
+              : 'This AI assistant provides general information only and does not constitute legal or tax advice.'}
+          </div>
           <div style={{ display: 'flex', gap: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
             <textarea ref={inputRef} rows={2} value={input}
               onChange={e => setInput(e.target.value)} onKeyDown={onKey}
