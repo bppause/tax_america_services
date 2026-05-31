@@ -2001,18 +2001,25 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen }) {
             background: '#f8fafc', border: '1px solid var(--tax-border)',
           }}>
             <div style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{r.period_label || '—'}</span>
-              {r.start_date && r.end_date && (
-                <span style={{ fontSize: 12, color: 'var(--tax-muted)', marginLeft: 8 }}>
-                  {r.start_date} – {r.end_date}
-                </span>
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>{r.period_label || '—'}</span>
+                {r.period_start && r.period_end && (
+                  <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+                    {r.period_start} – {r.period_end}
+                  </span>
+                )}
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
+                  background: STATUS_BG[status] || '#f3f4f6',
+                  color: STATUS_COLOR[status] || '#6b7280',
+                  textTransform: 'uppercase',
+                }}>{t(`owner.customer.bookkeeping.status.${status}`) || status}</span>
+              </div>
+              {r.task_title && (
+                <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 3 }}>
+                  📋 {r.task_title}
+                </div>
               )}
-              <span style={{
-                marginLeft: 10, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
-                background: STATUS_BG[status] || '#f3f4f6',
-                color: STATUS_COLOR[status] || '#6b7280',
-                textTransform: 'uppercase',
-              }}>{t(`owner.customer.bookkeeping.status.${status}`) || status}</span>
             </div>
             <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                     onClick={() => onOpen(r.id)}>

@@ -12523,7 +12523,7 @@ ${closingHtml}
     if (!customerId) return res.status(400).json({ error: 'customerId required.' });
     const [reportsRes, tokenRes, eligible] = await Promise.all([
       supabase.from('tax_financial_reports')
-        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, task_id, created_at, updated_at')
+        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, task_id, created_at, updated_at, tax_tasks(title)')
         .eq('customer_id', customerId)
         .order('period_end', { ascending: false }),
       supabase.from('tax_report_access_tokens')
@@ -12532,8 +12532,11 @@ ${closingHtml}
       customerHasBookkeepingService(customerId),
     ]);
     if (reportsRes.error) return sendSupabaseError(res, reportsRes.error);
+    const reports = (reportsRes.data || []).map(r => ({
+      ...r, task_title: r.tax_tasks?.title || null, tax_tasks: undefined,
+    }));
     res.json({
-      reports: reportsRes.data || [],
+      reports,
       accessToken: tokenRes.data || null,
       bookkeepingActive: eligible,
     });
