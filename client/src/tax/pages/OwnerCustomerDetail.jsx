@@ -1008,7 +1008,6 @@ function SignatureRequestsSection({ auth, customerId, locale, t }) {
 // same fields via /portal/profile; this endpoint is for owner-side fixes
 // (typos, fill-in before customer sign-in, etc.).
 function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
-  const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({
     businessName: c.business_name || '',
     firstName: c.first_name || '',
@@ -1026,105 +1025,75 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
       country: c.address?.country || 'US',
     },
   });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
+  const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  const doSave = useRef(null);
 
-  const a = c.address || {};
-
-  if (!editing) {
-    return (
-      <section style={{ marginTop: 8 }}>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                  onClick={() => setEditing(true)} style={{ color: 'var(--tax-text)' }}>
-            {t('owner.customer.profile.edit')}
-          </button>
-        </div>
-        <div className="tax-contact-grid">
-          {c.business_name && (
-            <div className="tax-contact-item">
-              <div className="tax-contact-item__label">{t('owner.customers.fieldBusinessName')}</div>
-              <div className="tax-contact-item__value">
-                {c.business_name}
-                {c.first_name && (
-                  <span style={{ display: 'block', fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-                    {t('owner.customer.contactPerson')}: {[c.first_name, c.last_name].filter(Boolean).join(' ')}
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-          <div className="tax-contact-item">
-            <div className="tax-contact-item__label">{t('portal.profile.phone')}</div>
-            <div className="tax-contact-item__value">{c.phone || '—'}</div>
-          </div>
-          <div className="tax-contact-item">
-            <div className="tax-contact-item__label">{t('portal.profile.whatsapp')}</div>
-            <div className="tax-contact-item__value">{c.whatsapp || '—'}</div>
-          </div>
-          <div className="tax-contact-item">
-            <div className="tax-contact-item__label">{t('portal.profile.preferredEmail')}</div>
-            <div className="tax-contact-item__value">{c.preferred_communication_email || '—'}</div>
-          </div>
-          <div className="tax-contact-item">
-            <div className="tax-contact-item__label">{t('portal.profile.address')}</div>
-            <div className="tax-contact-item__value" style={{ fontSize: 13, lineHeight: 1.5 }}>
-              {a.line1 || '—'}
-              {a.line2 && <><br />{a.line2}</>}
-              {(a.city || a.state || a.postal_code) && <><br />{[a.city, a.state, a.postal_code].filter(Boolean).join(', ')}</>}
-              {a.country && <><br />{a.country}</>}
-            </div>
-          </div>
-          <div className="tax-contact-item">
-            <div className="tax-contact-item__label">{t('owner.customer.status')}</div>
-            <div className="tax-contact-item__value">{c.status}</div>
-          </div>
-          <div className="tax-contact-item">
-            <div className="tax-contact-item__label">{t('owner.customer.signedIn')}</div>
-            <div className="tax-contact-item__value">{c.firebase_uid ? t('owner.customer.yes') : t('owner.customer.no')}</div>
-          </div>
-        </div>
-        <p style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 8 }}>
-          {t('owner.customer.profileEditHint')}
-        </p>
-      </section>
-    );
-  }
-
-  const onSave = async (e) => {
-    e?.preventDefault?.();
-    setBusy(true); setErr('');
+  doSave.current = async (overrides) => {
+    const f = overrides ? { ...form, ...overrides } : form;
+    setSaveStatus('saving');
     const address = {};
     for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
-      const v = String(form.addr[k] || '').trim();
+      const v = String(f.addr[k] || '').trim();
       if (v) address[k] = v;
     }
     try {
       await taxApi.adminUpdateCustomer(auth, customerId, {
-        businessName: form.businessName.trim(),
-        firstName: form.firstName.trim(),
-        middleName: form.middleName.trim(),
-        lastName: form.lastName.trim(),
-        phone: form.phone.trim(),
-        whatsapp: form.whatsapp.trim(),
-        preferredCommunicationEmail: form.preferredEmail.trim(),
-        locale: form.locale,
-        status: form.status,
+        businessName: f.businessName.trim(),
+        firstName: f.firstName.trim(),
+        middleName: f.middleName.trim(),
+        lastName: f.lastName.trim(),
+        phone: f.phone.trim(),
+        whatsapp: f.whatsapp.trim(),
+        preferredCommunicationEmail: f.preferredEmail.trim(),
+        locale: f.locale,
+        status: f.status,
         address,
       });
-      setEditing(false);
+      setSaveStatus('saved');
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
       onChange();
-    } catch (e) { setErr(e?.message || ''); }
-    finally { setBusy(false); }
+    } catch (_) { setSaveStatus('error'); }
   };
+
+  const scheduleAutoSave = (overrides) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSave.current(overrides), 1200);
+  };
+
+  const saveNow = (overrides) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    doSave.current(overrides);
+  };
+
+  const setField = (key, val, immediate = false) => {
+    const next = { ...form, [key]: val };
+    setForm(next);
+    immediate ? saveNow(next) : scheduleAutoSave(next);
+  };
+
+  const setAddr = (key, val) => {
+    const next = { ...form, addr: { ...form.addr, [key]: val } };
+    setForm(next);
+    scheduleAutoSave(next);
+  };
+
+  const a = c.address || {};
 
   return (
     <section style={{ marginTop: 8 }}>
-      <form className="tax-form" onSubmit={onSave} noValidate style={{ maxWidth: 720 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, minHeight: 22 }}>
+        {saveStatus === 'saving' && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>Saving…</span>}
+        {saveStatus === 'saved'  && <span style={{ fontSize: 12, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+        {saveStatus === 'error'  && <span style={{ fontSize: 12, color: 'var(--tax-error)' }}>Save failed</span>}
+      </div>
+      <div className="tax-form" style={{ maxWidth: 720 }}>
         <div>
-          <label htmlFor="ocp-biz">{t('owner.customers.fieldBusinessName')}</label>
-          <input id="ocp-biz" type="text" value={form.businessName}
-                 onChange={e => setForm(p => ({ ...p, businessName: e.target.value }))}
+          <label>{t('owner.customers.fieldBusinessName')}</label>
+          <input type="text" value={form.businessName}
+                 onChange={e => setField('businessName', e.target.value)}
                  maxLength={200}
                  placeholder={t('owner.customers.fieldBusinessNamePlaceholder')} />
           <small style={{ color: 'var(--tax-muted)' }}>
@@ -1133,25 +1102,24 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
         </div>
         <div className="tax-form__row3">
           <div>
-            <label htmlFor="ocp-first">{t('owner.customers.fieldFirstName')}</label>
-            <input id="ocp-first" type="text" value={form.firstName}
-                   onChange={e => setForm(p => ({ ...p, firstName: e.target.value }))} maxLength={80} />
+            <label>{t('owner.customers.fieldFirstName')}</label>
+            <input type="text" value={form.firstName}
+                   onChange={e => setField('firstName', e.target.value)} maxLength={80} />
           </div>
           <div>
-            <label htmlFor="ocp-middle">{t('owner.customers.fieldMiddleName')}</label>
-            <input id="ocp-middle" type="text" value={form.middleName}
-                   onChange={e => setForm(p => ({ ...p, middleName: e.target.value }))} maxLength={80} />
+            <label>{t('owner.customers.fieldMiddleName')}</label>
+            <input type="text" value={form.middleName}
+                   onChange={e => setField('middleName', e.target.value)} maxLength={80} />
           </div>
           <div>
-            <label htmlFor="ocp-last">{t('owner.customers.fieldLastName')}</label>
-            <input id="ocp-last" type="text" value={form.lastName}
-                   onChange={e => setForm(p => ({ ...p, lastName: e.target.value }))} maxLength={80} />
+            <label>{t('owner.customers.fieldLastName')}</label>
+            <input type="text" value={form.lastName}
+                   onChange={e => setField('lastName', e.target.value)} maxLength={80} />
           </div>
         </div>
         <div>
-          <label htmlFor="ocp-status">{t('owner.customer.status')}</label>
-          <select id="ocp-status" value={form.status}
-                  onChange={e => setForm(p => ({ ...p, status: e.target.value }))}>
+          <label>{t('owner.customer.status')}</label>
+          <select value={form.status} onChange={e => setField('status', e.target.value, true)}>
             <option value="active">{t('owner.customer.profile.status.active')}</option>
             <option value="paused">{t('owner.customer.profile.status.paused')}</option>
             <option value="archived">{t('owner.customer.profile.status.archived')}</option>
@@ -1159,33 +1127,32 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
         </div>
         <div className="tax-form__row2">
           <div>
-            <label htmlFor="ocp-phone">{t('portal.profile.phone')}</label>
-            <input id="ocp-phone" type="tel" value={form.phone}
-                   onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} maxLength={40} />
+            <label>{t('portal.profile.phone')}</label>
+            <input type="tel" value={form.phone}
+                   onChange={e => setField('phone', e.target.value)} maxLength={40} />
           </div>
           <div>
-            <label htmlFor="ocp-whatsapp">
+            <label>
               {t('portal.profile.whatsapp')}
               <span style={{ color: 'var(--tax-muted)', fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
                 {t('portal.profile.whatsapp.format')}
               </span>
             </label>
-            <input id="ocp-whatsapp" type="tel" value={form.whatsapp}
+            <input type="tel" value={form.whatsapp}
                    placeholder="+14155551234"
-                   onChange={e => setForm(p => ({ ...p, whatsapp: e.target.value }))} maxLength={20} />
+                   onChange={e => setField('whatsapp', e.target.value)} maxLength={20} />
           </div>
         </div>
         <div className="tax-form__row2">
           <div>
-            <label htmlFor="ocp-pref-email">{t('portal.profile.preferredEmail')}</label>
-            <input id="ocp-pref-email" type="email" value={form.preferredEmail}
+            <label>{t('portal.profile.preferredEmail')}</label>
+            <input type="email" value={form.preferredEmail}
                    placeholder={c.email}
-                   onChange={e => setForm(p => ({ ...p, preferredEmail: e.target.value }))} maxLength={200} />
+                   onChange={e => setField('preferredEmail', e.target.value)} maxLength={200} />
           </div>
           <div>
-            <label htmlFor="ocp-locale">{t('owner.customers.fieldLocale')}</label>
-            <select id="ocp-locale" value={form.locale}
-                    onChange={e => setForm(p => ({ ...p, locale: e.target.value }))}>
+            <label>{t('owner.customers.fieldLocale')}</label>
+            <select value={form.locale} onChange={e => setField('locale', e.target.value, true)}>
               <option value="es">Español</option>
               <option value="en">English</option>
             </select>
@@ -1195,35 +1162,24 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
           <legend style={{ padding: '0 8px', fontWeight: 600, fontSize: 14 }}>{t('portal.profile.address')}</legend>
           <div style={{ display: 'grid', gap: 12 }}>
             <input type="text" placeholder={t('portal.profile.address.line1')} value={form.addr.line1}
-                   onChange={e => setForm(p => ({ ...p, addr: { ...p.addr, line1: e.target.value } }))} maxLength={200} />
+                   onChange={e => setAddr('line1', e.target.value)} maxLength={200} />
             <input type="text" placeholder={t('portal.profile.address.line2')} value={form.addr.line2}
-                   onChange={e => setForm(p => ({ ...p, addr: { ...p.addr, line2: e.target.value } }))} maxLength={200} />
+                   onChange={e => setAddr('line2', e.target.value)} maxLength={200} />
             <div className="tax-form__row2">
               <input type="text" placeholder={t('portal.profile.address.city')} value={form.addr.city}
-                     onChange={e => setForm(p => ({ ...p, addr: { ...p.addr, city: e.target.value } }))} maxLength={120} />
+                     onChange={e => setAddr('city', e.target.value)} maxLength={120} />
               <input type="text" placeholder={t('portal.profile.address.state')} value={form.addr.state}
-                     onChange={e => setForm(p => ({ ...p, addr: { ...p.addr, state: e.target.value } }))} maxLength={80} />
+                     onChange={e => setAddr('state', e.target.value)} maxLength={80} />
             </div>
             <div className="tax-form__row2">
               <input type="text" placeholder={t('portal.profile.address.postal')} value={form.addr.postal_code}
-                     onChange={e => setForm(p => ({ ...p, addr: { ...p.addr, postal_code: e.target.value } }))} maxLength={20} />
+                     onChange={e => setAddr('postal_code', e.target.value)} maxLength={20} />
               <input type="text" placeholder={t('portal.profile.address.country')} value={form.addr.country}
-                     onChange={e => setForm(p => ({ ...p, addr: { ...p.addr, country: e.target.value } }))} maxLength={4} />
+                     onChange={e => setAddr('country', e.target.value)} maxLength={4} />
             </div>
           </div>
         </fieldset>
-        {err && <div className="tax-msg tax-msg--error">{err}</div>}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="submit" className="tax-btn tax-btn--primary" disabled={busy}>
-            {busy ? t('lead.submitting') : t('owner.customer.profile.save')}
-          </button>
-          <button type="button" className="tax-btn tax-btn--ghost"
-                  onClick={() => setEditing(false)}
-                  style={{ color: 'var(--tax-text)' }}>
-            {t('owner.customer.profile.cancel')}
-          </button>
-        </div>
-      </form>
+      </div>
     </section>
   );
 }
