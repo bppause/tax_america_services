@@ -394,7 +394,6 @@ export default function OwnerCustomerDetail({ customerId }) {
             auth={auth} customerId={customerId} customer={c}
             refreshNonce={reportDrawer.nonce || 0}
             initialReportId={reportDrawer.initialReportId || null}
-            drawerMode
           />
         )}
       </ReportEditorDrawer>
