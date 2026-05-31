@@ -206,7 +206,11 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   useEffect(() => {
     if (!open || !community?.id) return;
     taxApi.adminListProducts(auth, community.id)
-      .then(d => setProducts((d.products || []).filter(p => p.enabled !== false)))
+      .then(d => {
+        const enabled = (d.products || []).filter(p => p.enabled !== false);
+        setProducts(enabled);
+        setSelected(Object.fromEntries(enabled.map(p => [p.id, true])));
+      })
       .catch(() => {});
   }, [open, community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
