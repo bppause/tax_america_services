@@ -813,6 +813,8 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
     setForm(prev => ({ ...prev, pl_data: { ...prev.pl_data, sections: { ...prev.pl_data.sections, [key]: sec } } }));
   };
   const totals = computeTotals(form.pl_data);
+  const plReadOnly = !!form.pl_data._companyName;
+  const balReadOnly = !!form.balance_data._companyName;
 
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, marginTop: 8, background: '#fafafa', position: 'relative' }}>
@@ -863,12 +865,13 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
 
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pl')}
                  collapsed={plCollapsed} onToggle={() => setPlCollapsed(c => !c)}
-                 action={
-                   <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                           onClick={e => { e.stopPropagation(); onResetPl(); }} disabled={busy}
-                           style={{ fontSize: 11, color: '#b91c1c' }}>
-                     {t('owner.customer.bookkeeping.action.resetPl')}
-                   </button>
+                 action={plReadOnly
+                   ? <span style={{ fontSize: 11, color: '#0f766e', fontWeight: 600, background: '#ccfbf1', padding: '2px 8px', borderRadius: 4 }}>📊 {t('owner.customer.bookkeeping.form.xlsxReadOnly')}</span>
+                   : <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                             onClick={e => { e.stopPropagation(); onResetPl(); }} disabled={busy}
+                             style={{ fontSize: 11, color: '#b91c1c' }}>
+                       {t('owner.customer.bookkeeping.action.resetPl')}
+                     </button>
                  }>
         {SECTION_KEYS.map(sectionKey => (
           <SectionEditor key={sectionKey} t={t}
@@ -876,23 +879,30 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
             title={t(SECTION_TITLE_KEY[sectionKey])}
             section={form.pl_data.sections[sectionKey]}
             onChange={s => setSection(sectionKey, s)}
+            readOnly={plReadOnly}
           />
         ))}
       </FormGroup>
 
       <FormGroup title={t('owner.customer.bookkeeping.form.group.balance')}
                  collapsed={balCollapsed} onToggle={() => setBalCollapsed(c => !c)}
-                 action={
-                   <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                           onClick={e => { e.stopPropagation(); onResetBalance(); }} disabled={busy}
-                           style={{ fontSize: 11, color: '#b91c1c' }}>
-                     {t('owner.customer.bookkeeping.action.resetBalance')}
-                   </button>
+                 action={balReadOnly
+                   ? <span style={{ fontSize: 11, color: '#0f766e', fontWeight: 600, background: '#ccfbf1', padding: '2px 8px', borderRadius: 4 }}>📊 {t('owner.customer.bookkeeping.form.xlsxReadOnly')}</span>
+                   : <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                             onClick={e => { e.stopPropagation(); onResetBalance(); }} disabled={busy}
+                             style={{ fontSize: 11, color: '#b91c1c' }}>
+                       {t('owner.customer.bookkeeping.action.resetBalance')}
+                     </button>
                  }>
         <NumericGrid>
           {BALANCE_KEYS.map(k => (
             <Field key={k} label={t(`owner.customer.bookkeeping.balance.${k}`)}>
-              <NumericInput value={form.balance_data[k]} onChange={v => setForm(prev => ({ ...prev, balance_data: { ...prev.balance_data, [k]: v } }))} />
+              {balReadOnly
+                ? <div style={{ padding: '8px 10px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: 14, fontVariantNumeric: 'tabular-nums', color: '#0f172a' }}>
+                    {form.balance_data[k] != null && form.balance_data[k] !== '' ? `$${Number(form.balance_data[k]).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                  </div>
+                : <NumericInput value={form.balance_data[k]} onChange={v => setForm(prev => ({ ...prev, balance_data: { ...prev.balance_data, [k]: v } }))} />
+              }
             </Field>
           ))}
         </NumericGrid>
@@ -929,7 +939,7 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
   );
 }
 
-function SectionEditor({ t, sectionKey, title, section, onChange }) {
+function SectionEditor({ t, sectionKey, title, section, onChange, readOnly }) {
   const [collapsed, setCollapsed] = useState(false);
   const setGroup = (idx, g) => onChange({ ...section, groups: section.groups.map((x, i) => i === idx ? g : x) });
   const addGroup = () => onChange({ ...section, groups: [...section.groups, { name: '', total: null, items: [] }] });
@@ -941,24 +951,33 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
     const declared = g.total != null && g.total !== '' ? num(g.total) : null;
     return declared != null && (g.items || []).length > 0 && Math.abs(declared - itemSum) > 0.5;
   });
+  const hasItems = section.groups.some(g => (g.items || []).length > 0);
+  // For read-only xlsx imports: show green ✓ if all group totals match their items, red ✗ if any don't.
+  const validationBadge = readOnly && hasItems
+    ? sectionHasMismatch
+      ? <span style={{ fontSize: 11, color: '#b91c1c', fontWeight: 700, background: '#fee2e2', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✗ {t('owner.customer.bookkeeping.section.mismatch')}</span>
+      : <span style={{ fontSize: 11, color: '#15803d', fontWeight: 700, background: '#dcfce7', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>✓ {t('owner.customer.bookkeeping.section.valid')}</span>
+    : null;
   return (
-    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
+    <div style={{ marginTop: 10, border: `1px solid ${sectionHasMismatch ? (readOnly ? '#ef4444' : '#f59e0b') : '#e2e8f0'}`, borderRadius: 8, overflow: 'hidden', background: '#fff' }}>
       <div
         style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           padding: '9px 12px', cursor: 'pointer', userSelect: 'none',
-          background: sectionHasMismatch ? '#fef3c7' : '#fafafa',
-          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? '#f59e0b' : '#e2e8f0'}` }}
+          background: sectionHasMismatch ? (readOnly ? '#fee2e2' : '#fef3c7') : '#fafafa',
+          borderBottom: collapsed ? 'none' : `1px solid ${sectionHasMismatch ? (readOnly ? '#ef4444' : '#f59e0b') : '#e2e8f0'}` }}
         onClick={() => setCollapsed(c => !c)}
       >
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span style={{ fontSize: 14, color: '#64748b', lineHeight: 1, width: 14, textAlign: 'center' }}>{collapsed ? '▶' : '▼'}</span>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#0f172a', textTransform: 'uppercase', letterSpacing: '.04em' }}>{title}</span>
-          {sectionHasMismatch && collapsed && <span style={{ color: '#b45309', fontSize: 14, lineHeight: 1 }}>⚠</span>}
+          {collapsed && validationBadge}
+          {!readOnly && sectionHasMismatch && collapsed && <span style={{ color: '#b45309', fontSize: 14, lineHeight: 1 }}>⚠</span>}
         </div>
         <span style={{ fontSize: 13, color: '#475569', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(sectionTotal)}</span>
       </div>
       {!collapsed && (
         <div style={{ padding: 12 }}>
+          {!collapsed && validationBadge && <div style={{ marginBottom: 8 }}>{validationBadge}</div>}
           {section.groups.length === 0 && (
             <div style={{ fontSize: 12, color: 'var(--tax-muted)', fontStyle: 'italic', padding: '4px 0' }}>
               {t('owner.customer.bookkeeping.section.empty')}
@@ -967,19 +986,22 @@ function SectionEditor({ t, sectionKey, title, section, onChange }) {
           {section.groups.map((g, idx) => (
             <GroupEditor key={idx} t={t} group={g}
                          onChange={ng => setGroup(idx, ng)}
-                         onDelete={() => removeGroup(idx)} />
+                         onDelete={() => removeGroup(idx)}
+                         readOnly={readOnly} />
           ))}
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addGroup}
-                  style={{ marginTop: 6, fontSize: 12 }}>
-            + {t('owner.customer.bookkeeping.section.addGroup')}
-          </button>
+          {!readOnly && (
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addGroup}
+                    style={{ marginTop: 6, fontSize: 12 }}>
+              + {t('owner.customer.bookkeeping.section.addGroup')}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function GroupEditor({ t, group, onChange, onDelete }) {
+function GroupEditor({ t, group, onChange, onDelete, readOnly }) {
   const [collapsed, setCollapsed] = useState(false);
   const setItem = (idx, item) => onChange({ ...group, items: group.items.map((x, i) => i === idx ? item : x) });
   const addItem = () => onChange({ ...group, items: [...group.items, { name: '', amount: '' }] });
@@ -987,60 +1009,91 @@ function GroupEditor({ t, group, onChange, onDelete }) {
   const itemSum = group.items.reduce((s, i) => s + num(i.amount), 0);
   const declaredTotal = group.total != null && group.total !== '' ? num(group.total) : null;
   const mismatch = declaredTotal != null && group.items.length > 0 && Math.abs(declaredTotal - itemSum) > 0.5;
+  const match = !mismatch && declaredTotal != null && group.items.length > 0;
+  const borderColor = mismatch ? (readOnly ? '#ef4444' : '#f59e0b') : match ? '#16a34a' : '#e2e8f0';
+  const headerBg  = mismatch ? (readOnly ? '#fee2e2' : '#fef3c7') : match ? '#f0fdf4' : '#f8fafc';
   return (
-    <div style={{ marginTop: 8, border: `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}`, borderRadius: 6, overflow: 'hidden' }}>
+    <div style={{ marginTop: 8, border: `1px solid ${borderColor}`, borderRadius: 6, overflow: 'hidden' }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 10px',
-                    background: mismatch ? '#fef3c7' : '#f8fafc',
-                    borderBottom: collapsed ? 'none' : `1px solid ${mismatch ? '#f59e0b' : '#e2e8f0'}` }}>
+                    background: headerBg,
+                    borderBottom: collapsed ? 'none' : `1px solid ${borderColor}` }}>
         <button type="button" onClick={() => setCollapsed(c => !c)}
                 style={{ background: 'none', border: 0, cursor: 'pointer', padding: '0 2px',
                          color: '#64748b', fontSize: 13, lineHeight: 1, flexShrink: 0, width: 16 }}>
           {collapsed ? '▶' : '▼'}
         </button>
-        <input type="text" value={group.name} onChange={e => onChange({ ...group, name: e.target.value })}
-               placeholder={t('owner.customer.bookkeeping.group.namePlaceholder')}
-               style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
-               onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#f59e0b' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
-               onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
-        <MoneyInput value={group.total ?? ''}
-                    onChange={v => onChange({ ...group, total: v })}
-                    placeholder={fmtInputNum(itemSum) || '0.00'}
-                    title={t('owner.customer.bookkeeping.group.totalHint')}
-                    width={110}
-                    borderColor={mismatch ? '#f59e0b' : undefined}
-                    extraInputStyle={{ fontWeight: 700 }} />
-        {mismatch && (
+        {readOnly
+          ? <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: '#0f172a', padding: '4px 0' }}>{group.name || '—'}</span>
+          : <input type="text" value={group.name} onChange={e => onChange({ ...group, name: e.target.value })}
+                   placeholder={t('owner.customer.bookkeeping.group.namePlaceholder')}
+                   style={{ ...inputStyle, flex: 1, fontWeight: 600, background: 'transparent', border: '1px solid transparent' }}
+                   onFocus={e => { e.target.style.border = `1px solid ${mismatch ? '#f59e0b' : 'var(--tax-border)'}`; e.target.style.background = '#fff'; }}
+                   onBlur={e => { e.target.style.border = '1px solid transparent'; e.target.style.background = 'transparent'; }} />
+        }
+        {readOnly
+          ? <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#0f172a', minWidth: 90, textAlign: 'right' }}>{fmtMoney(declaredTotal ?? itemSum)}</span>
+          : <MoneyInput value={group.total ?? ''}
+                        onChange={v => onChange({ ...group, total: v })}
+                        placeholder={fmtInputNum(itemSum) || '0.00'}
+                        title={t('owner.customer.bookkeeping.group.totalHint')}
+                        width={110}
+                        borderColor={mismatch ? '#f59e0b' : undefined}
+                        extraInputStyle={{ fontWeight: 700 }} />
+        }
+        {match && <span style={{ color: '#16a34a', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>✓</span>}
+        {mismatch && !readOnly && (
           <span title={t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
                 style={{ color: '#b45309', fontSize: 15, flexShrink: 0, lineHeight: 1 }}>⚠</span>
         )}
-        <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
-                style={{ background: 'transparent', border: 0, color: '#b91c1c', cursor: 'pointer', fontSize: 18, padding: '0 2px', flexShrink: 0 }}>×</button>
+        {mismatch && readOnly && (
+          <span style={{ color: '#b91c1c', fontSize: 13, flexShrink: 0, lineHeight: 1 }}>✗</span>
+        )}
+        {!readOnly && (
+          <button type="button" onClick={onDelete} title={t('owner.customer.bookkeeping.action.delete')}
+                  style={{ background: 'transparent', border: 0, color: '#b91c1c', cursor: 'pointer', fontSize: 18, padding: '0 2px', flexShrink: 0 }}>×</button>
+        )}
       </div>
       {!collapsed && (
         <div style={{ padding: '8px 10px', background: '#fff' }}>
           {mismatch && (
-            <div style={{ marginBottom: 6, padding: '5px 8px', background: '#fef3c7', borderRadius: 4, fontSize: 11, color: '#b45309', fontWeight: 600 }}>
-              ⚠ {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
+            <div style={{ marginBottom: 6, padding: '5px 8px', background: readOnly ? '#fee2e2' : '#fef3c7', borderRadius: 4, fontSize: 11, color: readOnly ? '#b91c1c' : '#b45309', fontWeight: 600 }}>
+              {readOnly ? '✗' : '⚠'} {t('owner.customer.bookkeeping.group.mismatch', { sum: fmtMoney(itemSum), total: fmtMoney(declaredTotal) })}
             </div>
           )}
           {group.items.length > 0 && (
             <div style={{ display: 'grid', gap: 4 }}>
               {group.items.map((it, idx) => (
-                <ItemRow key={idx} t={t} item={it} onChange={i => setItem(idx, i)} onDelete={() => removeItem(idx)} />
+                <ItemRow key={idx} t={t} item={it} onChange={i => setItem(idx, i)} onDelete={() => removeItem(idx)} readOnly={readOnly} />
               ))}
             </div>
           )}
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addItem}
-                  style={{ marginTop: 6, fontSize: 11 }}>
-            + {t('owner.customer.bookkeeping.group.addItem')}
-          </button>
+          {!readOnly && (
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={addItem}
+                    style={{ marginTop: 6, fontSize: 11 }}>
+              + {t('owner.customer.bookkeeping.group.addItem')}
+            </button>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ItemRow({ t, item, onChange, onDelete }) {
+function ItemRow({ t, item, onChange, onDelete, readOnly }) {
+  if (readOnly) {
+    return (
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '2px 0' }}>
+        <span style={{ flex: 1, fontSize: 13, color: '#374151' }}>{item.name || '—'}</span>
+        <span style={{ fontSize: 13, fontVariantNumeric: 'tabular-nums', color: '#475569', minWidth: 90, textAlign: 'right' }}>{fmtMoney(Number(item.amount) || 0)}</span>
+        {item.rollup && (
+          <span title={t('owner.customer.bookkeeping.item.rollup')}
+                style={{ fontSize: 10, fontWeight: 700, color: '#64748b', padding: '2px 6px', background: '#f1f5f9', borderRadius: 4, textTransform: 'uppercase', letterSpacing: '.04em' }}>
+            ∑
+          </span>
+        )}
+      </div>
+    );
+  }
   return (
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
       <input type="text" value={item.name} onChange={e => onChange({ ...item, name: e.target.value })}
