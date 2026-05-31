@@ -167,7 +167,7 @@ const TEMPLATES_BY_SLUG = {
       description: { en: 'Capture H1 P&L + Balance Sheet in the customer record, review the numbers, and email the dashboard. Due July 31.',
                      es: 'Capturar P&L + Balance del H1 en la ficha del cliente, revisar los números y enviar el panel al cliente. Vence 31 de julio.' },
       cadence_kind: 'annual',
-      anchor_rule:  { type: 'annual', month: 7, day: 31, taxYearOffset: 0 },
+      anchor_rule:  { type: 'annual', month: 7, day: 31, taxYearOffset: 0, periodLabelPrefix: 'H1' },
       default_priority: 'high',
     },
     {
@@ -176,7 +176,7 @@ const TEMPLATES_BY_SLUG = {
       description: { en: 'Capture H2 P&L + Balance Sheet in the customer record, review the numbers, and email the dashboard. Due January 31.',
                      es: 'Capturar P&L + Balance del H2 en la ficha del cliente, revisar los números y enviar el panel al cliente. Vence 31 de enero.' },
       cadence_kind: 'annual',
-      anchor_rule:  { type: 'annual', month: 1, day: 31 },
+      anchor_rule:  { type: 'annual', month: 1, day: 31, periodLabelPrefix: 'H2' },
       default_priority: 'high',
     },
   ],

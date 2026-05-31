@@ -278,7 +278,7 @@ function fmtInputNum(n) {
 function fmtDate(iso, locale) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(locale === 'en' ? 'en-US' : 'es-ES', { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(locale === 'en' ? 'en-US' : 'es-ES', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 const STATUS_STYLE = {

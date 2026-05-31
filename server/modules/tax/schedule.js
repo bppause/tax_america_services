@@ -222,11 +222,12 @@ function annual(rule, refIso, refYear, limit, lang) {
     const due = ymd(year, p.month, day);
     if (due >= refIso) {
       const taxYear = year + taxYearOffset;
+      const prefix = rule.periodLabelPrefix;
       out.push({
         dueDate: due,
         periodStart: ymd(taxYear, 1, 1),
         periodEnd: ymd(taxYear, 12, 31),
-        periodLabel: annualLabel(taxYear, lang),
+        periodLabel: prefix ? `${prefix} ${taxYear}` : annualLabel(taxYear, lang),
       });
     }
   }

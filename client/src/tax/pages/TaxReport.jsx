@@ -122,7 +122,7 @@ function fmtDate(iso, lang) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'es-ES',
-    { year: 'numeric', month: 'short', day: 'numeric' });
+    { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 function readParsedHashReport() {
