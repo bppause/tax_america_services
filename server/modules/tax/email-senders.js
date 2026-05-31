@@ -66,7 +66,7 @@ module.exports = function createTaxSenders(deps) {
   function brandedEmailLayout({ community, lang, innerHtml }) {
     const base = appBase();
     const slug = community?.id || '';
-    const websiteUrl = base ? `${base}/tax/${encodeURIComponent(slug)}` : (slug ? `/tax/${encodeURIComponent(slug)}` : '#');
+    const websiteUrl = base ? `${base}/tax/${encodeURIComponent(slug)}?lang=${lang}` : (slug ? `/tax/${encodeURIComponent(slug)}?lang=${lang}` : '#');
     // logo_url is typically a relative path like /tax/...png; prefix
     // with base so it resolves inside the email client.
     let logoUrl = String(community?.logo_url || '').trim();
@@ -312,7 +312,7 @@ module.exports = function createTaxSenders(deps) {
       const descEn  = p?.description_i18n?.en?.value || '';
       const descEs  = p?.description_i18n?.es?.value || '';
       const desc    = lang === 'en' ? descEn : descEs;
-      const href    = `${siteBase}#service-${encodeURIComponent(slug)}`;
+      const href    = `${siteBase}?lang=${lang}#service-${encodeURIComponent(slug)}`;
       return { label, desc, href };
     });
 

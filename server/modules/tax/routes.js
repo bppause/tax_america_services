@@ -1608,32 +1608,33 @@ module.exports = function createTaxRouter(deps) {
       ? `Más información y chatea con nuestro asistente de IA ${EMOJI_AI}`
       : `Learn More & Chat with our AI assistant ${EMOJI_AI}`;
 
+    const langParam = `?lang=${lang}`;
     const serviceLines = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
-      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const pageUrl = `${publicUrl}${langParam}#service-${serviceSlug}`;
       const emoji = categoryEmoji(p.category);
       return `${emoji} *${name}*\n${desc}\n${ctaLabel} ${pageUrl}`;
     }).join('\n\n');
 
     const waDigits = (community.whatsapp || '').replace(/\D/g, '');
     const footerEn = [
-      `${EMOJI_AI} *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}`,
+      `${EMOJI_AI} *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}${langParam}`,
       community.phone ? `📞 Phone: ${community.phone}` : '',
       waDigits ? `💬 WhatsApp: https://wa.me/${waDigits}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}`,
+      `🌐 ${publicUrl}${langParam}`,
       `📄 Services portfolio: ${brochureUrl}?lang=en`,
       `We are happy to answer any questions with no obligation. Looking forward to hearing from you!\n\nWarm regards,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
 
     const footerEs = [
-      `${EMOJI_AI} *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}`,
+      `${EMOJI_AI} *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}${langParam}`,
       community.phone ? `📞 Teléfono: ${community.phone}` : '',
       waDigits ? `💬 WhatsApp: https://wa.me/${waDigits}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}`,
+      `🌐 ${publicUrl}${langParam}`,
       `📄 Portafolio de servicios: ${brochureUrl}?lang=es`,
       `Estamos felices de responder cualquier pregunta sin ningún compromiso. ¡Esperamos saber de usted!\n\nSaludos cordiales,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
@@ -1676,7 +1677,7 @@ module.exports = function createTaxRouter(deps) {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
-      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const pageUrl = `${publicUrl}${langParam}#service-${serviceSlug}`;
       const emoji = categoryEmoji(p.category);
       return `<div style="margin-bottom:20px;padding:14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0">
   <p style="margin:0 0 6px;font-size:16px;font-weight:700">${emoji} ${escHtml(name)}</p>
@@ -1693,7 +1694,7 @@ module.exports = function createTaxRouter(deps) {
       community.phone ? (lang === 'es' ? `📞 Teléfono: ${community.phone}` : `📞 Phone: ${community.phone}`) : '',
       waDigits ? `💬 WhatsApp: <a href="https://wa.me/${waDigits}">https://wa.me/${waDigits}</a>` : '',
       community.contact_email ? `📧 Email: <a href="mailto:${community.contact_email}">${community.contact_email}</a>` : '',
-      `🌐 <a href="${publicUrl}">${publicUrl}</a>`,
+      `🌐 <a href="${publicUrl}${langParam}">${publicUrl}</a>`,
       `📄 <a href="${brochureUrl}?lang=${lang}">${lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio'}</a>`,
     ].filter(Boolean);
 
@@ -1785,31 +1786,32 @@ ${closingHtml}
     const headerEn2 = `Hi ${firstName ? firstName + ',' : 'there,'} greetings from *${bizName}*!\n\nWe are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.\n\nOur services:\n`;
     const headerEs2 = `Hola${firstName ? ' ' + firstName + ',' : ','} ¡saludos de parte de *${bizName}*!\n\nSomos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.\n\nNuestros servicios:\n`;
 
+    const langParam2 = `?lang=${lang}`;
     const svcLines = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
-      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const pageUrl = `${publicUrl}${langParam2}#service-${serviceSlug}`;
       const emoji = categoryEmoji2(p.category);
       return `${emoji} *${name}*\n${desc}\n${ctaLabel2} ${pageUrl}`;
     }).join('\n\n');
 
     const waDigits2 = (community.whatsapp || '').replace(/\D/g, '');
     const footerEn2 = [
-      `🤖 *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}`,
+      `🤖 *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}${langParam2}`,
       community.phone ? `📞 Phone: ${community.phone}` : '',
       waDigits2 ? `💬 WhatsApp: https://wa.me/${waDigits2}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}`,
+      `🌐 ${publicUrl}${langParam2}`,
       `📄 Services portfolio: ${brochureUrl}?lang=en`,
       `We are happy to answer any questions with no obligation. Looking forward to hearing from you!\n\nWarm regards,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
     const footerEs2 = [
-      `🤖 *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}`,
+      `🤖 *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}${langParam2}`,
       community.phone ? `📞 Teléfono: ${community.phone}` : '',
       waDigits2 ? `💬 WhatsApp: https://wa.me/${waDigits2}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}`,
+      `🌐 ${publicUrl}${langParam2}`,
       `📄 Portafolio de servicios: ${brochureUrl}?lang=es`,
       `Estamos felices de responder cualquier pregunta sin ningún compromiso. ¡Esperamos saber de usted!\n\nSaludos cordiales,\n*${bizName}*`,
     ].filter(Boolean).join('\n');

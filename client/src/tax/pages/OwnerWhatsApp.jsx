@@ -86,8 +86,9 @@ function buildMessage(locale, settings, products, publicUrl, pdfUrl, template, s
     : (settings.name_en || settings.name || '');
   const tpl = (field) => interpolate(template[locale]?.[field] ?? DEFAULTS[locale][field], name);
   const svcLabel   = locale === 'es' ? 'Nuestros servicios:' : 'Our services:';
-  const svcBlock   = buildServicesBlock(locale, products, selectedIds).replace(/\{SITE\}/g, publicUrl);
-  const ctaBlock   = buildContactBlock(locale, settings).replace(/\{SITE\}/g, publicUrl);
+  const langUrl    = `${publicUrl}?lang=${locale}`;
+  const svcBlock   = buildServicesBlock(locale, products, selectedIds).replace(/\{SITE\}/g, langUrl);
+  const ctaBlock   = buildContactBlock(locale, settings).replace(/\{SITE\}/g, langUrl);
   const aiCta      = buildAiCtaBlock(locale, publicUrl);
   const brochLine  = locale === 'es'
     ? `📄 Portafolio de servicios: ${pdfUrl}`
@@ -216,9 +217,10 @@ export default function OwnerWhatsApp() {
 
   const hasServices = enabledProducts.length > 0;
   const hasSelected = selectedIds.size > 0;
-  const svcPreview  = settings ? buildServicesBlock(msgLocale, enabledProducts, selectedIds).replace(/\{SITE\}/g, publicUrl) : '';
-  const aiCtaPreview = buildAiCtaBlock(msgLocale, publicUrl);
-  const ctaPreview  = settings ? buildContactBlock(msgLocale, settings).replace(/\{SITE\}/g, publicUrl) : '';
+  const langUrlPreview = `${publicUrl}?lang=${msgLocale}`;
+  const svcPreview  = settings ? buildServicesBlock(msgLocale, enabledProducts, selectedIds).replace(/\{SITE\}/g, langUrlPreview) : '';
+  const aiCtaPreview = buildAiCtaBlock(msgLocale, langUrlPreview);
+  const ctaPreview  = settings ? buildContactBlock(msgLocale, settings).replace(/\{SITE\}/g, langUrlPreview) : '';
   const brochLine   = msgLocale === 'es' ? `📄 Portafolio de servicios: ${pdfUrl}` : `📄 Services portfolio: ${pdfUrl}`;
 
   const message = settings && hasSelected

@@ -118,8 +118,15 @@ export default function Landing({ communitySlug }) {
 
   // Honor the community's default_locale on first load when the visitor has no
   // saved preference. Subsequent visits with a saved locale skip this.
+  // Also honour an explicit ?lang= query param (used in outbound email/WhatsApp
+  // links so recipients land in the right language regardless of their browser).
   useEffect(() => {
     if (state.kind !== 'ready') return;
+    const urlLang = new URLSearchParams(window.location.search).get('lang');
+    if (urlLang === 'en' || urlLang === 'es') {
+      if (urlLang !== locale) setLocale(urlLang);
+      return;
+    }
     const dl = state.data?.community?.default_locale;
     if ((dl === 'en' || dl === 'es') && !hasSavedLocale() && dl !== locale) {
       setLocale(dl);
