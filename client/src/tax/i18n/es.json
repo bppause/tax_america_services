@@ -933,6 +933,8 @@
   "owner.customer.inquiry.language": "Idioma",
   "owner.customer.inquiry.channel": "Enviar por",
   "owner.customer.inquiry.noWhatsapp": "No hay número de WhatsApp registrado — agréguelo en la sección de Perfil.",
+  "owner.customer.inquiry.enterWhatsapp": "Ingrese el número de WhatsApp para este contacto",
+  "owner.customer.inquiry.provideWhatsapp": "Ingrese un número de WhatsApp arriba para continuar.",
   "owner.customer.inquiry.services": "Seleccionar servicios a incluir",
   "owner.customer.inquiry.selectAll": "Seleccionar todos",
   "owner.customer.inquiry.clearAll": "Limpiar",

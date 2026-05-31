@@ -1554,6 +1554,7 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
     const channel = body.channel === 'whatsapp' ? 'whatsapp' : 'email';
     const productIds = Array.isArray(body.productIds) ? body.productIds.map(String) : [];
+    const waOverride = body.waOverride ? String(body.waOverride).trim() : '';
     if (!productIds.length) return res.status(400).json({ error: 'productIds required' });
 
     const [{ data: cust, error: cErr }, { data: community, error: comErr }] = await Promise.all([
@@ -1572,8 +1573,14 @@ module.exports = function createTaxRouter(deps) {
     if (cErr || !cust) return res.status(404).json({ error: 'Customer not found' });
     if (comErr || !community) return res.status(404).json({ error: 'Community not found' });
 
-    if (channel === 'whatsapp' && !cust.whatsapp) {
-      return res.status(400).json({ error: 'Customer has no WhatsApp number on file' });
+    const effectiveWa = cust.whatsapp || waOverride;
+    if (channel === 'whatsapp' && !effectiveWa) {
+      return res.status(400).json({ error: 'whatsapp_required',
+        message: 'Provide a WhatsApp number for this contact.' });
+    }
+    if (channel === 'whatsapp' && !/^\+[1-9]\d{6,14}$/.test(effectiveWa)) {
+      return res.status(400).json({ error: 'whatsapp_invalid',
+        message: 'WhatsApp must be E.164 format, e.g. +14155551234' });
     }
 
     const { data: products } = await supabase.from('tax_products')
@@ -1634,7 +1641,7 @@ module.exports = function createTaxRouter(deps) {
     const plainText = `${header}\n${serviceLines}\n\n${footer}`;
 
     if (channel === 'whatsapp') {
-      const waNumber = (cust.whatsapp || '').replace(/\D/g, '');
+      const waNumber = effectiveWa.replace(/\D/g, '');
       const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(plainText)}`;
       return res.json({ ok: true, channel: 'whatsapp', waUrl });
     }

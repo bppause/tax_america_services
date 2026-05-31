@@ -197,11 +197,18 @@ export default function OwnerCustomerDetail({ customerId }) {
 // locale but can be overridden.
 function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const [products, setProducts] = useState([]);
-  const [selected, setSelected] = useState({});   // { productId: true }
+  const [selected, setSelected] = useState({});
   const [channel, setChannel] = useState('email');
   const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
-  const [status, setStatus] = useState('idle');    // 'idle'|'sending'|'sent'|error string
+  const [status, setStatus] = useState('idle');
   const [open, setOpen] = useState(false);
+  const [waOverride, setWaOverride] = useState('');  // typed when customer has no number
+
+  const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
+  const normalizeWa = (raw) => '+' + String(raw || '').replace(/^\+/, '').replace(/\D+/g, '');
+
+  const effectiveWa = customer.whatsapp || (waOverride.trim() ? normalizeWa(waOverride) : '');
+  const waValid = !waOverride.trim() || WHATSAPP_E164.test(normalizeWa(waOverride));
 
   useEffect(() => {
     if (!open || !community?.id) return;
@@ -221,14 +228,15 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
 
   const onSend = async () => {
     if (!selectedIds.length) return;
-    if (channel === 'whatsapp' && !customer.whatsapp) {
-      setStatus('Customer has no WhatsApp number on file. Add it in the Profile section first.');
-      return;
+    if (channel === 'whatsapp') {
+      if (!effectiveWa) { setStatus(t('owner.customer.inquiry.provideWhatsapp')); return; }
+      if (!WHATSAPP_E164.test(effectiveWa)) { setStatus(t('portal.profile.whatsapp.invalid')); return; }
     }
     setStatus('sending');
     try {
       const r = await taxApi.adminSendServiceInquiry(auth, customer.id, {
         productIds: selectedIds, channel, lang,
+        waOverride: channel === 'whatsapp' && !customer.whatsapp ? effectiveWa : undefined,
       });
       if (channel === 'whatsapp' && r.waUrl) {
         window.open(r.waUrl, '_blank', 'noopener');
@@ -297,15 +305,34 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
                   </button>
                 ))}
               </div>
-              {channel === 'whatsapp' && !customer.whatsapp && (
-                <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--tax-error)' }}>
-                  {t('owner.customer.inquiry.noWhatsapp')}
-                </p>
-              )}
               {channel === 'whatsapp' && customer.whatsapp && (
                 <p style={{ margin: '6px 0 0', fontSize: 12, color: 'var(--tax-muted)' }}>
                   → {customer.whatsapp}
                 </p>
+              )}
+              {channel === 'whatsapp' && !customer.whatsapp && (
+                <div style={{ marginTop: 8 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+                    {t('owner.customer.inquiry.enterWhatsapp')}
+                  </label>
+                  <input type="tel" value={waOverride} placeholder="+14155551234"
+                         onChange={e => { setWaOverride(e.target.value); setStatus('idle'); }}
+                         maxLength={20}
+                         style={{
+                           padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 180,
+                           border: `1px solid ${waOverride && !waValid ? 'var(--tax-error)' : 'var(--tax-border)'}`,
+                         }} />
+                  {waOverride && !waValid && (
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>
+                      {t('portal.profile.whatsapp.invalid')}
+                    </p>
+                  )}
+                  {waOverride && waValid && (
+                    <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                      → {normalizeWa(waOverride)}
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>
