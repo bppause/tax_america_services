@@ -1966,6 +1966,34 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t, asMenuItem }) 
 // Phase: per-customer task list. Inline-edit status, add new tasks, mark
 // complete. Filters down to this customer's tasks via customerId on the
 // /admin/tasks endpoint.
+function CompletedTasksBucket({ tasks, renderTask, t }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0',
+                textAlign: 'left',
+              }}>
+        <span style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{open ? '▾' : '▸'}</span>
+        <span style={{ fontSize: 13, color: 'var(--tax-muted)', fontWeight: 600 }}>
+          ✓ Completed
+        </span>
+        <span style={{
+          fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 10,
+          background: '#e5e7eb', color: '#6b7280',
+        }}>{tasks.length}</span>
+      </button>
+      {open && (
+        <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+          {tasks.map(renderTask)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t }) {
   const [tasks, setTasks] = useState(null);
   const [statuses, setStatuses] = useState([]);
@@ -2030,88 +2058,103 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
       )}
 
       {tasks === null ? <p style={{ color: 'var(--tax-muted)' }}>{t('loading')}</p>
-        : tasks.length === 0
-          ? <p style={{ color: 'var(--tax-muted)' }}>{t('owner.customer.tasks.empty')}</p>
-          : <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
-              {tasks.map(task => {
-                const status = statuses.find(s => s.key === task.status_key);
-                const statusBg = status?.color || '#9ca3af';
-                const product = task.product;
-                const assignee = task.assignee;
-                const overdue = task.due_date && task.due_date < new Date().toISOString().slice(0, 10) && !task.completed_at;
-                const editHref = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
-                return (
-                  <TaskHover key={task.id} task={task} statuses={statuses}
-                             community={community} locale={locale} t={t}>
-                    <div className="tax-contact-item"
-                         style={{ display: 'grid', gap: 6 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <a href={editHref}
-                           style={{
-                             minWidth: 0, flex: 1, textDecoration: 'none',
-                             color: 'inherit', cursor: 'pointer',
-                           }}>
-                          <div style={{ fontWeight: 600 }}>{task.title}</div>
-                          <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)', display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                            {product && <span>{pickI18n(product.name_i18n, locale).value || product.slug}</span>}
-                            {assignee && <span>· {(assignee.name || assignee.email)}</span>}
-                            {task.due_date && (
-                              <span style={overdue ? { color: '#b91c1c', fontWeight: 600 } : undefined}>
-                                · {t('owner.tasks.due')}: {task.due_date}{overdue ? ` (${t('owner.tasks.overdue')})` : ''}
-                              </span>
-                            )}
-                            {task.priority !== 'normal' && <span>· {t(`owner.tasks.priority.${task.priority}`)}</span>}
-                          </div>
-                        </a>
-                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                          {/^Publish\s+H[12]\b.*Bookkeeping report|Publicar\s+informe\s+contable\s+H[12]\b/i.test(task.title || '') && !task.completed_at && (
-                            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      try {
-                                        const d = await taxApi.adminOpenReportForTask(auth, task.id);
-                                        if (d.reportId) {
-                                          setReportDrawer({
-                                            taskTitle: `${task.title}`,
-                                            initialReportId: d.reportId,
-                                            nonce: Date.now(),
-                                          });
-                                        }
-                                      } catch (err) { alert(err?.message || 'Could not open report editor.'); }
-                                    }}>
-                              {t('owner.customer.bookkeeping.taskAction.open')}
-                            </button>
+        : (() => {
+            const open = tasks.filter(t => !t.completed_at);
+            const done = tasks.filter(t => t.completed_at);
+            const renderTask = (task) => {
+              const status = statuses.find(s => s.key === task.status_key);
+              const statusBg = status?.color || '#9ca3af';
+              const product = task.product;
+              const assignee = task.assignee;
+              const overdue = task.due_date && task.due_date < new Date().toISOString().slice(0, 10) && !task.completed_at;
+              const editHref = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
+              return (
+                <TaskHover key={task.id} task={task} statuses={statuses}
+                           community={community} locale={locale} t={t}>
+                  <div className="tax-contact-item"
+                       style={{ display: 'grid', gap: 6, opacity: task.completed_at ? 0.6 : 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                      <a href={editHref}
+                         style={{ minWidth: 0, flex: 1, textDecoration: 'none', color: 'inherit', cursor: 'pointer' }}>
+                        <div style={{ fontWeight: 600, textDecoration: task.completed_at ? 'line-through' : 'none' }}>{task.title}</div>
+                        <div style={{ marginTop: 2, fontSize: 12, color: 'var(--tax-muted)', display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                          {product && <span>{pickI18n(product.name_i18n, locale).value || product.slug}</span>}
+                          {assignee && <span>· {(assignee.name || assignee.email)}</span>}
+                          {task.due_date && (
+                            <span style={overdue ? { color: '#b91c1c', fontWeight: 600 } : undefined}>
+                              · {t('owner.tasks.due')}: {task.due_date}{overdue ? ` (${t('owner.tasks.overdue')})` : ''}
+                            </span>
                           )}
-                          <select value={task.status_key}
-                                  onChange={e => updateTask(task.id, { statusKey: e.target.value })}
-                                  onClick={e => e.stopPropagation()}
-                                  style={{
-                                    padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                                    border: '1px solid var(--tax-border)',
-                                    background: `color-mix(in srgb, ${statusBg} 18%, #fff)`,
+                          {task.priority !== 'normal' && <span>· {t(`owner.tasks.priority.${task.priority}`)}</span>}
+                        </div>
+                      </a>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        {/^Publish\s+H[12]\b.*Bookkeeping report|Publicar\s+informe\s+contable\s+H[12]\b/i.test(task.title || '') && !task.completed_at && (
+                          <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      const d = await taxApi.adminOpenReportForTask(auth, task.id);
+                                      if (d.reportId) {
+                                        setReportDrawer({
+                                          taskTitle: `${task.title}`,
+                                          initialReportId: d.reportId,
+                                          nonce: Date.now(),
+                                        });
+                                      }
+                                    } catch (err) { alert(err?.message || 'Could not open report editor.'); }
                                   }}>
-                            {statuses.map(s => (
-                              <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
-                            ))}
-                          </select>
-                          {isAdmin && (
-                            <button type="button"
-                                    onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
-                                    className="tax-btn tax-btn--ghost tax-btn--sm"
-                                    style={{ color: 'var(--tax-muted)' }}>×</button>
-                          )}
-                        </div>
+                            {t('owner.customer.bookkeeping.taskAction.open')}
+                          </button>
+                        )}
+                        <select value={task.status_key}
+                                onChange={e => updateTask(task.id, { statusKey: e.target.value })}
+                                onClick={e => e.stopPropagation()}
+                                style={{
+                                  padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                                  border: '1px solid var(--tax-border)',
+                                  background: `color-mix(in srgb, ${statusBg} 18%, #fff)`,
+                                }}>
+                          {statuses.map(s => (
+                            <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
+                          ))}
+                        </select>
+                        {isAdmin && (
+                          <button type="button"
+                                  onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
+                                  className="tax-btn tax-btn--ghost tax-btn--sm"
+                                  style={{ color: 'var(--tax-muted)' }}>×</button>
+                        )}
                       </div>
-                      {task.notes && (
-                        <div style={{ fontSize: 12, color: 'var(--tax-muted)', whiteSpace: 'pre-wrap' }}>
-                          {task.notes}
-                        </div>
-                      )}
                     </div>
-                  </TaskHover>
-                );
-              })}
-            </div>
+                    {task.notes && (
+                      <div style={{ fontSize: 12, color: 'var(--tax-muted)', whiteSpace: 'pre-wrap' }}>
+                        {task.notes}
+                      </div>
+                    )}
+                  </div>
+                </TaskHover>
+              );
+            };
+            return (
+              <>
+                {open.length === 0 && done.length === 0 && (
+                  <p style={{ color: 'var(--tax-muted)' }}>{t('owner.customer.tasks.empty')}</p>
+                )}
+                {open.length === 0 && done.length > 0 && (
+                  <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>No open tasks.</p>
+                )}
+                {open.length > 0 && (
+                  <div style={{ display: 'grid', gap: 6, marginTop: 8 }}>
+                    {open.map(renderTask)}
+                  </div>
+                )}
+                {done.length > 0 && (
+                  <CompletedTasksBucket tasks={done} renderTask={renderTask} t={t} />
+                )}
+              </>
+            );
+          })()
       }
     </section>
   );
