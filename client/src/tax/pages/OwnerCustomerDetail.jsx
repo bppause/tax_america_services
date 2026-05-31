@@ -335,15 +335,19 @@ export default function OwnerCustomerDetail({ customerId }) {
       {/* Flat section cards — task-first order */}
       <SectionCard title={t('owner.customer.section.tasks')} icon="✅">
         <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
-                      isAdmin={employee?.role === 'admin'} locale={locale} t={t} />
+                      isAdmin={employee?.role === 'admin'} locale={locale} t={t}
+                      onOpenReportDrawer={(opts) => setReportDrawer(opts)} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊">
-        <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0}
-          onEditRequest={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })}
-          onNewRequest={() => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: null, nonce: Date.now() })}
-          drawerMode
-        />
+      <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊"
+        action={
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                  onClick={() => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: null, nonce: Date.now() })}>
+            Manage reports →
+          </button>
+        }>
+        <BookkeepingReportsSummary auth={auth} customerId={customerId}
+          onOpen={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })} />
       </SectionCard>
 
       <SectionCard title={t('owner.customer.section.services')} icon="🏷️">
@@ -1966,6 +1970,61 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t, asMenuItem }) 
 // Phase: per-customer task list. Inline-edit status, add new tasks, mark
 // complete. Filters down to this customer's tasks via customerId on the
 // /admin/tasks endpoint.
+function BookkeepingReportsSummary({ auth, customerId, onOpen }) {
+  const { t } = useT();
+  const [reports, setReports] = useState(null);
+  useEffect(() => {
+    taxApi.adminListFinancialReports(auth, customerId)
+      .then(d => setReports(d.reports || []))
+      .catch(() => setReports([]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
+
+  if (reports === null) return <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('loading')}</p>;
+  if (reports.length === 0) return (
+    <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>
+      {t('owner.customer.bookkeeping.empty')}
+    </p>
+  );
+
+  const STATUS_COLOR = { draft: '#6b7280', published: '#1d4ed8', sent: '#166534' };
+  const STATUS_BG    = { draft: '#f3f4f6', published: '#dbeafe', sent: '#dcfce7' };
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {reports.map(r => {
+        const status = r.status || 'draft';
+        return (
+          <div key={r.id} style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            gap: 12, padding: '10px 14px', borderRadius: 8,
+            background: '#f8fafc', border: '1px solid var(--tax-border)',
+          }}>
+            <div style={{ minWidth: 0 }}>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{r.period_label || '—'}</span>
+              {r.start_date && r.end_date && (
+                <span style={{ fontSize: 12, color: 'var(--tax-muted)', marginLeft: 8 }}>
+                  {r.start_date} – {r.end_date}
+                </span>
+              )}
+              <span style={{
+                marginLeft: 10, fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 10,
+                background: STATUS_BG[status] || '#f3f4f6',
+                color: STATUS_COLOR[status] || '#6b7280',
+                textTransform: 'uppercase',
+              }}>{t(`owner.customer.bookkeeping.status.${status}`) || status}</span>
+            </div>
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                    onClick={() => onOpen(r.id)}>
+              {t('owner.customer.bookkeeping.action.edit')}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CompletedTasksBucket({ tasks, renderTask, t }) {
   const [open, setOpen] = useState(false);
   return (
@@ -1994,7 +2053,7 @@ function CompletedTasksBucket({ tasks, renderTask, t }) {
   );
 }
 
-function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t }) {
+function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t, onOpenReportDrawer }) {
   const [tasks, setTasks] = useState(null);
   const [statuses, setStatuses] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -2096,8 +2155,8 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
                                     try {
                                       const d = await taxApi.adminOpenReportForTask(auth, task.id);
                                       if (d.reportId) {
-                                        setReportDrawer({
-                                          taskTitle: `${task.title}`,
+                                        onOpenReportDrawer?.({
+                                          taskTitle: task.title,
                                           initialReportId: d.reportId,
                                           nonce: Date.now(),
                                         });
