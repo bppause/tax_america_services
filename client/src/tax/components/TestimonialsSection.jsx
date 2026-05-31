@@ -83,7 +83,7 @@ function Card({ row }) {
     }}>
       <Stars rating={row.rating || 5} />
       <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: '#374151', flexGrow: 1 }}>
-        <span style={{ color: '#d97706', fontSize: 20, lineHeight: 0, verticalAlign: '-4px', marginRight: 3 }}>”</span>{row.body}<span style={{ color: '#d97706', fontSize: 20, lineHeight: 0, verticalAlign: '-4px', marginLeft: 3 }}>”</span>
+        <span style={{ color: '#d97706', fontSize: 20, lineHeight: 0, verticalAlign: '-4px', marginRight: 3 }}>{'“'}</span>{row.body}<span style={{ color: '#d97706', fontSize: 20, lineHeight: 0, verticalAlign: '-4px', marginLeft: 3 }}>{'”'}</span>
       </p>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 'auto' }}>
         <div>
