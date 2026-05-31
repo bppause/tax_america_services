@@ -16,6 +16,24 @@ const CATEGORY_KEY = {
   audit: 'portal.profile.category.audit',
 };
 
+function CollapsibleSection({ title, defaultOpen = false, children }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section style={{ marginTop: 28 }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none',
+                       border: 'none', padding: 0, cursor: 'pointer', width: '100%',
+                       textAlign: 'left' }}>
+        <span style={{ fontSize: 13, color: 'var(--tax-muted)', width: 14, flexShrink: 0 }}>
+          {open ? '▾' : '▸'}
+        </span>
+        <h3 style={{ margin: 0, fontSize: 16 }}>{title}</h3>
+      </button>
+      {open && <div style={{ marginTop: 12 }}>{children}</div>}
+    </section>
+  );
+}
+
 // Match the order used by the customer-list filter (OwnerCustomers).
 const CATEGORY_ORDER = ['business', 'individual', 'general', 'audit'];
 
@@ -142,35 +160,44 @@ export default function OwnerCustomerDetail({ customerId }) {
           Relationships → which services drive their tasks, Tasks →
           the work itself, Notes → internal commentary, the rest as
           supporting context. */}
-      <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
+      <CollapsibleSection title={t('owner.customer.section.profile')} defaultOpen>
+        <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
+      </CollapsibleSection>
 
-      <ServicesSection
-        community={community} auth={auth} customerId={customerId}
-        locale={locale} t={t} />
+      <CollapsibleSection title={t('owner.customer.section.services')}>
+        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t} />
+      </CollapsibleSection>
 
-      <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
-                    isAdmin={employee?.role === 'admin'}
-                    locale={locale} t={t} />
+      <CollapsibleSection title={t('owner.customer.inquiry.heading')}>
+        <ServiceInquirySection customer={c} auth={auth} community={community} locale={locale} t={t} />
+      </CollapsibleSection>
 
-      <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
+      <CollapsibleSection title={t('owner.customer.section.tasks')} defaultOpen>
+        <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
+                      isAdmin={employee?.role === 'admin'} locale={locale} t={t} />
+      </CollapsibleSection>
 
-      <DocumentsSection
-        data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
+      <CollapsibleSection title={t('owner.customer.section.notes')}>
+        <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
+      </CollapsibleSection>
 
-      {/* Phase 4n.41: Signature Requests require the customer portal
-          to complete (customer types their name in /portal/sign/:id).
-          With the portal off, owners could still create requests but
-          customers couldn't sign — gate the section on portal-enabled
-          so it doesn't show a half-broken surface. */}
+      <CollapsibleSection title={t('owner.customer.section.documents')}>
+        <DocumentsSection data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
+      </CollapsibleSection>
+
       {community?.tax_customer_portal_enabled && (
-        <SignatureRequestsSection auth={auth} customerId={customerId} locale={locale} t={t} />
+        <CollapsibleSection title={t('owner.customer.section.signatures')}>
+          <SignatureRequestsSection auth={auth} customerId={customerId} locale={locale} t={t} />
+        </CollapsibleSection>
       )}
 
-      <ServiceInquirySection customer={c} auth={auth} community={community} locale={locale} t={t} />
+      <CollapsibleSection title={t('owner.customer.section.assignments')}>
+        <AssignmentsSection data={data} t={t} />
+      </CollapsibleSection>
 
-      <AssignmentsSection data={data} t={t} />
-
-      <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
+      <CollapsibleSection title={t('owner.customer.section.threads')}>
+        <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
+      </CollapsibleSection>
     </EmployeeShell>
   );
 }
@@ -197,34 +224,36 @@ export default function OwnerCustomerDetail({ customerId }) {
 // locale but can be overridden.
 function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const [products, setProducts] = useState([]);
-  const [selected, setSelected] = useState({});
+  const [selected, setSelected] = useState({});        // { productId: true } — starts empty
+  const [serviceFilter, setServiceFilter] = useState('');
   const [channel, setChannel] = useState('email');
   const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
   const [status, setStatus] = useState('idle');
-  const [open, setOpen] = useState(false);
-  const [waOverride, setWaOverride] = useState('');  // typed when customer has no number
+  const [waOverride, setWaOverride] = useState('');
 
   const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
   const normalizeWa = (raw) => '+' + String(raw || '').replace(/^\+/, '').replace(/\D+/g, '');
-
   const effectiveWa = customer.whatsapp || (waOverride.trim() ? normalizeWa(waOverride) : '');
   const waValid = !waOverride.trim() || WHATSAPP_E164.test(normalizeWa(waOverride));
 
   useEffect(() => {
-    if (!open || !community?.id) return;
+    if (!community?.id) return;
     taxApi.adminListProducts(auth, community.id)
-      .then(d => {
-        const enabled = (d.products || []).filter(p => p.enabled !== false);
-        setProducts(enabled);
-        setSelected(Object.fromEntries(enabled.map(p => [p.id, true])));
-      })
+      .then(d => setProducts((d.products || []).filter(p => p.enabled !== false)))
       .catch(() => {});
-  }, [open, community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [community?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const CATEGORY_EMOJI = { individual: '📋', business: '🏢', general: '📚', audit: '📋' };
+
+  const filteredProducts = serviceFilter.trim()
+    ? products.filter(p => {
+        const name = (p.name_i18n?.[lang] || p.name_i18n?.en || p.name_i18n?.es || p.slug).toLowerCase();
+        return name.includes(serviceFilter.toLowerCase());
+      })
+    : products;
 
   const toggle = (id) => setSelected(prev => ({ ...prev, [id]: !prev[id] }));
   const selectedIds = Object.keys(selected).filter(k => selected[k]);
-
-  const CATEGORY_EMOJI = { individual: '📋', business: '🏢', general: '📚', audit: '📋' };
 
   const onSend = async () => {
     if (!selectedIds.length) return;
@@ -254,26 +283,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   };
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <button type="button"
-              onClick={() => { setOpen(o => !o); setStatus('idle'); }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                background: 'none', border: 'none', padding: 0,
-                cursor: 'pointer', fontSize: 16, fontWeight: 700,
-                color: 'var(--tax-text)',
-              }}>
-        <span>{open ? '▾' : '▸'}</span>
-        📤 {t('owner.customer.inquiry.heading')}
-      </button>
-      {!open && (
-        <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--tax-muted)' }}>
-          {t('owner.customer.inquiry.hint')}
-        </p>
-      )}
-
-      {open && (
-        <div style={{ marginTop: 12, padding: 16, border: '1px solid var(--tax-border)', borderRadius: 8 }}>
+    <div style={{ padding: 16, border: '1px solid var(--tax-border)', borderRadius: 8 }}>
           {/* Language + channel selectors */}
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
             <div>
@@ -337,21 +347,24 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
             </div>
           </div>
 
-          {/* Service checklist */}
+          {/* Service checklist with filter */}
           <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, flexWrap: 'wrap', gap: 8 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
                 {t('owner.customer.inquiry.services')}
-                {selectedIds.length > 0 && (
-                  <span style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 999,
-                                 background: '#dcfce7', color: '#166534', fontSize: 11 }}>
-                    {selectedIds.length}
-                  </span>
-                )}
+                <span style={{ marginLeft: 8, padding: '1px 7px', borderRadius: 999,
+                               background: selectedIds.length === 0 ? '#fee2e2' : '#dcfce7',
+                               color: selectedIds.length === 0 ? '#991b1b' : '#166534', fontSize: 11 }}>
+                  {selectedIds.length}/{products.length}
+                </span>
               </label>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="search" value={serviceFilter}
+                       onChange={e => setServiceFilter(e.target.value)}
+                       placeholder={t('owner.customer.inquiry.filterPlaceholder')}
+                       style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--tax-border)', fontSize: 12, width: 140 }} />
                 <button type="button" onClick={() => setSelected(Object.fromEntries(products.map(p => [p.id, true])))}
-                        style={{ fontSize: 11, color: 'var(--tax-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                        style={{ fontSize: 11, color: 'var(--tax-brand-primary)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, whiteSpace: 'nowrap' }}>
                   {t('owner.customer.inquiry.selectAll')}
                 </button>
                 <button type="button" onClick={() => setSelected({})}
@@ -363,8 +376,8 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
             {products.length === 0 && (
               <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>Loading services…</p>
             )}
-            <div style={{ display: 'grid', gap: 4 }}>
-              {products.map(p => {
+            <div style={{ display: 'grid', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
+              {filteredProducts.map(p => {
                 const name = p.name_i18n?.[lang] || p.name_i18n?.en || p.name_i18n?.es || p.slug;
                 const desc = p.description_i18n?.[lang] || p.description_i18n?.en || '';
                 const emoji = CATEGORY_EMOJI[p.category] || '📄';
@@ -384,6 +397,9 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
                   </label>
                 );
               })}
+              {filteredProducts.length === 0 && serviceFilter && (
+                <p style={{ color: 'var(--tax-muted)', fontSize: 13, padding: '8px 0' }}>No services match "{serviceFilter}"</p>
+              )}
             </div>
           </div>
 
@@ -402,8 +418,6 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
             )}
           </div>
         </div>
-      )}
-    </section>
   );
 }
 
@@ -475,7 +489,7 @@ function ActivityTimelineSection({ auth, customerId, locale, t }) {
   return (
     <section className="tax-section" style={{ paddingTop: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0 }}>{t('owner.activity.title')}</h3>
+        <div />
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {['all', 'messages', 'emails', 'signatures', 'filings', 'notes'].map(f => {
             const isActive = filter === f;
@@ -656,7 +670,6 @@ function NotesSection({ auth, customerId, locale, t }) {
 
   return (
     <section className="tax-section" style={{ paddingTop: 0 }}>
-      <h3>{t('owner.customer.section.notes')}</h3>
       <p style={{ color: 'var(--tax-muted)', fontSize: 13, margin: '0 0 12px' }}>
         {t('owner.customer.notes.hint')}
       </p>
@@ -782,7 +795,6 @@ function SignatureRequestsSection({ auth, customerId, locale, t }) {
     <section className="tax-section" style={{ paddingTop: 0 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
         <div>
-          <h3>{t('owner.customer.section.signatures')}</h3>
           <p style={{ color: 'var(--tax-muted)', fontSize: 13, margin: '0 0 12px' }}>
             {t('owner.customer.signatures.hint')}
           </p>
@@ -912,9 +924,8 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
 
   if (!editing) {
     return (
-      <section style={{ marginTop: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-          <h3 style={{ margin: 0 }}>{t('owner.customer.section.profile')}</h3>
+      <section style={{ marginTop: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                   onClick={() => setEditing(true)} style={{ color: 'var(--tax-text)' }}>
             {t('owner.customer.profile.edit')}
@@ -999,8 +1010,7 @@ function ProfileSection({ customer: c, auth, customerId, onChange, t }) {
   };
 
   return (
-    <section style={{ marginTop: 24 }}>
-      <h3>{t('owner.customer.section.profile')}</h3>
+    <section style={{ marginTop: 8 }}>
       <form className="tax-form" onSubmit={onSave} noValidate style={{ maxWidth: 720 }}>
         <div>
           <label htmlFor="ocp-biz">{t('owner.customers.fieldBusinessName')}</label>
@@ -1149,9 +1159,9 @@ function RelationshipsSection({ data, types, auth, customerId, onChange, locale,
   };
 
   return (
-    <section style={{ marginTop: 32 }}>
+    <section style={{ marginTop: 8 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h3 style={{ margin: 0 }}>{t('owner.customer.section.relationships')}</h3>
+        <div />
         {available.length > 0 && (
           <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
                   onClick={() => setPicking(p => !p)}>
@@ -1283,8 +1293,7 @@ function DocumentsSection({ data, auth, customerId, onChange, t }) {
 
   return (
     <section style={{ marginTop: 32 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <h3 style={{ margin: 0 }}>{t('owner.customer.section.documents')}</h3>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
         <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
                 onClick={onUploadClick} disabled={uploading}>
           {uploading ? t('portal.documents.uploading_short') : t('owner.customer.document.uploadBtn')}
@@ -1348,8 +1357,7 @@ function DocumentsSection({ data, auth, customerId, onChange, t }) {
 function AssignmentsSection({ data, t }) {
   const assignments = data.assignments || [];
   return (
-    <section style={{ marginTop: 32, marginBottom: 32 }}>
-      <h3>{t('owner.customer.section.assignments')}</h3>
+    <section style={{ marginTop: 8, marginBottom: 8 }}>
       {assignments.length === 0
         ? <p style={{ color: 'var(--tax-muted)' }}>{t('owner.customer.assignment.empty')}</p>
         : <ul style={{ paddingLeft: 20, margin: 0 }}>
@@ -1620,9 +1628,8 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
   };
 
   return (
-    <section style={{ marginTop: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ margin: 0 }}>{t('owner.customer.section.tasks')}</h3>
+    <section style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                 onClick={() => setAdding(true)} style={{ color: 'var(--tax-brand-primary)' }}>
           + {t('owner.tasks.add')}
@@ -1888,9 +1895,8 @@ function ServicesSection({ community, auth, customerId, locale, t }) {
   };
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <h3 style={{ margin: 0 }}>{t('owner.customer.section.services')}</h3>
-      <p className="tax-section__lede" style={{ marginTop: 4, marginBottom: 12 }}>
+    <section style={{ marginTop: 8 }}>
+      <p className="tax-section__lede" style={{ marginTop: 0, marginBottom: 12 }}>
         {t('owner.customer.section.servicesHint')}
       </p>
 
