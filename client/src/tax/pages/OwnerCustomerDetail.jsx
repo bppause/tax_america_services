@@ -300,6 +300,25 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [err, setErr] = useState('');
   const [reportDrawer, setReportDrawer] = useState(null); // null = closed; { taskTitle, initialReportId, nonce } = open
   const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
+  const [scrollToReportId, setScrollToReportId] = useState(null);
+
+  // Listen for "Send to customer" postMessage from the owner preview tab.
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type !== 'tax_rpt_send' || !e.data?.reportId) return;
+      const reportId = e.data.reportId;
+      taxApi.adminSendFinancialReport(auth, reportId)
+        .then(d => {
+          setSummaryRefreshKey(k => k + 1);
+          setScrollToReportId(reportId);
+        })
+        .catch(() => {});
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth]);
 
   const load = () => {
     if (!employee || !community) return;
@@ -348,6 +367,7 @@ export default function OwnerCustomerDetail({ customerId }) {
           </button>
         }>
         <BookkeepingReportsSummary auth={auth} customerId={customerId} refreshKey={summaryRefreshKey}
+          scrollToId={scrollToReportId} onScrolled={() => setScrollToReportId(null)}
           onOpen={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })} />
       </SectionCard>
 
@@ -387,7 +407,12 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <ReportEditorDrawer
         open={reportDrawer !== null}
-        onClose={() => { setReportDrawer(null); setSummaryRefreshKey(k => k + 1); }}
+        onClose={() => {
+          const editedId = reportDrawer?.initialReportId || null;
+          setReportDrawer(null);
+          setSummaryRefreshKey(k => k + 1);
+          if (editedId) setScrollToReportId(editedId);
+        }}
         taskTitle={reportDrawer?.taskTitle || 'Financial Report Editor'}
       >
         {reportDrawer !== null && (
@@ -1970,11 +1995,13 @@ function ArchiveCustomerButton({ customer: c, auth, onChanged, t, asMenuItem }) 
 // Phase: per-customer task list. Inline-edit status, add new tasks, mark
 // complete. Filters down to this customer's tasks via customerId on the
 // /admin/tasks endpoint.
-function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey }) {
+function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey, scrollToId, onScrolled }) {
   const { t } = useT();
   const [reports, setReports] = useState(null);
   const [busy, setBusy] = useState(false);
   const [errMsg, setErrMsg] = useState('');
+  const [highlightId, setHighlightId] = useState(null);
+  const rowRefs = useRef({});
 
   const load = () => {
     taxApi.adminListFinancialReports(auth, customerId)
@@ -1983,6 +2010,18 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey }) {
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [customerId, refreshKey]);
+
+  useEffect(() => {
+    if (!scrollToId || !reports) return;
+    const el = rowRefs.current[scrollToId];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightId(scrollToId);
+      setTimeout(() => setHighlightId(null), 2000);
+      onScrolled?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollToId, reports]);
 
   const publish = async (r) => {
     if (!confirm(t('owner.customer.bookkeeping.confirm.publish', { period: r.period_label }))) return;
@@ -2016,7 +2055,7 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey }) {
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
-      if (win) win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id);
+      if (win) win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id) + '&ownerSend=1';
     } catch (e) {
       if (win) win.close();
       setErrMsg(e?.message || t('owner.customer.bookkeeping.msg.previewFailed'));
@@ -2043,11 +2082,14 @@ function BookkeepingReportsSummary({ auth, customerId, onOpen, refreshKey }) {
       )}
       {reports.map(r => {
         const status = r.status || 'draft';
+        const isHighlighted = highlightId === r.id;
         return (
-          <div key={r.id} style={{
+          <div key={r.id} ref={el => { rowRefs.current[r.id] = el; }} style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             gap: 12, padding: '10px 14px', borderRadius: 8, flexWrap: 'wrap',
-            background: '#f8fafc', border: '1px solid var(--tax-border)',
+            background: isHighlighted ? '#ecfdf5' : '#f8fafc',
+            border: `1px solid ${isHighlighted ? '#6ee7b7' : 'var(--tax-border)'}`,
+            transition: 'background 0.4s, border-color 0.4s',
           }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>

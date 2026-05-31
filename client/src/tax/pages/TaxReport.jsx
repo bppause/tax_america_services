@@ -127,9 +127,51 @@ function fmtDate(iso, lang) {
 
 function readParsedHashReport() {
   // /r/{token}#report={id} — opens that specific report on load
-  // (used by the owner's "Vista previa" button to deep-link).
   const m = (window.location.hash || '').match(/report=([^&]+)/);
   return m ? decodeURIComponent(m[1]) : '';
+}
+function readOwnerSend() {
+  return /ownerSend=1/.test(window.location.hash || '');
+}
+
+function OwnerPreviewBanner({ reportId, customerName }) {
+  const [sent, setSent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const handleSend = () => {
+    setBusy(true);
+    try {
+      window.opener?.postMessage({ type: 'tax_rpt_send', reportId }, window.location.origin);
+      setSent(true);
+      setTimeout(() => window.close(), 1200);
+    } catch (_e) {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+      background: '#134e4a', color: '#fff',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '10px 20px', gap: 12, fontSize: 13,
+      boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+    }}>
+      <span style={{ fontWeight: 600 }}>
+        {sent ? '✓ Sending — closing preview…' : `Owner preview${customerName ? ` · ${customerName}` : ''}`}
+      </span>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {!sent && (
+          <button onClick={handleSend} disabled={busy}
+                  style={{ background: '#fff', color: '#134e4a', border: 'none', borderRadius: 6, padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>
+            Send to customer →
+          </button>
+        )}
+        <button onClick={() => window.close()}
+                style={{ background: 'transparent', color: 'rgba(255,255,255,0.7)', border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 13 }}>
+          Close
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function TaxReport({ communitySlug, token }) {
@@ -193,9 +235,12 @@ export default function TaxReport({ communitySlug, token }) {
   }
 
   const selected = selectedId ? reports.find(r => r.id === selectedId) : null;
+  const isOwnerPreview = readOwnerSend();
+  const customerName = customer ? (customer.business_name || customer.first_name || customer.name || '') : '';
 
   return (
-    <div style={pageWrapStyle}>
+    <div style={{ ...pageWrapStyle, ...(isOwnerPreview ? { paddingTop: 60 } : {}) }}>
+      {isOwnerPreview && <OwnerPreviewBanner reportId={selectedId || readParsedHashReport()} customerName={customerName} />}
       <Header community={community} customer={customer} t={t} lang={lang} setLang={setLang} />
       {!selected ? (
         <ReportList reports={reports} t={t} onPick={id => { setSelectedId(id); window.scrollTo(0, 0); }} lang={lang} />

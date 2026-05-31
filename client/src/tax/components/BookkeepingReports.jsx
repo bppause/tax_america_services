@@ -610,7 +610,7 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
-      if (win) win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id);
+      if (win) win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id) + '&ownerSend=1';
     } catch (e) {
       if (win) win.close();
       setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') });
