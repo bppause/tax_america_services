@@ -229,6 +229,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const [lang, setLang] = useState(customer?.locale === 'en' ? 'en' : 'es');
   const [status, setStatus] = useState('idle');
   const [storedWa, setStoredWa] = useState(customer?.whatsapp || ''); // reactive; updates after save
+  const [waInput, setWaInput] = useState(customer?.whatsapp || ''); // editable field value
   const [waOverride, setWaOverride] = useState('');
   const [waSaveStatus, setWaSaveStatus] = useState('idle'); // idle | saving | saved | error
   const [preview, setPreview] = useState(null);   // null = closed; string = modal open
@@ -238,17 +239,23 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
 
   const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
   const normalizeWa = (raw) => '+' + String(raw || '').replace(/^\+/, '').replace(/\D+/g, '');
-  const effectiveWa = storedWa || (waOverride.trim() ? normalizeWa(waOverride) : '');
-  const waValid = !waOverride.trim() || WHATSAPP_E164.test(normalizeWa(waOverride));
+  // When a number is stored, waInput is the editable version of it.
+  // When no number is stored, waOverride is the entry field.
+  const activeRaw = storedWa ? waInput : waOverride;
+  const activeNorm = activeRaw.trim() ? normalizeWa(activeRaw) : '';
+  const activeValid = !activeRaw.trim() || WHATSAPP_E164.test(activeNorm);
+  const effectiveWa = activeValid && activeNorm ? activeNorm : '';
+  // legacy aliases used in openWhatsApp / JSX
+  const waValid = activeValid;
 
   const saveWaNumber = async () => {
-    const normalized = normalizeWa(waOverride);
-    if (!waOverride.trim() || !WHATSAPP_E164.test(normalized)) return;
+    if (!activeRaw.trim() || !WHATSAPP_E164.test(activeNorm)) return;
+    if (activeNorm === storedWa) return; // unchanged — skip
     setWaSaveStatus('saving');
     try {
-      await taxApi.adminUpdateCustomer(auth, customer.id, { whatsapp: normalized });
-      setStoredWa(normalized); // triggers re-render; hides input, shows number
-      setWaOverride('');
+      await taxApi.adminUpdateCustomer(auth, customer.id, { whatsapp: activeNorm });
+      setStoredWa(activeNorm);
+      if (!storedWa) setWaOverride(''); // clear entry field after first save
       setWaSaveStatus('saved');
       setTimeout(() => setWaSaveStatus('idle'), 3000);
     } catch (_) {
@@ -297,7 +304,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
     try {
       const r = await taxApi.adminSendServiceInquiry(auth, customer.id, {
         productIds: selectedIds, channel: 'whatsapp', lang,
-        waOverride: !storedWa ? effectiveWa : undefined,
+        waOverride: effectiveWa, // server uses this if customer.whatsapp not set
       });
       if (r.waUrl) { window.open(r.waUrl, '_blank', 'noopener'); setStatus('sent'); }
       else setStatus(r.error || 'Failed');
@@ -343,32 +350,29 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
           </select>
         </div>
 
-        {/* WhatsApp — show stored number or input to enter one */}
-        {storedWa ? (
-          <div style={{ alignSelf: 'flex-end', paddingBottom: 8 }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 2 }}>WhatsApp</span>
-            <span style={{ fontSize: 13, color: 'var(--tax-text)' }}>💬 {storedWa}</span>
-          </div>
-        ) : (
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 3 }}>
-              {t('owner.customer.inquiry.enterWhatsapp')}
-            </label>
-            <input type="tel" value={waOverride} placeholder="+14155551234"
-                   onChange={e => { setWaOverride(e.target.value); setStatus('idle'); setWaSaveStatus('idle'); }}
-                   onBlur={saveWaNumber}
-                   maxLength={20}
-                   style={{
-                     padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 170,
-                     border: `1px solid ${waOverride && !waValid ? 'var(--tax-error)' : 'var(--tax-border)'}`,
-                   }} />
-            {waOverride && !waValid && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>{t('portal.profile.whatsapp.invalid')}</p>}
-            {waOverride && waValid && waSaveStatus === 'idle' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>→ {normalizeWa(waOverride)}</p>}
-            {waSaveStatus === 'saving' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</p>}
-            {waSaveStatus === 'saved' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved to contact</p>}
-            {waSaveStatus === 'error' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>Save failed</p>}
-          </div>
-        )}
+        {/* WhatsApp — always an editable input; pre-filled when stored */}
+        <div>
+          <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 3 }}>
+            WhatsApp
+          </label>
+          <input type="tel"
+                 value={storedWa ? waInput : waOverride}
+                 placeholder="+14155551234"
+                 onChange={e => {
+                   setWaSaveStatus('idle'); setStatus('idle');
+                   storedWa ? setWaInput(e.target.value) : setWaOverride(e.target.value);
+                 }}
+                 onBlur={saveWaNumber}
+                 maxLength={20}
+                 style={{
+                   padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 170,
+                   border: `1px solid ${activeRaw && !activeValid ? 'var(--tax-error)' : 'var(--tax-border)'}`,
+                 }} />
+          {activeRaw && !activeValid && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>{t('portal.profile.whatsapp.invalid')}</p>}
+          {waSaveStatus === 'saving' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</p>}
+          {waSaveStatus === 'saved' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved to contact</p>}
+          {waSaveStatus === 'error' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>Save failed</p>}
+        </div>
 
         {/* Action buttons — right-aligned */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
