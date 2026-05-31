@@ -204,6 +204,7 @@ function formToPayload(f) {
     sections: {},
     totals: computeTotals(f.pl_data),
   };
+  if (f.pl_data._companyName) pl_data._companyName = f.pl_data._companyName;
   for (const k of SECTION_KEYS) {
     const sec = f.pl_data.sections[k] || emptySection();
     pl_data.sections[k] = {
@@ -221,6 +222,7 @@ function formToPayload(f) {
   }
   const balance_data = {};
   for (const k of BALANCE_KEYS) balance_data[k] = num(f.balance_data[k]);
+  if (f.balance_data._companyName) balance_data._companyName = f.balance_data._companyName;
   return {
     period_label: f.period_label.trim(),
     period_start: f.period_start,

@@ -24,7 +24,13 @@ const { log, warn } = require('../../../logger');
 // its own group/item structure so the dashboard can render whatever
 // the customer actually has rather than guessing at a fixed schema.
 
-const pdfParse = require('pdf-parse/lib/pdf-parse.js');
+// Lazy-loaded so a missing pdf-parse install doesn't crash the server
+// when only xlsx files are being processed.
+let _pdfParse;
+function getPdfParse() {
+  if (!_pdfParse) _pdfParse = require('pdf-parse/lib/pdf-parse.js');
+  return _pdfParse;
+}
 
 // Custom page renderer: cluster text items by Y-coordinate with a
 // small tolerance window, then sort by X within each cluster, then
@@ -509,7 +515,7 @@ async function parsePdf(buffer, kind /* 'pl' | 'balance' */) {
   }
   let text;
   try {
-    const parsed = await pdfParse(buffer, PDF_PARSE_OPTIONS);
+    const parsed = await getPdfParse()(buffer, PDF_PARSE_OPTIONS);
     text = (parsed?.text || '').replace(/ /g, ' ');
   } catch (e) {
     out.debug.error = String(e?.message || e);
