@@ -333,12 +333,14 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
     }
   };
 
+  // channel state lives here now for clear UI separation
+  const [channel, setChannel] = useState('email');
+
   return (
     <div style={{ padding: 16, border: '1px solid var(--tax-border)', borderRadius: 8 }}>
 
-      {/* ── Action bar ── */}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
-        {/* Language */}
+      {/* ── Row 1: Language + Send via ── */}
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
         <div>
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 3 }}>
             {t('owner.customer.inquiry.language')}
@@ -350,66 +352,108 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
           </select>
         </div>
 
-        {/* WhatsApp — always an editable input; pre-filled when stored */}
         <div>
           <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 3 }}>
-            WhatsApp
+            {t('owner.customer.inquiry.channel')}
           </label>
-          <input type="tel"
-                 value={storedWa ? waInput : waOverride}
-                 placeholder="+14155551234"
-                 onChange={e => {
-                   setWaSaveStatus('idle'); setStatus('idle');
-                   storedWa ? setWaInput(e.target.value) : setWaOverride(e.target.value);
-                 }}
-                 onBlur={saveWaNumber}
-                 maxLength={20}
-                 style={{
-                   padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 170,
-                   border: `1px solid ${activeRaw && !activeValid ? 'var(--tax-error)' : 'var(--tax-border)'}`,
-                 }} />
-          {activeRaw && !activeValid && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>{t('portal.profile.whatsapp.invalid')}</p>}
-          {waSaveStatus === 'saving' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</p>}
-          {waSaveStatus === 'saved' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved to contact</p>}
-          {waSaveStatus === 'error' && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>Save failed</p>}
-        </div>
-
-        {/* Action buttons — right-aligned */}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          {/* WhatsApp — disabled if no number available yet */}
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
-            <button type="button"
-                    onClick={openWhatsApp}
-                    disabled={status === 'sending' || selectedIds.length === 0 || !effectiveWa}
-                    style={{
-                      padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-                      background: '#25d366', color: '#fff', border: 'none',
-                      opacity: (selectedIds.length === 0 || !effectiveWa) ? 0.5 : 1,
-                    }}>
-              💬 {t('owner.customer.inquiry.openWhatsapp')}
-            </button>
-            {!storedWa && !effectiveWa && <p style={{ margin: '2px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>Enter number above</p>}
+          <div style={{ display: 'flex', gap: 0, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--tax-border)' }}>
+            {[
+              { key: 'email',     label: '📧 Email' },
+              { key: 'whatsapp',  label: '💬 WhatsApp' },
+            ].map(({ key, label }) => (
+              <button key={key} type="button"
+                      onClick={() => { setChannel(key); setStatus('idle'); }}
+                      style={{
+                        padding: '6px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                        background: channel === key ? 'var(--tax-brand-primary)' : '#fff',
+                        color: channel === key ? '#fff' : 'var(--tax-text)',
+                        border: 'none', borderRight: key === 'email' ? '1px solid var(--tax-border)' : 'none',
+                      }}>
+                {label}
+              </button>
+            ))}
           </div>
-          {/* Preview & Send Email */}
+        </div>
+      </div>
+
+      {/* ── Row 2: channel-specific details + action button ── */}
+      {channel === 'whatsapp' && (
+        <div style={{
+          display: 'flex', gap: 16, alignItems: 'flex-end', flexWrap: 'wrap',
+          marginBottom: 14, padding: '12px 14px', borderRadius: 8,
+          background: '#f0fdf4', border: '1px solid #bbf7d0',
+        }}>
+          <div style={{ flex: '0 0 auto' }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: '#166534', display: 'block', marginBottom: 3 }}>
+              WhatsApp number
+            </label>
+            <input type="tel"
+                   value={storedWa ? waInput : waOverride}
+                   placeholder="+14155551234"
+                   onChange={e => {
+                     setWaSaveStatus('idle'); setStatus('idle');
+                     storedWa ? setWaInput(e.target.value) : setWaOverride(e.target.value);
+                   }}
+                   onBlur={saveWaNumber}
+                   maxLength={20}
+                   style={{
+                     padding: '6px 10px', borderRadius: 6, fontSize: 13, width: 190,
+                     border: `1px solid ${activeRaw && !activeValid ? 'var(--tax-error)' : '#86efac'}`,
+                     background: '#fff',
+                   }} />
+            {activeRaw && !activeValid && (
+              <p style={{ margin: '3px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>{t('portal.profile.whatsapp.invalid')}</p>
+            )}
+            {waSaveStatus === 'saving' && <p style={{ margin: '3px 0 0', fontSize: 11, color: '#166534' }}>Saving…</p>}
+            {waSaveStatus === 'saved'  && <p style={{ margin: '3px 0 0', fontSize: 11, color: '#166534' }}>✓ Saved to contact</p>}
+            {waSaveStatus === 'error'  && <p style={{ margin: '3px 0 0', fontSize: 11, color: 'var(--tax-error)' }}>Save failed</p>}
+            {!activeRaw && <p style={{ margin: '3px 0 0', fontSize: 11, color: '#166534' }}>Enter number to enable</p>}
+          </div>
+
+          <button type="button"
+                  onClick={openWhatsApp}
+                  disabled={status === 'sending' || selectedIds.length === 0 || !effectiveWa}
+                  style={{
+                    padding: '8px 18px', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                    background: '#25d366', color: '#fff', border: 'none',
+                    opacity: (selectedIds.length === 0 || !effectiveWa) ? 0.5 : 1,
+                    whiteSpace: 'nowrap',
+                  }}>
+            💬 {t('owner.customer.inquiry.openWhatsapp')}
+          </button>
+
+          {status === 'sent' && (
+            <span style={{ fontSize: 12, color: '#166534' }}>✓ {t('owner.customer.inquiry.whatsappOpened')}</span>
+          )}
+        </div>
+      )}
+
+      {channel === 'email' && (
+        <div style={{
+          display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
+          marginBottom: 14, padding: '12px 14px', borderRadius: 8,
+          background: '#eff6ff', border: '1px solid #bfdbfe',
+        }}>
+          <span style={{ fontSize: 13, color: '#1e40af' }}>
+            📧 {t('portal.profile.preferredEmail')}: <strong>{customer.preferred_communication_email || customer.email}</strong>
+          </span>
           <button type="button"
                   onClick={openPreview}
                   disabled={previewing || selectedIds.length === 0}
                   style={{
-                    padding: '7px 14px', borderRadius: 6, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                    padding: '8px 18px', borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: 'pointer',
                     background: 'var(--tax-brand-primary)', color: '#fff', border: 'none',
                     opacity: selectedIds.length === 0 ? 0.5 : 1,
+                    whiteSpace: 'nowrap',
                   }}>
             {previewing ? '…' : `📧 ${t('owner.customer.inquiry.previewAndSend')}`}
           </button>
+          {status === 'sent' && (
+            <span style={{ fontSize: 12, color: '#166534' }}>✓ {t('owner.customer.inquiry.emailSent')}</span>
+          )}
         </div>
-      </div>
-
-      {/* Status line */}
-      {status === 'sent' && (
-        <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--tax-success, #166534)' }}>
-          ✓ {t('owner.customer.inquiry.whatsappOpened')}
-        </p>
       )}
+
       {status !== 'idle' && status !== 'sending' && status !== 'sent' && (
         <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--tax-error)' }}>{status}</p>
       )}
