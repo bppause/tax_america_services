@@ -603,15 +603,16 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
   };
 
   const preview = async (r) => {
-    // Open window synchronously before any await to avoid browser popup blocking.
-    const win = window.open('', '_blank', 'noopener');
+    // Open blank tab synchronously (user-gesture context) to avoid popup blocking,
+    // then navigate once the API resolves. No noopener — we need the reference to redirect.
+    const win = window.open('about:blank', '_blank');
     setBusy(true);
     try {
       const d = await taxApi.adminPreviewReportAccess(auth, customerId);
       document.cookie = `${d.cookieName}=${d.cookieValue}; Path=/; Max-Age=${Math.floor(d.cookieMaxAgeMs/1000)}; SameSite=Lax`;
-      win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id);
+      if (win) win.location.href = d.viewUrl + '#report=' + encodeURIComponent(r.id);
     } catch (e) {
-      win.close();
+      if (win) win.close();
       setMsg({ kind: 'err', text: e?.message || t('owner.customer.bookkeeping.msg.previewFailed') });
     }
     finally { setBusy(false); }
