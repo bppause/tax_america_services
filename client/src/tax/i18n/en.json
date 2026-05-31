@@ -1807,7 +1807,7 @@
   "owner.customer.bookkeeping.pdf.lastFile": "Last file",
   "owner.customer.bookkeeping.pdf.onFile": "File on file — upload to replace",
   "owner.customer.bookkeeping.pdf.saveFirstHint": "Save the draft first to enable file upload. Excel files exported from QuickBooks are parsed automatically and pre-fill the form — you'll review and correct everything before publishing.",
-  "owner.customer.bookkeeping.pdf.acceptHint": "Excel (.xlsx)",
+  "owner.customer.bookkeeping.pdf.acceptHint": "Excel (.xlsx) or PDF",
   "owner.customer.bookkeeping.msg.saveDraftFirst": "Save the report draft first.",
   "owner.customer.bookkeeping.msg.fillPeriodFirst": "Fill in the period label, start date, and end date before uploading a file.",
   "owner.customer.bookkeeping.msg.autoSaving": "Saving draft…",

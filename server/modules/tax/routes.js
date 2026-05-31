@@ -13200,8 +13200,12 @@ ${closingHtml}
     if (!rpt) return res.status(404).send('not_found');
     const path = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
     if (!path) return res.status(404).send('pdf_not_uploaded');
+    const ext = path.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'pdf';
+    const label = kind === 'balance' ? 'balance-sheet' : 'pl';
     const { data: signed, error } = await supabase.storage
-      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5); // 5min
+      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5, {
+        download: `${label}.${ext}`,
+      });
     if (error || !signed?.signedUrl) return res.status(500).send('sign_failed');
     res.redirect(302, signed.signedUrl);
   });

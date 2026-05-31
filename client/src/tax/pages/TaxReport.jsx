@@ -53,8 +53,8 @@ const I18N = {
     badgeWatch: 'Atención',
     badgeRisk: 'Riesgo',
     downloads: 'Documentos fuente',
-    pdfPl: 'Estado de Resultados (PDF)',
-    pdfBalance: 'Balance General (PDF)',
+    pdfPl: 'Estado de Resultados (Excel)',
+    pdfBalance: 'Balance General (Excel)',
     footer: 'Preparado por {practice}. Responda al correo recibido para cualquier pregunta.',
     channels: { bank_deposits: 'Depósitos bancarios', cash: 'Ventas en efectivo', doordash: 'DoorDash', uber: 'Uber Eats', grubhub: 'Grubhub', menufy: 'Menufy', other: 'Otros canales' },
     expenseLabels: { payroll: 'Nómina', rent: 'Renta', utilities: 'Servicios', repairs: 'Reparaciones', depreciation: 'Depreciación', interest: 'Intereses', professional_fees: 'Honorarios prof.', merchant_services: 'Procesamiento', insurance: 'Seguros', auto: 'Auto', office: 'Oficina', office_supplies: 'Suministros', advertising: 'Publicidad', other: 'Otros' },
@@ -95,8 +95,8 @@ const I18N = {
     badgeWatch: 'Watch',
     badgeRisk: 'Risk',
     downloads: 'Source documents',
-    pdfPl: 'Profit & Loss (PDF)',
-    pdfBalance: 'Balance Sheet (PDF)',
+    pdfPl: 'Profit & Loss (Excel)',
+    pdfBalance: 'Balance Sheet (Excel)',
     footer: 'Prepared by {practice}. Reply to the email we sent you with any questions.',
     channels: { bank_deposits: 'Bank deposits', cash: 'Cash sales', doordash: 'DoorDash', uber: 'Uber Eats', grubhub: 'Grubhub', menufy: 'Menufy', other: 'Other channels' },
     expenseLabels: { payroll: 'Payroll', rent: 'Rent', utilities: 'Utilities', repairs: 'Repairs', depreciation: 'Depreciation', interest: 'Interest', professional_fees: 'Professional fees', merchant_services: 'Merchant svc', insurance: 'Insurance', auto: 'Auto', office: 'Office', office_supplies: 'Supplies', advertising: 'Advertising', other: 'Other' },
@@ -803,13 +803,13 @@ function DownloadsSection({ r, token, t }) {
         {r.has_pl_pdf && (
           <a href={url('pl')} target="_blank" rel="noopener noreferrer"
              style={{ padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: 10, color: '#0f766e', fontWeight: 600, fontSize: 13, textDecoration: 'none', background: '#fff' }}>
-            📄 {t.pdfPl}
+            📊 {t.pdfPl}
           </a>
         )}
         {r.has_balance_pdf && (
           <a href={url('balance')} target="_blank" rel="noopener noreferrer"
              style={{ padding: '10px 14px', border: '1px solid #e2e8f0', borderRadius: 10, color: '#0f766e', fontWeight: 600, fontSize: 13, textDecoration: 'none', background: '#fff' }}>
-            📄 {t.pdfBalance}
+            📊 {t.pdfBalance}
           </a>
         )}
       </div>
