@@ -200,6 +200,7 @@ export const taxApi = {
   adminGetCustomer(auth, id)                    { return request('GET',  `/admin/customers/${encodeURIComponent(id)}`, undefined, auth, { admin: true }); },
   adminSendWelcomeEmail(auth, id)               { return request('POST', `/admin/customers/${encodeURIComponent(id)}/send-welcome`, {}, auth, { admin: true }); },
   adminSendServiceInquiry(auth, id, payload)    { return request('POST', `/admin/customers/${encodeURIComponent(id)}/send-inquiry`, payload, auth, { admin: true }); },
+  adminPreviewServiceInquiry(auth, id, payload) { return request('POST', `/admin/customers/${encodeURIComponent(id)}/preview-inquiry`, payload, auth, { admin: true }); },
 
   adminListRelationshipTypes(auth, opts = {})   {
     const qs = new URLSearchParams();

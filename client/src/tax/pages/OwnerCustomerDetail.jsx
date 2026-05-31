@@ -255,6 +255,24 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
   const toggle = (id) => setSelected(prev => ({ ...prev, [id]: !prev[id] }));
   const selectedIds = Object.keys(selected).filter(k => selected[k]);
 
+  const [preview, setPreview] = useState(null);   // null = no preview; string = editable text
+  const [previewing, setPreviewing] = useState(false);
+
+  const onPreview = async () => {
+    if (!selectedIds.length) return;
+    setPreviewing(true);
+    try {
+      const r = await taxApi.adminPreviewServiceInquiry(auth, customer.id, {
+        productIds: selectedIds, lang,
+      });
+      setPreview(r.text || '');
+    } catch (e) {
+      setStatus(e?.message || 'Preview failed');
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
   const onSend = async () => {
     if (!selectedIds.length) return;
     if (channel === 'whatsapp') {
@@ -266,6 +284,7 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
       const r = await taxApi.adminSendServiceInquiry(auth, customer.id, {
         productIds: selectedIds, channel, lang,
         waOverride: channel === 'whatsapp' && !customer.whatsapp ? effectiveWa : undefined,
+        customMessage: preview !== null ? preview : undefined,
       });
       if (channel === 'whatsapp' && r.waUrl) {
         window.open(r.waUrl, '_blank', 'noopener');
@@ -403,15 +422,57 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
             </div>
           </div>
 
+          {/* Preview area */}
+          {preview !== null && (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+                  {t('owner.customer.inquiry.preview')}
+                </label>
+                <button type="button" onClick={() => setPreview(null)}
+                        style={{ fontSize: 11, color: 'var(--tax-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+                  ✕ {t('owner.customer.inquiry.closePreview')}
+                </button>
+              </div>
+              <textarea
+                value={preview}
+                onChange={e => setPreview(e.target.value)}
+                rows={18}
+                style={{
+                  width: '100%', boxSizing: 'border-box', fontFamily: 'monospace', fontSize: 12,
+                  padding: 10, borderRadius: 6, border: '1px solid var(--tax-border)',
+                  resize: 'vertical', lineHeight: 1.5,
+                }} />
+            </div>
+          )}
+
           {/* Send button + status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                    onClick={onSend}
-                    disabled={status === 'sending' || selectedIds.length === 0}>
-              {status === 'sending' ? t('lead.submitting')
-                : channel === 'whatsapp' ? t('owner.customer.inquiry.openWhatsapp')
-                : t('owner.customer.inquiry.sendEmail')}
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            {preview === null ? (
+              <button type="button" className="tax-btn tax-btn--sm"
+                      onClick={onPreview}
+                      disabled={previewing || selectedIds.length === 0}
+                      style={{ background: '#f1f5f9', border: '1px solid var(--tax-border)', color: 'var(--tax-text)', cursor: selectedIds.length === 0 ? 'not-allowed' : 'pointer' }}>
+                {previewing ? '…' : `👁 ${t('owner.customer.inquiry.previewBtn')}`}
+              </button>
+            ) : (
+              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                      onClick={onSend}
+                      disabled={status === 'sending' || selectedIds.length === 0}>
+                {status === 'sending' ? t('lead.submitting')
+                  : channel === 'whatsapp' ? t('owner.customer.inquiry.openWhatsapp')
+                  : t('owner.customer.inquiry.sendEmail')}
+              </button>
+            )}
+            {preview === null && selectedIds.length > 0 && (
+              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                      onClick={onSend}
+                      disabled={status === 'sending'}>
+                {status === 'sending' ? t('lead.submitting')
+                  : channel === 'whatsapp' ? t('owner.customer.inquiry.openWhatsapp')
+                  : t('owner.customer.inquiry.sendEmail')}
+              </button>
+            )}
             {status === 'sent' && <span style={{ fontSize: 12, color: 'var(--tax-success, #166534)' }}>✓ {channel === 'whatsapp' ? t('owner.customer.inquiry.whatsappOpened') : t('owner.customer.inquiry.emailSent')}</span>}
             {status !== 'idle' && status !== 'sending' && status !== 'sent' && (
               <span style={{ fontSize: 12, color: 'var(--tax-error)' }}>{status}</span>

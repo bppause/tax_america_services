@@ -202,7 +202,7 @@ function ServiceDetailModal({ product, locale, t, community, products, onClose, 
                 </div>
               </div>
             )}
-            {videoUrl && <VideoEmbed url={videoUrl} title={name} />}
+            {videoUrl && <VideoEmbed url={videoUrl} title={name} />
             <p className="tax-modal__desc">{desc}</p>
             {longDesc && (
               <div className="tax-modal__longdesc">

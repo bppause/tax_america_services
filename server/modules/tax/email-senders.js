@@ -183,6 +183,7 @@ module.exports = function createTaxSenders(deps) {
 
     const isReturning = lead.source === 'returning_customer';
 
+
     const lines = [
       isReturning
         ? `Inquiry from existing customer — ${community.name}:`
