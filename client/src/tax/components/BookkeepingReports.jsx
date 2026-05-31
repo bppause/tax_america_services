@@ -1206,7 +1206,7 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
       )}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <input id={inputId} type="file" accept=".xlsx,.pdf" disabled={busy}
+        <input id={inputId} type="file" accept=".xlsx" disabled={busy}
                onChange={e => {
                  const f = e.target.files && e.target.files[0];
                  if (f) onPick(f);
