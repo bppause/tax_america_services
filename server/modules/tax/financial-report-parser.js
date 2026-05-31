@@ -199,7 +199,7 @@ function parseDynamic(text) {
 
   for (const line of lines) {
     if (RE.pageHeaderContains.test(line)) continue;
-    if (RE.periodLabel.test(line)) continue;
+    if (RE.periodLabel.test(line)) { if (!out.detectedPeriod) out.detectedPeriod = line.trim(); continue; }
 
     const m = AMOUNT_AT_END_TAB.exec(line) || AMOUNT_AT_END.exec(line);
     const hasAmount = !!m;

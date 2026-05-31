@@ -33,6 +33,34 @@ function companyNamesMatch(a, b) {
   return [...wa].some(w => wb.has(w));
 }
 
+// Parse a QB period string like "January through June 2026" or "January - December 2025"
+// into { startMonth (1-based), endMonth (1-based), year }.
+const MONTH_NAMES = ['january','february','march','april','may','june','july','august','september','october','november','december'];
+function parseDetectedPeriod(str) {
+  if (!str) return null;
+  const s = str.toLowerCase();
+  const months = MONTH_NAMES.map((m, i) => ({ m, i: i + 1 }));
+  const found = months.filter(({ m }) => s.includes(m));
+  const yearM = s.match(/\b(20\d{2})\b/);
+  if (!yearM || found.length < 1) return null;
+  const year = parseInt(yearM[1], 10);
+  const startMonth = found[0].i;
+  const endMonth = found.length >= 2 ? found[found.length - 1].i : found[0].i;
+  return { startMonth, endMonth, year };
+}
+
+// Compare a detected period string against report period_start / period_end (YYYY-MM-DD).
+// Returns true when they match (or when comparison is not possible), false on clear mismatch.
+function periodMatchesReport(detectedPeriod, periodStart, periodEnd) {
+  if (!detectedPeriod || !periodStart || !periodEnd) return true;
+  const dp = parseDetectedPeriod(detectedPeriod);
+  if (!dp) return true;
+  const [sy, sm] = periodStart.split('-').map(Number);
+  const [ey, em] = periodEnd.split('-').map(Number);
+  if (!sy || !sm || !ey || !em) return true;
+  return dp.year === sy && dp.year === ey && dp.startMonth === sm && dp.endMonth === em;
+}
+
 const BALANCE_KEYS = [
   'cash', 'inventory', 'other_current_assets', 'fixed_assets_gross',
   'accumulated_depreciation', 'other_assets', 'current_liabilities',
@@ -76,7 +104,7 @@ function normalizePlData(pl) {
     // New shape — fill in any missing section so the editor has all five.
     const sections = {};
     for (const k of SECTION_KEYS) sections[k] = pl.sections[k] ? cloneSection(pl.sections[k]) : emptySection();
-    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined, _fileName: pl._fileName || undefined };
+    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined, _fileName: pl._fileName || undefined, _detectedPeriod: pl._detectedPeriod || undefined };
   }
   // Legacy shape — synthesize sections from the flat fields.
   const out = emptyPlData();
@@ -214,6 +242,7 @@ function formToPayload(f) {
   };
   if (f.pl_data._companyName) pl_data._companyName = f.pl_data._companyName;
   if (f.pl_data._fileName) pl_data._fileName = f.pl_data._fileName;
+  if (f.pl_data._detectedPeriod) pl_data._detectedPeriod = f.pl_data._detectedPeriod;
   for (const k of SECTION_KEYS) {
     const sec = f.pl_data.sections[k] || emptySection();
     pl_data.sections[k] = {
@@ -414,11 +443,14 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         const biz = customer?.business_name || customer?.name || null;
         const plCn = rpt.pl_data?._companyName || null;
         const balCn = rpt.balance_data?._companyName || null;
+        const plDp = rpt.pl_data?._detectedPeriod || null;
         setPdfMeta({
           pl: rpt.pl_pdf_path ? {
             fileName: rpt.pl_data?._fileName || t('owner.customer.bookkeeping.pdf.onFile'),
             companyName: plCn,
             mismatch: !!(plCn && biz && !companyNamesMatch(plCn, biz)),
+            detectedPeriod: plDp,
+            periodMismatch: plDp ? !periodMatchesReport(plDp, rpt.period_start, rpt.period_end) : false,
           } : null,
           balance: rpt.balance_pdf_path ? {
             fileName: rpt.balance_data?._fileName || t('owner.customer.bookkeeping.pdf.onFile'),
@@ -596,6 +628,10 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
       const companyName = parseResult.parsed?.companyName || null;
       const businessName = customer?.business_name || customer?.name || null;
       const nameMismatch = !!(companyName && businessName && !companyNamesMatch(companyName, businessName));
+      const detectedPeriod = parseResult.detectedPeriod || null;
+      const periodMismatch = detectedPeriod
+        ? !periodMatchesReport(detectedPeriod, form.period_start, form.period_end)
+        : false;
       setForm(prev => {
         const cleared = kind === 'pl'
           ? { ...prev, pl_data: emptyPlData() }
@@ -605,13 +641,14 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         if (kind === 'pl') {
           if (companyName) merged.pl_data._companyName = companyName;
           merged.pl_data._fileName = file.name;
+          if (detectedPeriod) merged.pl_data._detectedPeriod = detectedPeriod;
         } else {
           if (companyName) merged.balance_data._companyName = companyName;
           merged.balance_data._fileName = file.name;
         }
         return merged;
       });
-      setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch, detectedType: dbg.detectedType || null } }));
+      setPdfMeta(prev => ({ ...prev, [kind]: { fileName: file.name, companyName, mismatch: nameMismatch, detectedType: dbg.detectedType || null, detectedPeriod, periodMismatch } }));
       if (dbg.detectedType === 'unknown' && (dbg.matched || 0) === 0) {
         setMsg({ kind: 'warn', text: t('owner.customer.bookkeeping.msg.notRecognized', { kind }), warnings: dbg.warnings, debug: dbg });
       } else if ((dbg.matched || 0) === 0) {
@@ -953,7 +990,7 @@ function ReportForm({ t, form, setForm, onSaveAndClose, onCancel, busy, editing,
       <FormGroup title={t('owner.customer.bookkeeping.form.group.pdfs')}>
         {editing ? (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
-            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      slotKind="pl"      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} fileName={pdfMeta?.pl?.fileName} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} contactName={contactName} detectedType={pdfMeta?.pl?.detectedType} />
+            <PdfDrop label={t('owner.customer.bookkeeping.pdf.pl')}      slotKind="pl"      onPick={f => onUploadPdf && onUploadPdf('pl', f)} onReset={onResetPl} busy={busy} t={t} fileName={pdfMeta?.pl?.fileName} companyName={pdfMeta?.pl?.companyName} mismatch={pdfMeta?.pl?.mismatch} contactName={contactName} detectedType={pdfMeta?.pl?.detectedType} detectedPeriod={pdfMeta?.pl?.detectedPeriod} periodMismatch={pdfMeta?.pl?.periodMismatch} reportPeriodStart={form.period_start} reportPeriodEnd={form.period_end} />
             <PdfDrop label={t('owner.customer.bookkeeping.pdf.balance')} slotKind="balance" onPick={f => onUploadPdf && onUploadPdf('balance', f)} onReset={onResetBalance} busy={busy} t={t} fileName={pdfMeta?.balance?.fileName} companyName={pdfMeta?.balance?.companyName} mismatch={pdfMeta?.balance?.mismatch} contactName={contactName} detectedType={pdfMeta?.balance?.detectedType} />
           </div>
         ) : (
@@ -1352,7 +1389,7 @@ function Total({ label, value, bold }) {
   );
 }
 
-function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyName, mismatch, contactName, detectedType }) {
+function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyName, mismatch, contactName, detectedType, detectedPeriod, periodMismatch, reportPeriodStart, reportPeriodEnd }) {
   const inputId = useRef(`pdf-drop-${label.replace(/\s+/g, '-').toLowerCase()}-${Math.random().toString(36).slice(2, 7)}`).current;
   const showCard = fileName || contactName;
   // Detected type label + whether it matches the slot.
@@ -1363,6 +1400,11 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
     (slotKind === 'pl' && detectedType === 'pl') ||
     (slotKind === 'balance' && detectedType === 'balance')
   );
+  const anyMismatch = mismatch || periodMismatch;
+  // Format YYYY-MM-DD as "Jan 1, 2026" for display.
+  const fmtD = iso => { try { return new Date(iso + 'T00:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }); } catch { return iso; } };
+  const reportPeriodLabel = (reportPeriodStart && reportPeriodEnd)
+    ? `${fmtD(reportPeriodStart)} – ${fmtD(reportPeriodEnd)}` : null;
   return (
     <div style={{ display: 'grid', gap: 6 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
@@ -1371,7 +1413,7 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
       </div>
 
       {showCard && (
-        <div style={{ padding: '8px 10px', background: mismatch ? '#fef9ec' : '#f8fafc', border: `1px solid ${mismatch ? '#d97706' : '#e2e8f0'}`, borderRadius: 6, fontSize: 12 }}>
+        <div style={{ padding: '8px 10px', background: anyMismatch ? '#fef9ec' : '#f8fafc', border: `1px solid ${anyMismatch ? '#d97706' : '#e2e8f0'}`, borderRadius: 6, fontSize: 12 }}>
           {fileName && (
             <div style={{ fontWeight: 700, color: '#0f172a', wordBreak: 'break-all', marginBottom: 4 }}>{fileName}</div>
           )}
@@ -1399,6 +1441,23 @@ function PdfDrop({ label, slotKind, onPick, onReset, busy, t, fileName, companyN
             {mismatch && (
               <div style={{ marginTop: 4, color: '#b45309', fontWeight: 700, fontSize: 11 }}>
                 ⚠ {t('owner.customer.bookkeeping.pdf.mismatch.title')}
+              </div>
+            )}
+            {detectedPeriod && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', marginTop: 2 }}>
+                <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>IN FILE</span>
+                <span style={{ fontWeight: 700, color: periodMismatch ? '#b45309' : '#0f172a' }}>{detectedPeriod}</span>
+              </div>
+            )}
+            {detectedPeriod && reportPeriodLabel && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+                <span style={{ color: '#94a3b8', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0 }}>REPORT PERIOD</span>
+                <span style={{ fontWeight: 600, color: periodMismatch ? '#b45309' : '#475569' }}>{reportPeriodLabel}</span>
+              </div>
+            )}
+            {periodMismatch && (
+              <div style={{ marginTop: 4, color: '#b45309', fontWeight: 700, fontSize: 11 }}>
+                ⚠ Date range in file does not match report period. Correct the xlsx in QuickBooks and re-upload.
               </div>
             )}
           </div>

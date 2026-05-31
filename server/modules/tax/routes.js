@@ -12912,6 +12912,7 @@ ${closingHtml}
       ok: true,
       kind,
       pdfPath: path,
+      detectedPeriod: parsed.detectedPeriod || null,
       parsed: kind === 'balance'
         ? { balance: parsed.balance, debug: parsed.debug, companyName: parsed.companyName }
         : { pl: parsed.pl, debug: parsed.debug, companyName: parsed.companyName },

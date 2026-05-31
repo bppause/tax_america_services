@@ -133,6 +133,7 @@ async function parseXlsx(buffer, kind) {
     out.pl = parseXlsxPl(rows);
     out.debug.matched = out.pl?.debug?.matched || 0;
     out.debug.warnings = out.pl?.debug?.warnings || [];
+    if (out.pl?.detectedPeriod) out.detectedPeriod = out.pl.detectedPeriod;
   }
   return out;
 }
