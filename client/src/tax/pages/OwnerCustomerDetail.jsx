@@ -5,6 +5,7 @@ import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import TaskHover from '../components/TaskHover';
 import { ensureCompletionNotes } from './OwnerTasks';
+import BookkeepingReportsSection from '../components/BookkeepingReports';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
@@ -273,6 +274,10 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <SectionCard title={t('owner.customer.section.documents')} icon="📄">
         <DocumentsSection data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
+      </SectionCard>
+
+      <SectionCard title="📊 Financial Reports (P&amp;L / Balance Sheet)" icon="">
+        <BookkeepingReportsSection auth={auth} customerId={customerId} customer={c} refreshNonce={0} />
       </SectionCard>
 
       {community?.tax_customer_portal_enabled && (
@@ -616,18 +621,18 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
         }}
           onClick={e => { if (e.target === e.currentTarget) setPreview(null); }}>
           <div style={{
-            background: '#fff', borderRadius: 10, boxShadow: '0 8px 40px rgba(0,0,0,.25)',
-            width: '100%', maxWidth: 640, maxHeight: '90vh',
+            background: '#fff', borderRadius: 12, boxShadow: '0 8px 40px rgba(0,0,0,.25)',
+            width: '100%', maxWidth: 860, height: '82vh',
             display: 'flex', flexDirection: 'column', overflow: 'hidden',
           }}>
             {/* Modal header */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          padding: '14px 20px', borderBottom: '1px solid var(--tax-border)' }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>
+                          padding: '16px 24px', borderBottom: '1px solid var(--tax-border)', flexShrink: 0 }}>
+              <span style={{ fontWeight: 700, fontSize: 16 }}>
                 📧 {t('owner.customer.inquiry.preview')}
               </span>
               <button type="button" onClick={() => setPreview(null)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--tax-muted)', lineHeight: 1 }}>
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--tax-muted)', lineHeight: 1 }}>
                 ✕
               </button>
             </div>
@@ -636,9 +641,9 @@ function ServiceInquirySection({ customer, auth, community, locale, t }) {
               value={preview}
               onChange={e => setPreview(e.target.value)}
               style={{
-                flex: 1, minHeight: 0, fontFamily: 'monospace', fontSize: 12,
-                padding: 16, border: 'none', borderBottom: '1px solid var(--tax-border)',
-                resize: 'none', lineHeight: 1.6, outline: 'none',
+                flex: 1, minHeight: 0, fontFamily: 'monospace', fontSize: 13,
+                padding: '16px 24px', border: 'none', borderBottom: '1px solid var(--tax-border)',
+                resize: 'none', lineHeight: 1.7, outline: 'none',
               }} />
             {/* Modal footer */}
             <div style={{ padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
