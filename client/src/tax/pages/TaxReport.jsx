@@ -122,7 +122,14 @@ function fmtDate(iso, lang) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
   return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'es-ES',
-    { year: 'numeric', month: 'short', day: 'numeric' });
+    { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function fmtPeriodLabel(label, start, end, lang) {
+  if (!start || !end) return label || '';
+  const s = fmtDate(start, lang);
+  const e = fmtDate(end, lang);
+  return `${label} · ${s} – ${e}`;
 }
 
 function readParsedHashReport() {
@@ -376,11 +383,13 @@ function ReportList({ reports, t, onPick, lang }) {
                   background: '#fff', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
                 }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>{r.period_label}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{fmtPeriodLabel(r.period_label, r.period_start, r.period_end, lang)}</div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                    {fmtDate(r.period_start, lang)} — {fmtDate(r.period_end, lang)}
-                    {r.revision > 1 && <> · {t.revision} {r.revision}</>}
+                    {r.revision > 1 && <>{t.revision} {r.revision}</>}
                   </div>
+                  {r.pl?._fileName && (
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>📊 {r.pl._fileName}</div>
+                  )}
                 </div>
                 <div style={{ color: '#0f766e', fontWeight: 700, fontSize: 18 }}>→</div>
               </button>
@@ -416,16 +425,16 @@ function ReportDetail({ report: summary, token, t, lang, practice, onBack }) {
 
       <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '18px 22px', marginBottom: 16, boxShadow: '0 1px 3px rgba(15,23,42,.04)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ margin: 0, fontSize: 22 }}>{r.period_label}</h2>
-          <span style={{ color: '#64748b', fontSize: 13 }}>
-            {fmtDate(r.period_start, lang)} — {fmtDate(r.period_end, lang)}
-          </span>
+          <h2 style={{ margin: 0, fontSize: 22 }}>{fmtPeriodLabel(r.period_label, r.period_start, r.period_end, lang)}</h2>
           {r.revision > 1 && (
             <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: '.04em' }}>
               {t.updatedNote} {fmtDate(r.updated_at, lang)}
             </span>
           )}
         </div>
+        {r.pl?._fileName && (
+          <div style={{ marginTop: 6, fontSize: 12, color: '#94a3b8' }}>📊 {r.pl._fileName}</div>
+        )}
       </div>
 
       <KpiStrip r={r} prior={prior} t={t} />
@@ -589,7 +598,7 @@ function RevenueMix({ r, t }) {
       <div style={{ marginTop: 12 }}>
         {entries.map((e, i) => {
           const group = incomeGroups.find(g => g.name === e.name);
-          const items = group ? (group.items || []).filter(it => Number(it.amount) > 0 && !it.rollup) : [];
+          const items = group ? (group.items || []).filter(it => Number(it.amount) !== 0) : [];
           const isExpanded = expandedGroup === e.name;
           return (
             <div key={i}>
@@ -658,7 +667,9 @@ function ExpenseBars({ r, t }) {
       <div style={{ display: 'grid', gap: 8 }}>
         {entries.map((e, i) => {
           const group = expenseGroups.find(g => g.name === e.name);
-          const items = group ? (group.items || []).filter(it => Number(it.amount) > 0 && !it.rollup) : [];
+          // Include rollup items (sub-group summaries like "Payroll Expenses Employee") —
+          // they are the meaningful breakdown. Filter only zero-amount items.
+          const items = group ? (group.items || []).filter(it => Number(it.amount) !== 0) : [];
           const isExpanded = expandedGroup === e.name;
           return (
             <div key={i}>
@@ -679,9 +690,9 @@ function ExpenseBars({ r, t }) {
               {isExpanded && items.length > 0 && (
                 <div style={{ background: '#f8fafc', borderRadius: 6, marginTop: 6, padding: '4px 8px' }}>
                   {items.map((it, j) => (
-                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: '#475569' }}>
-                      <span style={{ paddingLeft: 18 }}>{it.name}</span>
-                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(it.amount)}</span>
+                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: it.rollup ? '#374151' : '#475569' }}>
+                      <span style={{ paddingLeft: 18, fontWeight: it.rollup ? 600 : 400 }}>{it.name}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: it.rollup ? 600 : 400 }}>{fmtCurrencyFull(it.amount)}</span>
                     </div>
                   ))}
                 </div>
@@ -708,7 +719,7 @@ function Yoy({ r, prior, t }) {
   return (
     <Section title={t.yoyTitle}>
       <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-        {prior.period_label} → {r.period_label}
+        {fmtPeriodLabel(prior.period_label, prior.period_start, prior.period_end, lang)} → {fmtPeriodLabel(r.period_label, r.period_start, r.period_end, lang)}
       </div>
       <div style={{ display: 'grid', gap: 12 }}>
         {series.map(([label, a, b]) => (

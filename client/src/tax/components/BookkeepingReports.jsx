@@ -76,7 +76,7 @@ function normalizePlData(pl) {
     // New shape — fill in any missing section so the editor has all five.
     const sections = {};
     for (const k of SECTION_KEYS) sections[k] = pl.sections[k] ? cloneSection(pl.sections[k]) : emptySection();
-    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined };
+    return { sections, totals: { ...(pl.totals || {}) }, _companyName: pl._companyName || undefined, _fileName: pl._fileName || undefined };
   }
   // Legacy shape — synthesize sections from the flat fields.
   const out = emptyPlData();
@@ -208,9 +208,12 @@ function computeTotals(pl) {
 function formToPayload(f) {
   const pl_data = {
     sections: {},
-    totals: computeTotals(f.pl_data),
+    // Preserve QB-reported totals for xlsx imports — recomputing overwrites
+    // net_income with a different figure (Sales Tax Collected/Remitted treatment).
+    totals: f.pl_data._companyName && f.pl_data.totals ? f.pl_data.totals : computeTotals(f.pl_data),
   };
   if (f.pl_data._companyName) pl_data._companyName = f.pl_data._companyName;
+  if (f.pl_data._fileName) pl_data._fileName = f.pl_data._fileName;
   for (const k of SECTION_KEYS) {
     const sec = f.pl_data.sections[k] || emptySection();
     pl_data.sections[k] = {
@@ -229,6 +232,7 @@ function formToPayload(f) {
   const balance_data = {};
   for (const k of BALANCE_KEYS) balance_data[k] = num(f.balance_data[k]);
   if (f.balance_data._companyName) balance_data._companyName = f.balance_data._companyName;
+  if (f.balance_data._fileName) balance_data._fileName = f.balance_data._fileName;
   return {
     period_label: f.period_label.trim(),
     period_start: f.period_start,
@@ -274,7 +278,13 @@ function fmtInputNum(n) {
 function fmtDate(iso, locale) {
   if (!iso) return '';
   const d = new Date(iso); if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString(locale === 'en' ? 'en-US' : 'es-ES', { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString(locale === 'en' ? 'en-US' : 'es-ES', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function fmtPeriodLabel(label, start, end, locale) {
+  if (!start || !end) return label || '';
+  return `${label} · ${fmtDate(start, locale)} – ${fmtDate(end, locale)}`;
+}
 }
 
 const STATUS_STYLE = {
@@ -407,12 +417,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
         const balCn = rpt.balance_data?._companyName || null;
         setPdfMeta({
           pl: rpt.pl_pdf_path ? {
-            fileName: t('owner.customer.bookkeeping.pdf.onFile'),
+            fileName: rpt.pl_data?._fileName || t('owner.customer.bookkeeping.pdf.onFile'),
             companyName: plCn,
             mismatch: !!(plCn && biz && !companyNamesMatch(plCn, biz)),
           } : null,
           balance: rpt.balance_pdf_path ? {
-            fileName: t('owner.customer.bookkeeping.pdf.onFile'),
+            fileName: rpt.balance_data?._fileName || t('owner.customer.bookkeeping.pdf.onFile'),
             companyName: balCn,
             mismatch: !!(balCn && biz && !companyNamesMatch(balCn, biz)),
           } : null,
@@ -593,9 +603,12 @@ export default function BookkeepingReportsSection({ auth, customerId, customer, 
           : { ...prev, balance_data: Object.fromEntries(BALANCE_KEYS.map(k => [k, ''])) };
         const merged = mergeParsedIntoForm(cleared, parseResult.parsed, kind);
         // Persist company name in the JSONB so it survives a page reload / re-edit.
-        if (companyName) {
-          if (kind === 'pl') merged.pl_data._companyName = companyName;
-          else merged.balance_data._companyName = companyName;
+        if (kind === 'pl') {
+          if (companyName) merged.pl_data._companyName = companyName;
+          merged.pl_data._fileName = file.name;
+        } else {
+          if (companyName) merged.balance_data._companyName = companyName;
+          merged.balance_data._fileName = file.name;
         }
         return merged;
       });
@@ -753,7 +766,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
     }}>
       <div style={{ minWidth: 0, flex: '1 1 240px' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <strong>{r.period_label}</strong>
+          <strong>{fmtPeriodLabel(r.period_label, r.period_start, r.period_end, locale)}</strong>
           <span style={{
             display: 'inline-block', padding: '2px 8px', borderRadius: 999,
             fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
@@ -762,8 +775,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
           {r.revision > 1 && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>{t('owner.customer.bookkeeping.row.revision', { n: r.revision })}</span>}
         </div>
         <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>
-          {fmtDate(r.period_start, locale)} – {fmtDate(r.period_end, locale)}
-          {r.published_at && <> · {t('owner.customer.bookkeeping.row.published', { date: fmtDate(r.published_at, locale) })}</>}
+          {r.published_at && <>{t('owner.customer.bookkeeping.row.published', { date: fmtDate(r.published_at, locale) })}</>}
           {r.first_sent_at && (
             <> · {r.send_count > 1
               ? t('owner.customer.bookkeeping.row.sentMulti', { date: fmtDate(r.first_sent_at, locale), n: r.send_count })

@@ -1979,6 +1979,19 @@ module.exports = function createTaxSenders(deps) {
     const firstName = firstNameOf(customer)
       || (customer?.business_name ? '' : (customer?.name || '').split(/\s+/)[0])
       || '';
+
+    const fmtShortDate = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso + 'T00:00:00Z');
+      return d.toLocaleDateString(lang === 'en' ? 'en-US' : 'es-ES',
+        { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+    };
+    const periodWithDates = (() => {
+      const label = report?.period_label || '';
+      const s = fmtShortDate(report?.period_start);
+      const e = fmtShortDate(report?.period_end);
+      return s && e ? `${label} (${s} – ${e})` : label;
+    })();
     const practiceName = community?.name || 'Tax America Services';
 
     const pl = report?.pl_data || {};
@@ -2012,7 +2025,7 @@ module.exports = function createTaxSenders(deps) {
     const T = lang === 'en' ? {
       eyebrow: isResend ? 'Updated report' : 'New financial report',
       greeting: firstName ? `Hi ${firstName},` : 'Hello,',
-      headline: `Your ${report?.period_label || ''} financial report is ready`.replace(/\s+/g,' ').trim(),
+      headline: `Your ${periodWithDates} financial report is ready`.replace(/\s+/g,' ').trim(),
       revenue: 'Revenue',
       netIncome: 'Net income',
       grossMargin: 'Gross margin',
@@ -2022,12 +2035,12 @@ module.exports = function createTaxSenders(deps) {
       disclaimer: 'The information shown is estimated based on what you have provided us. Please verify against your own books before making important decisions.',
       footer: `Prepared by ${practiceName}. Reply to this email with any questions.`,
       subject: isResend
-        ? `${practiceName} — Updated financial report (${report?.period_label || ''})`
-        : `${practiceName} — Your financial report (${report?.period_label || ''})`,
+        ? `${practiceName} — Updated financial report: ${periodWithDates}`
+        : `${practiceName} — Your financial report: ${periodWithDates}`,
     } : {
       eyebrow: isResend ? 'Informe actualizado' : 'Nuevo informe financiero',
       greeting: firstName ? `Hola ${firstName},` : 'Hola,',
-      headline: `Su informe financiero ${report?.period_label || ''} está listo`.replace(/\s+/g,' ').trim(),
+      headline: `Su informe financiero ${periodWithDates} está listo`.replace(/\s+/g,' ').trim(),
       revenue: 'Ingresos',
       netIncome: 'Utilidad neta',
       grossMargin: 'Margen bruto',
@@ -2037,8 +2050,8 @@ module.exports = function createTaxSenders(deps) {
       disclaimer: 'La información mostrada es estimada basada en lo que usted nos ha proporcionado. Verifique con sus propios libros antes de tomar decisiones importantes.',
       footer: `Preparado por ${practiceName}. Responda a este correo con cualquier pregunta.`,
       subject: isResend
-        ? `${practiceName} — Informe financiero actualizado (${report?.period_label || ''})`
-        : `${practiceName} — Su informe financiero (${report?.period_label || ''})`,
+        ? `${practiceName} — Informe financiero actualizado: ${periodWithDates}`
+        : `${practiceName} — Su informe financiero: ${periodWithDates}`,
     };
 
     const kpiCell = (label, value) => `

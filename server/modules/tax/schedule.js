@@ -196,19 +196,38 @@ function monthlyFollowing(rule, ref, refYear, limit, lang) {
 }
 
 function annual(rule, refIso, refYear, limit, lang) {
-  const p = parseMmDd(rule.date);
+  // Accept two shapes — the documented `date: 'MM-DD'` form and the
+  // {month, day} form that auto-task-templates.js + the bookkeeping
+  // H1/H2 migrations write. Without the {month,day} fallback every
+  // catalog template tagged 'annual' (doc-collection, prepare-1040,
+  // q1..q4, year-end-review, w2-1099-prep, annual-close, the new
+  // bookkeeping H1/H2) silently produces zero periods.
+  let p = parseMmDd(rule.date);
+  if (!p) {
+    const m = Number(rule.month);
+    const d = Number(rule.day);
+    if (Number.isFinite(m) && Number.isFinite(d) && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      p = { month: m, day: d };
+    }
+  }
   if (!p) return [];
+  // taxYearOffset: how many years to subtract from the due year to get the
+  // label year. Default -1 (prior-year coverage, e.g. 1040 due Apr 2026
+  // covers Tax Year 2025). Use 0 for same-year coverage — e.g. the H1
+  // bookkeeping report due Jul 31, 2026 covers Jan–Jun 2026 (Tax Year 2026).
+  const taxYearOffset = rule.taxYearOffset !== undefined ? Number(rule.taxYearOffset) : -1;
   const out = [];
   for (let year = refYear; year < refYear + 4 && out.length < limit; year++) {
     const day = Math.min(p.day, lastDayOfMonth(year, p.month));
     const due = ymd(year, p.month, day);
     if (due >= refIso) {
-      const taxYear = year - 1;
+      const taxYear = year + taxYearOffset;
+      const prefix = rule.periodLabelPrefix;
       out.push({
         dueDate: due,
         periodStart: ymd(taxYear, 1, 1),
         periodEnd: ymd(taxYear, 12, 31),
-        periodLabel: annualLabel(taxYear, lang),
+        periodLabel: prefix ? `${prefix} ${taxYear}` : annualLabel(taxYear, lang),
       });
     }
   }

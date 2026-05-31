@@ -20,7 +20,6 @@
 const crypto = require('crypto');
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
-const AnthropicSDK = (() => { try { return require('@anthropic-ai/sdk'); } catch (_e) { return null; } })();
 const { warn } = require('../../../logger');
 const { isValidEmail, normalizeLanguage } = require('../../core/utils');
 const {
@@ -55,7 +54,6 @@ module.exports = function createTaxRouter(deps) {
     isSupabaseConfigured,
     auditLog,
     sendTaxLeadEmail,
-    sendTaxLeadConfirmationEmail,
     sendTaxTaskAssignedEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
@@ -77,8 +75,6 @@ module.exports = function createTaxRouter(deps) {
     isEnvGlobalAdminEmail,
     runReminderCron,
     fireReminderForPeriod,
-    emailConfigured,
-    sendSpanishEmail,
   } = deps;
 
   const router = express.Router();
@@ -363,7 +359,7 @@ module.exports = function createTaxRouter(deps) {
 
     const { data: products, error: pErr } = await supabase
       .from('tax_products')
-      .select('id, slug, category, enabled, display_order, name_i18n, description_i18n, long_description_i18n, required_documents, icon, video_url, cadence_kind, anchor_rule, employee_notes_i18n, certifications')
+      .select('id, slug, category, enabled, display_order, name_i18n, description_i18n, long_description_i18n, required_documents, icon, video_url, cadence_kind, anchor_rule, employee_notes_i18n')
       .eq('community_id', slug)
       .eq('enabled', true)
       .order('display_order', { ascending: true });
@@ -396,14 +392,7 @@ module.exports = function createTaxRouter(deps) {
     let logoBuffer = null;
     if (community.logo_url) {
       try {
-        // logo_url may be stored as a relative path (e.g. /tax/logo.png).
-        // Prefix with PUBLIC_APP_URL so fetch() gets an absolute URL.
-        let logoFetchUrl = community.logo_url;
-        if (!/^https?:\/\//i.test(logoFetchUrl)) {
-          const base = (process.env.PUBLIC_APP_URL || '').replace(/\/$/, '');
-          logoFetchUrl = base + (logoFetchUrl.startsWith('/') ? '' : '/') + logoFetchUrl;
-        }
-        const lr = await fetch(logoFetchUrl, { signal: AbortSignal.timeout(6000) });
+        const lr = await fetch(community.logo_url, { signal: AbortSignal.timeout(6000) });
         if (lr.ok) {
           const raw = Buffer.from(await lr.arrayBuffer());
           logoBuffer = await require('sharp')(raw).png().toBuffer();
@@ -705,7 +694,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(404).json({ error: 'Tax community not found.' });
     }
     const { data, error } = await supabase.from('tax_employees')
-      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications')
+      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order')
       .eq('community_id', slug)
       .eq('show_on_homepage', true)
       .eq('status', 'active')
@@ -874,22 +863,6 @@ module.exports = function createTaxRouter(deps) {
     if (cErr) return sendSupabaseError(res, cErr);
     if (!community) return res.status(404).json({ error: 'Tax community not found.' });
 
-    // Check whether this email belongs to an existing customer in the same community.
-    // If so, tag the lead so the owner can distinguish new vs returning inquiries.
-    let existingCustomerId = null;
-    if (email) {
-      const { data: existingCustomer } = await supabase
-        .from('tax_customers')
-        .select('id')
-        .eq('community_id', community.id)
-        .ilike('email', email.trim())
-        .maybeSingle();
-      if (existingCustomer) existingCustomerId = existingCustomer.id;
-    }
-
-    const leadSource = existingCustomerId ? 'returning_customer'
-      : aiConversation ? 'ai_chat' : 'landing';
-
     const lead = {
       id: 'lead_' + uuidv4().slice(0, 12),
       community_id: community.id,
@@ -902,14 +875,10 @@ module.exports = function createTaxRouter(deps) {
       product_slug: productSlug,
       product_slugs: productSlugs,
       message,
-      // Only include ai_conversation when present — column may not yet
-      // exist on older deployments. Run the migration in schema.sql to
-      // add it: ALTER TABLE tax_leads ADD COLUMN ai_conversation jsonb;
-      ...(aiConversation ? { ai_conversation: aiConversation } : {}),
-      ...(existingCustomerId ? { converted_customer_id: existingCustomerId } : {}),
+      ai_conversation: aiConversation,
       preferred_locale: preferredLocale,
       status: 'new',
-      source: leadSource,
+      source: aiConversation ? 'ai_chat' : 'landing',
       user_agent: userAgent,
       ip,
     };
@@ -932,23 +901,6 @@ module.exports = function createTaxRouter(deps) {
       catch (e) { warn('[tax] lead notification email failed', e?.message || e); }
     }
 
-    // Send branded confirmation to the lead with services + AI transcript.
-    if (typeof sendTaxLeadConfirmationEmail === 'function' && inserted.email) {
-      try {
-        // Fetch product details so confirmation email can show proper names + links.
-        let products = [];
-        if (productSlugs.length) {
-          const { data: pd } = await supabase
-            .from('tax_products')
-            .select('slug, name_i18n, description_i18n')
-            .eq('community_id', community.id)
-            .in('slug', productSlugs);
-          products = pd || [];
-        }
-        await sendTaxLeadConfirmationEmail({ community, lead: inserted, products });
-      } catch (e) { warn('[tax] lead confirmation email failed', e?.message || e); }
-    }
-
     res.json({ ok: true, id: inserted.id });
   });
 
@@ -964,9 +916,6 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
     const productSlug   = trim(body.productSlug || '', 200);
-    // Accept both old single-slug and new multi-slug from the service picker.
-    const productSlugsRaw = Array.isArray(body.productSlugs) ? body.productSlugs : (productSlug ? [productSlug] : []);
-    const focusSlugs = productSlugsRaw.map(s => trim(s, 200)).filter(Boolean).slice(0, 10);
     const messages      = Array.isArray(body.messages) ? body.messages : [];
 
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
@@ -996,7 +945,7 @@ module.exports = function createTaxRouter(deps) {
     // Load products to give the AI context about offered services.
     const { data: products } = await supabase
       .from('tax_products')
-      .select('slug, name_i18n, description_i18n, long_description_i18n, category, certifications')
+      .select('slug, name_i18n, description_i18n, long_description_i18n, category')
       .eq('community_id', community.id)
       .eq('enabled', true)
       .order('sort_order', { ascending: true });
@@ -1005,60 +954,41 @@ module.exports = function createTaxRouter(deps) {
       const name = (p.name_i18n?.en || p.name_i18n?.es || p.slug);
       const desc = (p.long_description_i18n?.en || p.description_i18n?.en
                  || p.long_description_i18n?.es || p.description_i18n?.es || '');
-      const certs = Array.isArray(p.certifications) && p.certifications.length
-        ? ` [Certifications: ${p.certifications.join('; ')}]` : '';
-      return `- ${name} (${p.category})${certs}: ${desc.slice(0, 300)}`;
+      return `- ${name} (${p.category}): ${desc.slice(0, 300)}`;
     }).join('\n');
 
-    // Identify the services the lead specifically selected (1-to-many).
-    const focusProducts = focusSlugs.length
-      ? (products || []).filter(p => focusSlugs.includes(p.slug))
-      : [];
-    const focusNames = focusProducts.map(p => p.name_i18n?.en || p.name_i18n?.es || p.slug);
-
-    // Build detailed context only for the selected services; list all others briefly.
-    // Certifications are pulled to the top so the AI leads with them naturally.
-    const focusLines = focusProducts.map(p => {
-      const name = p.name_i18n?.en || p.name_i18n?.es || p.slug;
-      const long = p.long_description_i18n?.en || p.long_description_i18n?.es || '';
-      const short = p.description_i18n?.en || p.description_i18n?.es || '';
-      const certs = Array.isArray(p.certifications) && p.certifications.length
-        ? `Certifications held by this practice for this service:\n${p.certifications.map(c => `• ${c}`).join('\n')}\n\n`
-        : '';
-      return `### ${name}\n${certs}${(long || short)}`.slice(0, 800);
-    }).join('\n\n');
-
-    const isUnsure = focusSlugs.length === 0; // "not sure / other" path
+    const focusProduct = productSlug
+      ? (products || []).find(p => p.slug === productSlug)
+      : null;
+    const focusName = focusProduct
+      ? (focusProduct.name_i18n?.en || focusProduct.name_i18n?.es || productSlug)
+      : null;
 
     const systemPrompt = [
       `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
-      `Your job is to answer questions about the services offered, help the prospect understand what`,
-      `fits their situation, and — when they are ready — invite them to share their contact details so`,
-      `a team member can follow up and schedule an appointment.`,
+      `Your job is to answer questions prospects have about the services offered, help them understand`,
+      `what service fits their situation, and — when they are ready — invite them to send their contact`,
+      `details so a team member can follow up.`,
       '',
-      isUnsure
-        ? `The prospect is not sure which service they need. Your primary goal is to ask 1-2 short questions to understand their situation, then recommend the most relevant service(s) from the list below.\n\nAll services:\n${productLines || '(No services listed yet)'}`
-        : `The prospect selected the following service${focusNames.length > 1 ? 's' : ''} to ask about:\n${focusLines}`,
+      `Services offered:\n${productLines || '(No services listed yet)'}`,
       '',
-      !isUnsure && productLines
-        ? `Other available services (mention only if the prospect asks):\n${productLines}`
-        : '',
+      focusName ? `The visitor is currently looking at the "${focusName}" service. Start the conversation focused there, but answer questions about any service.` : '',
       '',
       `Behavior guidelines:`,
-      isUnsure
-        ? `- Ask one short question at a time to identify the right service. Once you've recommended a service, answer follow-up questions about it.`
-        : `- Focus on the selected service(s). Only discuss others if asked.`,
-      `- When a service has listed certifications, mention them naturally upfront (e.g. "We are a CAA – Certified Acceptance Agent, which means..."). Do not bury them — credentials build trust and are a key reason to choose this practice.`,
-      `- Be concise and friendly. Do not invent fees, timelines, or guarantees.`,
-      `- After 3 or more exchanges, or when the prospect expresses readiness, end your reply with`,
-      `  the token [READY_TO_CONNECT] on its own line to trigger the appointment booking step.`,
-      `- Include [READY_TO_CONNECT] immediately if the user asks to be contacted or to schedule.`,
-      `- Do NOT include [READY_TO_CONNECT] on the very first reply.`,
-      `- Reply in the same language the user writes in (English or Spanish).`,
+      `- Be concise and friendly. Answer honestly; do not invent fees or timelines.`,
+      `- Ask one clarifying question at a time to understand the prospect's situation.`,
+      `- After 3 or more exchanges, or whenever the prospect expresses clear interest, offer to connect`,
+      `  them with the team by ending your reply with exactly the token [READY_TO_CONNECT] on its own line.`,
+      `- You can also include [READY_TO_CONNECT] earlier if the user explicitly asks to be contacted.`,
+      `- Do NOT include [READY_TO_CONNECT] on the very first reply or before you have answered at least one question.`,
+      `- Reply in the same language the user is writing in (English or Spanish).`,
     ].filter(Boolean).join('\n');
 
-    if (!AnthropicSDK) return res.status(503).json({ error: 'AI assistant unavailable.' });
-    const client = new AnthropicSDK({ apiKey });
+    let Anthropic;
+    try { Anthropic = require('@anthropic-ai/sdk'); }
+    catch { return res.status(503).json({ error: 'AI SDK not installed.' }); }
+
+    const client = new Anthropic.default({ apiKey });
     let aiText;
     try {
       const aiRes = await client.messages.create({
@@ -1419,13 +1349,6 @@ module.exports = function createTaxRouter(deps) {
     // toggle never leaves a stale company name on the customer.
     const businessName = customerType === 'business' ? trim(body.businessName, 200) : '';
     const phone = trim(body.phone, MAX_PHONE_LEN);
-    let whatsapp = '';
-    if (body.whatsapp !== undefined && String(body.whatsapp || '').trim() !== '') {
-      const norm = normalizeWhatsapp(String(body.whatsapp));
-      if (!norm) return res.status(400).json({ error: 'whatsapp_invalid',
-        message: 'WhatsApp must be E.164 format, e.g. +14155551234' });
-      whatsapp = norm;
-    }
     const locale = (body.locale === 'en') ? 'en' : 'es';
     // Phase: relationships (array of type ids) + sendWelcomeEmail (bool,
     // default true). Both are optional but the Add form sends them.
@@ -1455,7 +1378,7 @@ module.exports = function createTaxRouter(deps) {
       name: np.name, first_name: np.first, middle_name: np.middle, last_name: np.last,
       business_name: businessName,
       customer_type: customerType,
-      phone, whatsapp, locale, status: 'active',
+      phone, locale, status: 'active',
     });
     if (error) return sendSupabaseError(res, error);
 
@@ -1604,37 +1527,36 @@ module.exports = function createTaxRouter(deps) {
     const headerEn = `Hi ${firstName ? firstName + ',' : 'there,'} greetings from *${bizName}*!\n\nWe are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.\n\nOur services:\n`;
     const headerEs = `Hola${firstName ? ' ' + firstName + ',' : ','} ¡saludos de parte de *${bizName}*!\n\nSomos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.\n\nNuestros servicios:\n`;
 
-    const ctaLabel = lang === 'es'
-      ? `Más información y chatea con nuestro asistente de IA ${EMOJI_AI}`
-      : `Learn More & Chat with our AI assistant ${EMOJI_AI}`;
+    const learnMoreLabel = lang === 'es' ? 'Más información' : 'Learn more';
+    const aiChatLabel = lang === 'es' ? 'Chatea con nuestro asistente de IA' : 'Chat with our AI assistant';
 
-    const langParam = `?lang=${lang}`;
     const serviceLines = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
-      const pageUrl = `${publicUrl}${langParam}#service-${serviceSlug}`;
+      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
       const emoji = categoryEmoji(p.category);
-      return `${emoji} *${name}*\n${desc}\n${ctaLabel} ${pageUrl}`;
+      return `${emoji} *${name}*\n${desc}\n${learnMoreLabel} ${EMOJI_LINK} ${pageUrl}\n${EMOJI_AI} ${aiChatLabel}: ${agentUrl}`;
     }).join('\n\n');
 
     const waDigits = (community.whatsapp || '').replace(/\D/g, '');
     const footerEn = [
-      `${EMOJI_AI} *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}${langParam}`,
+      `${EMOJI_AI} *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}`,
       community.phone ? `📞 Phone: ${community.phone}` : '',
       waDigits ? `💬 WhatsApp: https://wa.me/${waDigits}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}${langParam}`,
+      `🌐 ${publicUrl}`,
       `📄 Services portfolio: ${brochureUrl}?lang=en`,
       `We are happy to answer any questions with no obligation. Looking forward to hearing from you!\n\nWarm regards,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
 
     const footerEs = [
-      `${EMOJI_AI} *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}${langParam}`,
+      `${EMOJI_AI} *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}`,
       community.phone ? `📞 Teléfono: ${community.phone}` : '',
       waDigits ? `💬 WhatsApp: https://wa.me/${waDigits}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}${langParam}`,
+      `🌐 ${publicUrl}`,
       `📄 Portafolio de servicios: ${brochureUrl}?lang=es`,
       `Estamos felices de responder cualquier pregunta sin ningún compromiso. ¡Esperamos saber de usted!\n\nSaludos cordiales,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
@@ -1670,19 +1592,18 @@ module.exports = function createTaxRouter(deps) {
     // Build simple HTML for email
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
-    const ctaLabelHtml = lang === 'es'
-      ? `Más información y chatea con nuestro asistente de IA 🤖`
-      : `Learn More &amp; Chat with our AI assistant 🤖`;
     const serviceHtml = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
-      const pageUrl = `${publicUrl}${langParam}#service-${serviceSlug}`;
+      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
       const emoji = categoryEmoji(p.category);
       return `<div style="margin-bottom:20px;padding:14px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0">
   <p style="margin:0 0 6px;font-size:16px;font-weight:700">${emoji} ${escHtml(name)}</p>
   <p style="margin:0 0 8px;color:#374151">${escHtml(desc)}</p>
-  <p style="margin:0">${ctaLabelHtml} <a href="${pageUrl}" style="color:#1e3a8a">${pageUrl}</a></p>
+  <p style="margin:0 0 4px">${learnMoreLabel} 🔗 <a href="${pageUrl}" style="color:#1e3a8a">${pageUrl}</a></p>
+  <p style="margin:0">🤖 ${aiChatLabel}: <a href="${agentUrl}" style="color:#1e3a8a">${agentUrl}</a></p>
 </div>`;
     }).join('');
 
@@ -1694,7 +1615,7 @@ module.exports = function createTaxRouter(deps) {
       community.phone ? (lang === 'es' ? `📞 Teléfono: ${community.phone}` : `📞 Phone: ${community.phone}`) : '',
       waDigits ? `💬 WhatsApp: <a href="https://wa.me/${waDigits}">https://wa.me/${waDigits}</a>` : '',
       community.contact_email ? `📧 Email: <a href="mailto:${community.contact_email}">${community.contact_email}</a>` : '',
-      `🌐 <a href="${publicUrl}${langParam}">${publicUrl}</a>`,
+      `🌐 <a href="${publicUrl}">${publicUrl}</a>`,
       `📄 <a href="${brochureUrl}?lang=${lang}">${lang === 'es' ? 'Portafolio de servicios' : 'Services portfolio'}</a>`,
     ].filter(Boolean);
 
@@ -1779,39 +1700,38 @@ ${closingHtml}
     const firstName = cust.first_name || cust.name?.split(' ')[0] || '';
     const brochureUrl = `${appBase}/api/m/tax/community/${slug}/brochure.pdf`;
     const categoryEmoji2 = (cat) => ({ individual: '📋', business: '🏢', audit: '📋', general: '📚' }[cat] || '📄');
-    const ctaLabel2 = lang === 'es'
-      ? `Más información y chatea con nuestro asistente de IA 🤖`
-      : `Learn More & Chat with our AI assistant 🤖`;
+    const learnMoreLbl = lang === 'es' ? 'Más información' : 'Learn more';
+    const aiChatLbl = lang === 'es' ? 'Chatea con nuestro asistente de IA' : 'Chat with our AI assistant';
 
     const headerEn2 = `Hi ${firstName ? firstName + ',' : 'there,'} greetings from *${bizName}*!\n\nWe are a bilingual tax and accounting firm helping individuals and businesses across the United States stay compliant, organized, and ahead of deadlines.\n\nOur services:\n`;
     const headerEs2 = `Hola${firstName ? ' ' + firstName + ',' : ','} ¡saludos de parte de *${bizName}*!\n\nSomos una firma bilingüe de impuestos y contabilidad que ayuda a personas y empresas en todo Estados Unidos a mantenerse en cumplimiento, organizadas y al día con sus obligaciones fiscales.\n\nNuestros servicios:\n`;
 
-    const langParam2 = `?lang=${lang}`;
     const svcLines = (products || []).map(p => {
       const name = pick(p.name_i18n);
       const desc = pick(p.description_i18n);
       const serviceSlug = p.slug;
-      const pageUrl = `${publicUrl}${langParam2}#service-${serviceSlug}`;
+      const pageUrl = `${publicUrl}#service-${serviceSlug}`;
+      const agentUrl = `${publicUrl}?service=${serviceSlug}`;
       const emoji = categoryEmoji2(p.category);
-      return `${emoji} *${name}*\n${desc}\n${ctaLabel2} ${pageUrl}`;
+      return `${emoji} *${name}*\n${desc}\n${learnMoreLbl} 🔗 ${pageUrl}\n🤖 ${aiChatLbl}: ${agentUrl}`;
     }).join('\n\n');
 
     const waDigits2 = (community.whatsapp || '').replace(/\D/g, '');
     const footerEn2 = [
-      `🤖 *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}${langParam2}`,
+      `🤖 *Have questions? Our AI assistant is available 24/7*\nGet instant answers about our services and connect with our team:\n👉 ${publicUrl}`,
       community.phone ? `📞 Phone: ${community.phone}` : '',
       waDigits2 ? `💬 WhatsApp: https://wa.me/${waDigits2}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}${langParam2}`,
+      `🌐 ${publicUrl}`,
       `📄 Services portfolio: ${brochureUrl}?lang=en`,
       `We are happy to answer any questions with no obligation. Looking forward to hearing from you!\n\nWarm regards,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
     const footerEs2 = [
-      `🤖 *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}${langParam2}`,
+      `🤖 *¿Tiene preguntas? Nuestro asistente de IA está disponible 24/7*\nObtenga respuestas instantáneas sobre nuestros servicios y conéctese con nuestro equipo:\n👉 ${publicUrl}`,
       community.phone ? `📞 Teléfono: ${community.phone}` : '',
       waDigits2 ? `💬 WhatsApp: https://wa.me/${waDigits2}` : '',
       community.contact_email ? `📧 Email: ${community.contact_email}` : '',
-      `🌐 ${publicUrl}${langParam2}`,
+      `🌐 ${publicUrl}`,
       `📄 Portafolio de servicios: ${brochureUrl}?lang=es`,
       `Estamos felices de responder cualquier pregunta sin ningún compromiso. ¡Esperamos saber de usted!\n\nSaludos cordiales,\n*${bizName}*`,
     ].filter(Boolean).join('\n');
@@ -3060,20 +2980,8 @@ ${closingHtml}
       update.middle_name = np.middle;
       update.last_name = np.last;
     }
-    if (body.customerType !== undefined) {
-      const ct = String(body.customerType || '').toLowerCase() === 'business' ? 'business' : 'individual';
-      update.customer_type = ct;
-    }
     if (body.businessName !== undefined) {
-      const ct = body.customerType !== undefined
-        ? (String(body.customerType).toLowerCase() === 'business' ? 'business' : 'individual')
-        : null;
-      const name = trim(body.businessName, 200);
-      if (ct === 'business' && !name) {
-        return res.status(400).json({ error: 'business_name_required',
-          message: 'Business name is required for a business customer.' });
-      }
-      update.business_name = ct === 'individual' ? '' : name;
+      update.business_name = trim(body.businessName, 200);
     }
     if (body.phone !== undefined) update.phone = trim(body.phone, MAX_PHONE_LEN);
 
@@ -3944,7 +3852,7 @@ ${closingHtml}
       .select(`
         id, slug, category, enabled, display_order, icon,
         name_i18n, description_i18n, long_description_i18n, required_documents, video_url,
-        cadence_kind, anchor_rule, employee_notes_i18n, certifications,
+        cadence_kind, anchor_rule, employee_notes_i18n,
         schedules:tax_filing_schedules ( id, slug, jurisdiction, cadence, enabled, name_i18n, info_checklist )
       `)
       .eq('community_id', communitySlug)
@@ -4118,11 +4026,6 @@ ${closingHtml}
         }
         return '';
       }).filter(d => (typeof d === 'string' ? d : (d.en || d.es)));
-    }
-    if (Array.isArray(body.certifications)) {
-      update.certifications = body.certifications.slice(0, 20)
-        .map(c => String(c).trim().slice(0, 200))
-        .filter(Boolean);
     }
     if (body.enabled !== undefined) update.enabled = !!body.enabled;
     if (body.videoUrl !== undefined) {
@@ -4775,7 +4678,7 @@ ${closingHtml}
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, source, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at, ai_conversation')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -11521,7 +11424,7 @@ ${closingHtml}
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, created_at, firebase_uid, last_sign_in_at')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -11699,10 +11602,6 @@ ${closingHtml}
     }
     if (Number.isFinite(Number(body.displayOrder))) {
       update.homepage_display_order = Math.max(0, Math.min(10000, Math.round(Number(body.displayOrder))));
-    }
-    if (Array.isArray(body.certifications)) {
-      update.certifications = body.certifications.slice(0, 20)
-        .map(c => String(c).trim().slice(0, 200)).filter(Boolean);
     }
     if (Object.keys(update).length === 1) {
       return res.status(400).json({ error: 'Nothing to update.' });
@@ -12523,7 +12422,7 @@ ${closingHtml}
     if (!customerId) return res.status(400).json({ error: 'customerId required.' });
     const [reportsRes, tokenRes, eligible] = await Promise.all([
       supabase.from('tax_financial_reports')
-        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, task_id, created_at, updated_at, tax_tasks(title)')
+        .select('id, period_label, period_start, period_end, cadence, status, revision, published_at, first_sent_at, last_sent_at, send_count, prepared_by_email, task_id, created_at, updated_at')
         .eq('customer_id', customerId)
         .order('period_end', { ascending: false }),
       supabase.from('tax_report_access_tokens')
@@ -12532,11 +12431,8 @@ ${closingHtml}
       customerHasBookkeepingService(customerId),
     ]);
     if (reportsRes.error) return sendSupabaseError(res, reportsRes.error);
-    const reports = (reportsRes.data || []).map(r => ({
-      ...r, task_title: r.tax_tasks?.title || null, tax_tasks: undefined,
-    }));
     res.json({
-      reports,
+      reports: reportsRes.data || [],
       accessToken: tokenRes.data || null,
       bookkeepingActive: eligible,
     });
@@ -12804,14 +12700,12 @@ ${closingHtml}
       tokenInfo = await ensureAccessToken(rpt.community_id, rpt.customer_id, { rotate: true });
     }
     const viewUrl = reportViewUrl(rpt.community_id, tokenInfo.raw);
-    const custLang = cust?.locale === 'en' ? 'en' : 'es';
-    const reportUrl = `${viewUrl}#report=${encodeURIComponent(id)}&lang=${custLang}`;
 
     let sendResult = { sent: false, skipped: true, reason: 'sender_not_configured' };
     if (typeof sendTaxBookkeepingReportEmail === 'function') {
       try {
         sendResult = await sendTaxBookkeepingReportEmail({
-          community: comm, customer: cust, report: rpt, viewUrl, reportUrl,
+          community: comm, customer: cust, report: rpt, viewUrl,
           isResend: rpt.status === 'sent',
         });
       } catch (e) {
@@ -13197,17 +13091,15 @@ ${closingHtml}
     const kind = req.params.kind === 'balance' ? 'balance' : 'pl';
     const reportId = trim(req.params.reportId, 200);
     const { data: rpt } = await supabase.from('tax_financial_reports')
-      .select('id, pl_pdf_path, balance_pdf_path')
+      .select('id, pl_pdf_path, balance_pdf_path, pl_data, balance_data')
       .eq('id', reportId).eq('customer_id', t.row.customer_id).maybeSingle();
     if (!rpt) return res.status(404).send('not_found');
     const path = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
     if (!path) return res.status(404).send('pdf_not_uploaded');
-    const ext = path.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'pdf';
-    const label = kind === 'balance' ? 'balance-sheet' : 'pl';
+    const storedName = kind === 'balance' ? rpt.balance_data?._fileName : rpt.pl_data?._fileName;
     const { data: signed, error } = await supabase.storage
-      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5, {
-        download: `${label}.${ext}`,
-      });
+      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5, // 5min
+        storedName ? { download: storedName } : undefined);
     if (error || !signed?.signedUrl) return res.status(500).send('sign_failed');
     res.redirect(302, signed.signedUrl);
   });
