@@ -1969,7 +1969,7 @@ module.exports = function createTaxSenders(deps) {
   // Includes an estimation disclaimer per owner preference. Defaults
   // to Spanish (owner's customer base); switches to English when
   // cust.locale === 'en'.
-  const sendTaxBookkeepingReportEmail = async ({ community, customer, report, viewUrl, isResend }) => {
+  const sendTaxBookkeepingReportEmail = async ({ community, customer, report, viewUrl, reportUrl, isResend }) => {
     if (!emailConfigured) return { sent: false, skipped: true, reason: 'email_not_configured' };
     const to = String(customer?.preferred_communication_email || customer?.email || '').trim();
     if (!to) return { sent: false, skipped: true, reason: 'customer_email_missing' };
@@ -2008,6 +2008,7 @@ module.exports = function createTaxSenders(deps) {
     };
     const fmtPct = (n) => `${(Math.round((Number(n) || 0) * 10) / 10).toFixed(1)}%`;
 
+    const directLink = reportUrl || viewUrl;
     const T = lang === 'en' ? {
       eyebrow: isResend ? 'Updated report' : 'New financial report',
       greeting: firstName ? `Hi ${firstName},` : 'Hello,',
@@ -2015,7 +2016,8 @@ module.exports = function createTaxSenders(deps) {
       revenue: 'Revenue',
       netIncome: 'Net income',
       grossMargin: 'Gross margin',
-      cta: 'View full report',
+      cta: `View ${report?.period_label || ''} report`,
+      allReports: 'View all reports',
       blurb: 'Tap the button to open your interactive dashboard. You will be asked to confirm the email address this message was sent to.',
       disclaimer: 'The information shown is estimated based on what you have provided us. Please verify against your own books before making important decisions.',
       footer: `Prepared by ${practiceName}. Reply to this email with any questions.`,
@@ -2029,7 +2031,8 @@ module.exports = function createTaxSenders(deps) {
       revenue: 'Ingresos',
       netIncome: 'Utilidad neta',
       grossMargin: 'Margen bruto',
-      cta: 'Ver informe completo',
+      cta: `Ver informe ${report?.period_label || ''}`,
+      allReports: 'Ver todos los informes',
       blurb: 'Toque el botón para abrir su panel interactivo. Se le pedirá confirmar la dirección de correo a la que se envió este mensaje.',
       disclaimer: 'La información mostrada es estimada basada en lo que usted nos ha proporcionado. Verifique con sus propios libros antes de tomar decisiones importantes.',
       footer: `Preparado por ${practiceName}. Responda a este correo con cualquier pregunta.`,
@@ -2066,8 +2069,11 @@ module.exports = function createTaxSenders(deps) {
         <tr><td style="padding:18px 26px 8px;font-size:14px;color:#475569;line-height:1.55">
           ${escapeHtml(T.blurb)}
         </td></tr>
-        <tr><td align="center" style="padding:12px 26px 24px">
-          <a href="${escapeHtml(viewUrl)}" style="display:inline-block;background:#0f766e;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;font-size:15px">${escapeHtml(T.cta)} →</a>
+        <tr><td align="center" style="padding:12px 26px 8px">
+          <a href="${escapeHtml(directLink)}" style="display:inline-block;background:#0f766e;color:#fff;text-decoration:none;padding:14px 28px;border-radius:10px;font-weight:700;font-size:15px">${escapeHtml(T.cta)} →</a>
+        </td></tr>
+        <tr><td align="center" style="padding:4px 26px 24px">
+          <a href="${escapeHtml(viewUrl)}" style="font-size:13px;color:#0f766e;text-decoration:underline">${escapeHtml(T.allReports)}</a>
         </td></tr>
         <tr><td style="padding:0 26px 24px">
           <div style="background:#fef3c7;border-left:3px solid #b45309;border-radius:6px;padding:12px 14px;font-size:12.5px;color:#78350f;line-height:1.5">
@@ -2088,7 +2094,9 @@ module.exports = function createTaxSenders(deps) {
       `${T.grossMargin}: ${fmtPct(grossMargin)}`,
       '',
       T.blurb,
-      viewUrl,
+      directLink,
+      '',
+      `${T.allReports}: ${viewUrl}`,
       '',
       T.disclaimer,
       '',

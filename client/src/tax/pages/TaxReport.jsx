@@ -133,6 +133,10 @@ function readParsedHashReport() {
 function readOwnerSend() {
   return /ownerSend=1/.test(window.location.hash || '');
 }
+function readHashLang() {
+  const m = (window.location.hash || '').match(/[?&]lang=(en|es)/);
+  return m ? m[1] : null;
+}
 
 function OwnerPreviewBanner({ reportId, customerName }) {
   const [sent, setSent] = useState(false);
@@ -180,7 +184,7 @@ export default function TaxReport({ communitySlug, token }) {
   const [customer, setCustomer] = useState(null);
   const [reports, setReports] = useState([]);
   const [errCode, setErrCode] = useState('');
-  const [lang, setLang] = useState('es');
+  const [lang, setLang] = useState(() => readHashLang() || 'es');
   const [selectedId, setSelectedId] = useState('');
 
   const load = async () => {
@@ -563,8 +567,12 @@ function Section({ title, children }) {
 
 function RevenueMix({ r, t }) {
   const { revenueChannels, revenueTotal } = totalsFromReport(r);
-  // Coalesce tiny long-tail entries into "Other" so the donut + list
-  // don't fragment into 30 slivers on customers with many channels.
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const pl = r.pl || {};
+
+  // Build group-level detail for drill-down when sectional data is available.
+  const incomeGroups = pl.sections?.income?.groups || [];
+
   const sorted = [...revenueChannels].sort((a, b) => b.amount - a.amount);
   const TOP = 6;
   const top = sorted.slice(0, TOP);
@@ -579,12 +587,35 @@ function RevenueMix({ r, t }) {
     <Section title={t.revenueMixTitle}>
       <Donut entries={entries} total={revenueTotal || entries.reduce((s, e) => s + e.amount, 0)} />
       <div style={{ marginTop: 12 }}>
-        {entries.map((e, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 0', borderBottom: '1px solid #f1f5f9' }}>
-            <span><span style={{ display: 'inline-block', width: 10, height: 10, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], borderRadius: 2, marginRight: 8, verticalAlign: 'middle' }} />{(t.channels && t.channels[e.key]) || e.name}</span>
-            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(e.amount)}</span>
-          </div>
-        ))}
+        {entries.map((e, i) => {
+          const group = incomeGroups.find(g => g.name === e.name);
+          const items = group ? (group.items || []).filter(it => Number(it.amount) > 0 && !it.rollup) : [];
+          const isExpanded = expandedGroup === e.name;
+          return (
+            <div key={i}>
+              <div
+                onClick={() => items.length ? setExpandedGroup(isExpanded ? null : e.name) : null}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '6px 0', borderBottom: '1px solid #f1f5f9', cursor: items.length ? 'pointer' : 'default' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ display: 'inline-block', width: 10, height: 10, background: CHANNEL_COLORS[i % CHANNEL_COLORS.length], borderRadius: 2, flexShrink: 0 }} />
+                  {(t.channels && t.channels[e.key]) || e.name}
+                  {items.length > 0 && <span style={{ fontSize: 10, color: '#0f766e', fontWeight: 600 }}>{isExpanded ? '▲' : '▼'}</span>}
+                </span>
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(e.amount)}</span>
+              </div>
+              {isExpanded && items.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: 6, margin: '4px 0 8px', padding: '4px 8px' }}>
+                  {items.map((it, j) => (
+                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: '#475569' }}>
+                      <span style={{ paddingLeft: 18 }}>{it.name}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(it.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </Section>
   );
@@ -615,24 +646,49 @@ function Donut({ entries, total }) {
 
 function ExpenseBars({ r, t }) {
   const { expenseCategories } = totalsFromReport(r);
-  const entries = [...expenseCategories]
-    .sort((a, b) => b.amount - a.amount).slice(0, 8);
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const pl = r.pl || {};
+  const expenseGroups = pl.sections?.expenses?.groups || [];
+
+  const entries = [...expenseCategories].sort((a, b) => b.amount - a.amount).slice(0, 8);
   if (entries.length === 0) return <Section title={t.expensesTitle}><div style={{ color: '#94a3b8' }}>—</div></Section>;
   const max = entries[0].amount;
   return (
     <Section title={t.expensesTitle}>
       <div style={{ display: 'grid', gap: 8 }}>
-        {entries.map((e, i) => (
-          <div key={i}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3 }}>
-              <span style={{ fontWeight: 600 }}>{(t.expenseLabels && t.expenseLabels[e.key]) || e.name}</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>{fmtCurrencyFull(e.amount)}</span>
+        {entries.map((e, i) => {
+          const group = expenseGroups.find(g => g.name === e.name);
+          const items = group ? (group.items || []).filter(it => Number(it.amount) > 0 && !it.rollup) : [];
+          const isExpanded = expandedGroup === e.name;
+          return (
+            <div key={i}>
+              <div
+                onClick={() => items.length ? setExpandedGroup(isExpanded ? null : e.name) : null}
+                style={{ cursor: items.length ? 'pointer' : 'default' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 3, alignItems: 'center' }}>
+                  <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {(t.expenseLabels && t.expenseLabels[e.key]) || e.name}
+                    {items.length > 0 && <span style={{ fontSize: 10, color: '#0f766e', fontWeight: 600 }}>{isExpanded ? '▲' : '▼'}</span>}
+                  </span>
+                  <span style={{ fontVariantNumeric: 'tabular-nums', color: '#475569' }}>{fmtCurrencyFull(e.amount)}</span>
+                </div>
+                <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(e.amount / max) * 100}%`, background: '#0f766e', borderRadius: 4 }} />
+                </div>
+              </div>
+              {isExpanded && items.length > 0 && (
+                <div style={{ background: '#f8fafc', borderRadius: 6, marginTop: 6, padding: '4px 8px' }}>
+                  {items.map((it, j) => (
+                    <div key={j} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0', color: '#475569' }}>
+                      <span style={{ paddingLeft: 18 }}>{it.name}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{fmtCurrencyFull(it.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-            <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${(e.amount / max) * 100}%`, background: '#0f766e', borderRadius: 4 }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Section>
   );
