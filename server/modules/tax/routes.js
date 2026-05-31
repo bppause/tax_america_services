@@ -13091,13 +13091,15 @@ ${closingHtml}
     const kind = req.params.kind === 'balance' ? 'balance' : 'pl';
     const reportId = trim(req.params.reportId, 200);
     const { data: rpt } = await supabase.from('tax_financial_reports')
-      .select('id, pl_pdf_path, balance_pdf_path')
+      .select('id, pl_pdf_path, balance_pdf_path, pl_data, balance_data')
       .eq('id', reportId).eq('customer_id', t.row.customer_id).maybeSingle();
     if (!rpt) return res.status(404).send('not_found');
     const path = kind === 'balance' ? rpt.balance_pdf_path : rpt.pl_pdf_path;
     if (!path) return res.status(404).send('pdf_not_uploaded');
+    const storedName = kind === 'balance' ? rpt.balance_data?._fileName : rpt.pl_data?._fileName;
     const { data: signed, error } = await supabase.storage
-      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5); // 5min
+      .from('tax-bookkeeping-pdfs').createSignedUrl(path, 60 * 5, // 5min
+        storedName ? { download: storedName } : undefined);
     if (error || !signed?.signedUrl) return res.status(500).send('sign_failed');
     res.redirect(302, signed.signedUrl);
   });
