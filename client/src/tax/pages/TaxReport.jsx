@@ -125,6 +125,13 @@ function fmtDate(iso, lang) {
     { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
+function fmtPeriodLabel(label, start, end, lang) {
+  if (!start || !end) return label || '';
+  const s = fmtDate(start, lang);
+  const e = fmtDate(end, lang);
+  return `${label} · ${s} – ${e}`;
+}
+
 function readParsedHashReport() {
   // /r/{token}#report={id} — opens that specific report on load
   const m = (window.location.hash || '').match(/report=([^&]+)/);
@@ -376,10 +383,9 @@ function ReportList({ reports, t, onPick, lang }) {
                   background: '#fff', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
                 }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>{r.period_label}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{fmtPeriodLabel(r.period_label, r.period_start, r.period_end, lang)}</div>
                   <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
-                    {fmtDate(r.period_start, lang)} — {fmtDate(r.period_end, lang)}
-                    {r.revision > 1 && <> · {t.revision} {r.revision}</>}
+                    {r.revision > 1 && <>{t.revision} {r.revision}</>}
                   </div>
                   {r.pl?._fileName && (
                     <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>📊 {r.pl._fileName}</div>
@@ -419,10 +425,7 @@ function ReportDetail({ report: summary, token, t, lang, practice, onBack }) {
 
       <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 12, padding: '18px 22px', marginBottom: 16, boxShadow: '0 1px 3px rgba(15,23,42,.04)' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
-          <h2 style={{ margin: 0, fontSize: 22 }}>{r.period_label}</h2>
-          <span style={{ color: '#64748b', fontSize: 13 }}>
-            {fmtDate(r.period_start, lang)} — {fmtDate(r.period_end, lang)}
-          </span>
+          <h2 style={{ margin: 0, fontSize: 22 }}>{fmtPeriodLabel(r.period_label, r.period_start, r.period_end, lang)}</h2>
           {r.revision > 1 && (
             <span style={{ fontSize: 11, fontWeight: 700, color: '#b45309', background: '#fef3c7', padding: '2px 8px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: '.04em' }}>
               {t.updatedNote} {fmtDate(r.updated_at, lang)}
@@ -716,7 +719,7 @@ function Yoy({ r, prior, t }) {
   return (
     <Section title={t.yoyTitle}>
       <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-        {prior.period_label} → {r.period_label}
+        {fmtPeriodLabel(prior.period_label, prior.period_start, prior.period_end, lang)} → {fmtPeriodLabel(r.period_label, r.period_start, r.period_end, lang)}
       </div>
       <div style={{ display: 'grid', gap: 12 }}>
         {series.map(([label, a, b]) => (

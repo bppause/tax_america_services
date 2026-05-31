@@ -281,6 +281,12 @@ function fmtDate(iso, locale) {
   return d.toLocaleDateString(locale === 'en' ? 'en-US' : 'es-ES', { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
+function fmtPeriodLabel(label, start, end, locale) {
+  if (!start || !end) return label || '';
+  return `${label} · ${fmtDate(start, locale)} – ${fmtDate(end, locale)}`;
+}
+}
+
 const STATUS_STYLE = {
   draft:     { bg: '#f1f5f9', color: '#334155' },
   published: { bg: '#fef3c7', color: '#92400e' },
@@ -760,7 +766,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
     }}>
       <div style={{ minWidth: 0, flex: '1 1 240px' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <strong>{r.period_label}</strong>
+          <strong>{fmtPeriodLabel(r.period_label, r.period_start, r.period_end, locale)}</strong>
           <span style={{
             display: 'inline-block', padding: '2px 8px', borderRadius: 999,
             fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
@@ -769,8 +775,7 @@ function ReportRow({ r, t, locale, onEdit, onPublish, onSend, onResend, onPrevie
           {r.revision > 1 && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>{t('owner.customer.bookkeeping.row.revision', { n: r.revision })}</span>}
         </div>
         <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>
-          {fmtDate(r.period_start, locale)} – {fmtDate(r.period_end, locale)}
-          {r.published_at && <> · {t('owner.customer.bookkeeping.row.published', { date: fmtDate(r.published_at, locale) })}</>}
+          {r.published_at && <>{t('owner.customer.bookkeeping.row.published', { date: fmtDate(r.published_at, locale) })}</>}
           {r.first_sent_at && (
             <> · {r.send_count > 1
               ? t('owner.customer.bookkeeping.row.sentMulti', { date: fmtDate(r.first_sent_at, locale), n: r.send_count })
