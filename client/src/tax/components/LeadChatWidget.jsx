@@ -48,8 +48,9 @@ export default function LeadChatWidget({ community, products, preselectedProduct
   const [formErrs, setFormErrs] = useState({});
   // true when saved info was found and the lead hasn't cleared it yet.
   const [usingRemembered, setUsingRemembered] = useState(!!savedContact);
-  const bottomRef = useRef(null);
-  const inputRef  = useRef(null);
+  const bottomRef  = useRef(null);
+  const inputRef   = useRef(null);
+  const sessionRef = useRef(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
 
   const visibleProducts = (products || []).filter(p => p.enabled !== false);
 

@@ -98,6 +98,7 @@ export const taxApi = {
   // Public (Phase 1 + 1.5)
   getCommunity(slug)              { return request('GET',  `/community/${encodeURIComponent(slug)}`); },
   getCommunityFaqs(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/faqs`); },
+  logChatInteraction(slug, payload) { return request('POST', `/community/${encodeURIComponent(slug)}/chat-log`, payload); },
   getCommunityArticles(slug)      { return request('GET',  `/community/${encodeURIComponent(slug)}/articles`); },
   getCommunityNews(slug)          { return request('GET',  `/community/${encodeURIComponent(slug)}/news`); },
   getCommunityDeadlines(slug)     { return request('GET',  `/community/${encodeURIComponent(slug)}/deadlines`); },
