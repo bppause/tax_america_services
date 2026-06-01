@@ -1028,18 +1028,31 @@ module.exports = function createTaxRouter(deps) {
       `- NEVER provide specific tax advice, legal opinions, or determinations that depend on the`,
       `  visitor's individual numbers, documents, or legal situation — those require a licensed professional.`,
       `- Ask one clarifying question at a time to understand the prospect's situation.`,
-      `- Use [NEEDS_OWNER: <one-line reason>] immediately (even on the first substantive reply) when:`,
-      `  • The question requires a certified professional's judgment (CPA, EA, CAA, tax attorney)`,
-      `  • The answer depends on reviewing their actual documents, returns, or financials`,
-      `  • The topic involves legal liability, penalties, audit defense, or compliance determinations`,
-      `  • They ask for a specific deduction ruling, filing status determination, or entity structure advice`,
-      `  • They need a price quote or service scope tailored to their situation`,
-      `  • Anything where the wrong answer could cause them financial or legal harm`,
-      `  Before the token, give a brief warm explanation and name the specific credential from the team`,
-      `  that covers this (e.g. "This is a question for our Enrolled Agent" or "Our CPA can review this").`,
-      `- Use [READY_TO_CONNECT] after 3+ general exchanges or when the prospect is ready to move forward`,
-      `  with general service interest and no complex professional question.`,
-      `- Only use one token per reply, never both. [NEEDS_OWNER] takes priority.`,
+      '',
+      `Token reference — use exactly one per reply when applicable, in priority order:`,
+      '',
+      `1. [NEEDS_OWNER: <one-line reason>] — use immediately when:`,
+      `   • The question requires a certified professional's judgment (CPA, EA, CAA, tax attorney)`,
+      `   • The answer depends on reviewing their actual documents, returns, or financials`,
+      `   • Legal liability, penalties, audit defense, or compliance determinations`,
+      `   • Specific deduction ruling, filing status determination, or entity structure advice`,
+      `   • Price quote or service scope tailored to their situation`,
+      `   • Anything where a wrong answer could cause financial or legal harm`,
+      `   Before the token: brief warm explanation naming the relevant credential`,
+      `   (e.g. "This is a question for our Enrolled Agent" / "Our CPA can review this").`,
+      '',
+      `2. [VERIFY_WITH_OWNER] — use when you can give a helpful general answer but the information`,
+      `   may vary by situation, has exceptions, or would benefit from professional confirmation.`,
+      `   Examples: general deadlines that have exceptions, general deductibility rules that depend on`,
+      `   circumstances, tax law summaries where individual application may differ, threshold amounts`,
+      `   that could change, or any answer where "it depends on your situation" is genuinely true.`,
+      `   Place this token at the very end of your reply. Do NOT add any text after it.`,
+      '',
+      `3. [READY_TO_CONNECT] — use after 3+ general exchanges or when the prospect is clearly ready`,
+      `   to move forward and no professional verification question is pending.`,
+      '',
+      `- If none of the above apply, reply with no token.`,
+      `- Never use more than one token per reply. Priority: [NEEDS_OWNER] > [VERIFY_WITH_OWNER] > [READY_TO_CONNECT].`,
       `- Reply in the same language the user is writing in (English or Spanish).`,
     ].filter(Boolean).join('\n');
 
@@ -1066,11 +1079,13 @@ module.exports = function createTaxRouter(deps) {
     const needsOwnerMatch = aiText.match(/\[NEEDS_OWNER:\s*([^\]]+)\]/);
     const needsOwner = !!needsOwnerMatch;
     const needsOwnerReason = needsOwnerMatch ? needsOwnerMatch[1].trim() : null;
+    const verifyWithOwner = !needsOwner && aiText.includes('[VERIFY_WITH_OWNER]');
     const message = aiText
       .replace(/\[READY_TO_CONNECT\]\s*/g, '')
       .replace(/\[NEEDS_OWNER:[^\]]*\]\s*/g, '')
+      .replace(/\[VERIFY_WITH_OWNER\]\s*/g, '')
       .trim();
-    res.json({ message, readyToConnect: readyToConnect || needsOwner, needsOwner, needsOwnerReason });
+    res.json({ message, readyToConnect: readyToConnect || needsOwner, needsOwner, needsOwnerReason, verifyWithOwner });
   });
 
   // Phase 4b: lead inbox lives at /admin/leads — see below. /leads stays

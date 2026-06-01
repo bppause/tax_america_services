@@ -31,6 +31,8 @@ export default function LeadChatWidget({ community, products, preselectedProduct
   const [aiLoading, setAiLoading] = useState(false);
   const [err, setErr]             = useState('');
   const [needsOwnerReason, setNeedsOwnerReason] = useState(null);
+  // Index of the last AI message that carried a [VERIFY_WITH_OWNER] flag.
+  const [verifyMsgIndex, setVerifyMsgIndex] = useState(null);
   // Restore saved contact info from a previous session on this device.
   const STORAGE_KEY = 'tax_ai_contact_v1';
   const savedContact = (() => {
@@ -107,6 +109,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
     if (!text || aiLoading) return;
     setInput('');
     setErr('');
+    setVerifyMsgIndex(null);
     const next = [...messages, { role: 'user', content: text }];
     setMessages(next);
     setAiLoading(true);
@@ -121,9 +124,15 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       setMessages(updated);
       if (res.needsOwner) {
         setNeedsOwnerReason(res.needsOwnerReason || null);
+        setVerifyMsgIndex(null);
         setPhase('contact');
       } else if (res.readyToConnect) {
+        setVerifyMsgIndex(null);
         setPhase('contact');
+      } else if (res.verifyWithOwner) {
+        setVerifyMsgIndex(updated.length - 1);
+      } else {
+        setVerifyMsgIndex(null);
       }
       // Fire-and-forget: log this AI chat interaction for owner insights
       taxApi.logChatInteraction(community.id, {
@@ -342,7 +351,34 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       {/* Message thread */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
         {messages.map((m, i) => (
-          <ChatBubble key={i} role={m.role} content={m.content} />
+          <div key={i}>
+            <ChatBubble role={m.role} content={m.content} />
+            {verifyMsgIndex === i && m.role === 'assistant' && phase === 'chat' && (
+              <div style={{
+                margin: '6px 0 0 8px',
+                padding: '8px 12px',
+                background: '#fffbeb',
+                border: '1px solid #fcd34d',
+                borderRadius: 8,
+                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+              }}>
+                <span style={{ fontSize: 13, color: '#92400e', flex: 1, minWidth: 160 }}>
+                  {es
+                    ? '💡 Esta informacion puede variar. Verifícala con nuestro equipo certificado.'
+                    : '💡 This may vary by situation. Verify with our certified team.'}
+                </span>
+                <button type="button"
+                  onClick={() => setPhase('contact')}
+                  style={{
+                    padding: '4px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
+                    fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap',
+                  }}>
+                  {es ? 'Hablar con un experto' : 'Ask our team'}
+                </button>
+              </div>
+            )}
+          </div>
         ))}
         {aiLoading && <ChatBubble role="assistant" content="…" typing />}
         {err && (
