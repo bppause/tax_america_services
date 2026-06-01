@@ -157,6 +157,8 @@ const taxRemindersCron = require('./modules/tax/reminders')({
   publicAppUrl: () => publicAppUrl(),
   emailConfigured,
   sendTaxReminderEmail,
+  sendSpanishEmail,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
   auditLog,
 });
 

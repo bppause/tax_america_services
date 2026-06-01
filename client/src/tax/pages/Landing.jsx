@@ -198,7 +198,7 @@ export default function Landing({ communitySlug }) {
         <NewsSection communitySlug={communitySlug}
                      articles={news} displayLimit={newsLimit} />
         <ArticlesSection communitySlug={communitySlug} />
-        <FaqsSection communitySlug={communitySlug} />
+        <FaqsSection communitySlug={communitySlug} community={community} onOpenChat={() => setChatOpen(true)} />
         <About />
         <Contact community={community} products={products}
                  initialProductSlug={pendingService} />

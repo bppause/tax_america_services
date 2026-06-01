@@ -368,6 +368,39 @@ module.exports = function createTaxRouter(deps) {
     res.json({ community, products: products || [] });
   });
 
+  // ── POST /community/:slug/chat-log ──────────────────────────────────────────
+  // Public (no auth). Logs FAQ searches and AI chat queries for owner insights.
+  // Rate-limited: max 50 inserts per community per hour.
+  router.post('/community/:slug/chat-log', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const slug = trim(req.params.slug, 200);
+    if (!slug) return res.status(400).json({ error: 'Community slug required.' });
+    const { kind, query, aiResponse, locale, sessionId } = req.body || {};
+    if (!kind || !query) return res.status(400).json({ error: 'kind and query are required.' });
+    if (!['faq_search', 'ai_chat'].includes(kind)) return res.status(400).json({ error: 'Invalid kind.' });
+
+    // Rate-limit: count rows inserted in the last hour for this community
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { count, error: countErr } = await supabase
+      .from('tax_chat_logs')
+      .select('id', { count: 'exact', head: true })
+      .eq('community_id', slug)
+      .gte('created_at', oneHourAgo);
+    if (countErr) return sendSupabaseError(res, countErr);
+    if ((count || 0) >= 50) return res.status(429).json({ error: 'Rate limit exceeded.' });
+
+    const { error: insErr } = await supabase.from('tax_chat_logs').insert({
+      community_id: slug,
+      session_id: sessionId ? String(sessionId).slice(0, 100) : null,
+      kind,
+      query: String(query).slice(0, 2000),
+      ai_response: aiResponse ? String(aiResponse).slice(0, 8000) : null,
+      locale: locale ? String(locale).slice(0, 10) : 'en',
+    });
+    if (insErr) return sendSupabaseError(res, insErr);
+    return res.json({ ok: true });
+  });
+
   // ── GET /community/:slug/brochure.pdf?lang=es|en ─────────────────────────
   // Public services brochure — generated on-demand from live community data.
   // No auth required; suitable for linking from WhatsApp / email.
