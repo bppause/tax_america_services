@@ -73,16 +73,10 @@ export default function LeadChatWidget({ community, products, preselectedProduct
     const notSure = selectedSlugs.includes('__other__');
 
     const greeting = notSure
-      ? (es
-          ? `¡Hola! No hay problema si no estás seguro/a. Cuéntame un poco sobre tu situación — ¿eres particular o empresa, y qué necesitas resolver? Te ayudo a identificar el servicio adecuado.`
-          : `Hi! No worries if you're not sure — tell me a bit about your situation. Are you an individual or a business, and what are you trying to solve? I'll help point you to the right service.`)
+      ? t('chat.greeting.notSure')
       : realSelected.length === 1
-        ? (es
-            ? `¡Hola! Estoy aquí para responder tus preguntas sobre **${nameList}**. ¿Qué te gustaría saber?`
-            : `Hi! I'm here to answer your questions about **${nameList}**. What would you like to know?`)
-        : (es
-            ? `¡Hola! Puedo ayudarte con: **${nameList}**. ¿Por dónde quieres empezar?`
-            : `Hi! I can help you with: **${nameList}**. Where would you like to start?`);
+        ? t('chat.greeting.oneService', { name: nameList })
+        : t('chat.greeting.multiService', { names: nameList });
 
     setMessages([{ role: 'assistant', content: greeting }]);
     setTimeout(() => inputRef.current?.focus(), 100);
@@ -117,8 +111,9 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       const res = await taxApi.chatWithAi({
         communitySlug: community.id,
         productSlug: realSlugs[0] || '',
-        productSlugs: realSlugs,   // empty when "not sure" → AI covers all services
+        productSlugs: realSlugs,
         messages: next,
+        locale,
       });
       const updated = [...next, { role: 'assistant', content: res.message }];
       setMessages(updated);
@@ -279,7 +274,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                     color: selected ? 'var(--tax-brand-primary, #1d3a6d)' : 'var(--tax-muted)',
                     transition: 'all .12s',
                   }}>
-                  {selected ? '✓ ' : ''}{es ? 'No estoy seguro/a' : 'Not sure / Other'}
+                  {selected ? '✓ ' : ''}{t('chat.pick.notSure')}
                 </button>
               );
             })()}
@@ -287,9 +282,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
 
           {selectedSlugs.length > 0 && (
             <div style={{ marginTop: 14, fontSize: 13, color: 'var(--tax-muted)' }}>
-              {es
-                ? `Seleccionado: ${selectedSlugs.length} servicio${selectedSlugs.length > 1 ? 's' : ''}`
-                : `Selected: ${selectedSlugs.length} service${selectedSlugs.length > 1 ? 's' : ''}`}
+              {t('chat.pick.selectedCount', { count: selectedSlugs.length })}
             </div>
           )}
           <div ref={bottomRef} />
@@ -300,7 +293,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
             onClick={startChat}
             disabled={selectedSlugs.length === 0}
             style={{ width: '100%' }}>
-            {es ? 'Preguntar sobre estos servicios →' : 'Ask about these services →'}
+            {t('chat.pick.cta')}
           </button>
         </div>
       </div>
@@ -317,7 +310,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
           padding: '6px 0 8px', borderBottom: '1px solid var(--tax-border)', marginBottom: 4,
         }}>
           <span style={{ fontSize: 11, color: 'var(--tax-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
-            {es ? 'Sobre:' : 'Topic:'}
+            {t('chat.topic.label')}
           </span>
           {isUnsure ? (
             <span style={{
@@ -325,7 +318,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
               background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
               color: 'var(--tax-brand-primary)',
               border: '1px dashed color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)',
-            }}>{es ? 'No estoy seguro/a' : 'Not sure / Other'}</span>
+            }}>{t('chat.pick.notSure')}</span>
           ) : realSlugs.map(slug => {
             const p = visibleProducts.find(x => x.slug === slug);
             const name = p ? (pickI18n(p.name_i18n, locale).value || slug) : slug;
@@ -342,7 +335,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
             <button type="button" onClick={() => setPhase('pick')}
               style={{ fontSize: 11, background: 'none', border: 'none', cursor: 'pointer',
                        color: 'var(--tax-muted)', textDecoration: 'underline', padding: 0 }}>
-              {es ? 'cambiar' : 'change'}
+              {t('chat.topic.change')}
             </button>
           )}
         </div>
@@ -363,9 +356,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                 display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
               }}>
                 <span style={{ fontSize: 13, color: '#92400e', flex: 1, minWidth: 160 }}>
-                  {es
-                    ? '💡 Esta informacion puede variar. Verifícala con nuestro equipo certificado.'
-                    : '💡 This may vary by situation. Verify with our certified team.'}
+                  {'💡 '}{t('chat.verify.disclaimer')}
                 </span>
                 <button type="button"
                   onClick={() => setPhase('contact')}
@@ -374,7 +365,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                     background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
                     fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap',
                   }}>
-                  {es ? 'Hablar con un experto' : 'Ask our team'}
+                  {t('chat.verify.cta')}
                 </button>
               </div>
             )}
@@ -398,7 +389,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                 <span style={{ fontSize: 18, flexShrink: 0 }}>🧑‍💼</span>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 13, color: '#92400e', marginBottom: 2 }}>
-                    {es ? 'Esto requiere atención personalizada' : 'This needs personalized attention'}
+                    {t('chat.needsOwner.title')}
                   </div>
                   <div style={{ fontSize: 12, color: '#78350f', lineHeight: 1.4 }}>
                     {needsOwnerReason}
@@ -418,7 +409,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
               <div>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>{community.name}</div>
                 <div style={{ fontSize: 11, opacity: .85 }}>
-                  {es ? 'Te responderemos por email o WhatsApp' : 'We\'ll reply via email or WhatsApp'}
+                  {t('chat.contact.replyMethod')}
                 </div>
               </div>
             </div>
@@ -430,20 +421,20 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                 padding: '8px 12px', marginBottom: 12, gap: 8,
               }}>
                 <span style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>
-                  👋 {es ? `Bienvenido/a de nuevo, ${form.firstName}!` : `Welcome back, ${form.firstName}!`}
+                  {'👋 '}{t('chat.contact.welcomeBack', { name: form.firstName })}
                   <span style={{ fontWeight: 400, marginLeft: 6 }}>
-                    {es ? 'Tu información está pre-llenada.' : 'Your info is pre-filled.'}
+                    {t('chat.contact.preFilled')}
                   </span>
                 </span>
                 <button type="button" onClick={clearRemembered}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12,
                            color: '#166534', textDecoration: 'underline', whiteSpace: 'nowrap', padding: 0 }}>
-                  {es ? '¿No eres tú?' : 'Not you?'}
+                  {t('chat.contact.notYou')}
                 </button>
               </div>
             )}
             <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 14 }}>
-              {es ? '¿Cómo te contactamos?' : 'How should we reach you?'}
+              {t('chat.contact.howToReach')}
             </div>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
               {['individual', 'business'].map(ct => (
@@ -475,14 +466,14 @@ export default function LeadChatWidget({ community, products, preselectedProduct
               onClick={submitContact} disabled={phase === 'submitting'}
               style={{ width: '100%', marginTop: 4 }}>
               {phase === 'submitting'
-                ? (es ? 'Enviando…' : 'Sending…')
-                : (es ? `Conectar con ${community.name} →` : `Connect with ${community.name} →`)}
+                ? t('chat.contact.sending')
+                : t('chat.contact.submit', { name: community.name })}
             </button>
             </div>{/* /padding wrapper */}
           </div>
         )}
 
-        {phase === 'done' && <AppointmentHandoff community={community} locale={locale} />}
+        {phase === 'done' && <AppointmentHandoff community={community} />}
         <div ref={bottomRef} />
       </div>
 
@@ -490,14 +481,12 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       {phase === 'chat' && (
         <>
           <div style={{ fontSize: 10, color: 'var(--tax-muted)', textAlign: 'center', padding: '6px 8px 0', lineHeight: 1.4 }}>
-            {es
-              ? 'Este asistente de IA ofrece información general. No constituye asesoramiento legal ni fiscal.'
-              : 'This AI assistant provides general information only and does not constitute legal or tax advice.'}
+            {t('chat.disclaimer')}
           </div>
           <div style={{ display: 'flex', gap: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
             <textarea ref={inputRef} rows={2} value={input}
               onChange={e => setInput(e.target.value)} onKeyDown={onKey}
-              placeholder={es ? 'Escribe tu pregunta…' : 'Ask a question…'}
+              placeholder={t('chat.input.placeholder')}
               style={{
                 flex: 1, padding: '8px 10px', border: '1px solid var(--tax-border)',
                 borderRadius: 8, font: 'inherit', fontSize: 14, resize: 'none',
@@ -505,7 +494,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
             <button type="button" className="tax-btn tax-btn--primary"
               onClick={sendMessage} disabled={aiLoading || !input.trim()}
               style={{ alignSelf: 'flex-end', padding: '8px 16px' }}>
-              {es ? 'Enviar' : 'Send'}
+              {t('chat.input.send')}
             </button>
           </div>
           {messages.length >= 3 && (
@@ -515,7 +504,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
                 fontSize: 13, color: 'var(--tax-brand-primary, #1d3a6d)',
                 textDecoration: 'underline', textAlign: 'center',
               }}>
-              {es ? 'Listo para contactar al equipo →' : "I'm ready to connect with the team →"}
+              {t('chat.input.readyToConnect')}
             </button>
           )}
         </>
@@ -594,20 +583,15 @@ function PracticeHeader({ community }) {
   );
 }
 
-function AppointmentHandoff({ community, locale }) {
-  const es = locale === 'es';
+function AppointmentHandoff({ community }) {
+  const { t } = useT();
   const waDigits = String(community?.whatsapp || community?.phone || '')
     .replace(/^\+/, '').replace(/\D+/g, '');
   const waHref = waDigits
-    ? `https://wa.me/${waDigits}?text=${encodeURIComponent(
-        es ? `Hola, acabo de enviar mis datos en el chat de ${community.name}. Me gustaría coordinar una cita.`
-           : `Hi, I just submitted my info in the ${community.name} chat. I'd love to schedule an appointment.`
-      )}`
+    ? `https://wa.me/${waDigits}?text=${encodeURIComponent(t('chat.done.waMessage', { name: community.name }))}`
     : null;
   const emailHref = community?.contact_email
-    ? `mailto:${community.contact_email}?subject=${encodeURIComponent(
-        es ? `Solicitud de cita — ${community.name}` : `Appointment request — ${community.name}`
-      )}`
+    ? `mailto:${community.contact_email}?subject=${encodeURIComponent(t('chat.done.emailSubject', { name: community.name }))}`
     : null;
   const calendlyUrl = community?.calendly_url || null;
 
@@ -616,17 +600,15 @@ function AppointmentHandoff({ community, locale }) {
       <div style={{ background: '#f0fff4', padding: '16px 16px 12px', textAlign: 'center' }}>
         <div style={{ fontSize: 28, marginBottom: 6 }}>✓</div>
         <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4 }}>
-          {es ? '¡Gracias! Hemos recibido tu información.' : 'Got it — we received your info!'}
+          {t('chat.done.title')}
         </div>
         <div style={{ fontSize: 13, color: '#555', lineHeight: 1.5 }}>
-          {es
-            ? `${community?.name || 'El equipo'} te contactará por email o WhatsApp en menos de un día hábil.`
-            : `${community?.name || 'The team'} will reach out via email or WhatsApp within one business day.`}
+          {t('chat.done.body', { name: community?.name || '' })}
         </div>
       </div>
       <div style={{ background: '#fff', padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--tax-muted)', marginBottom: 2 }}>
-          {es ? 'Agenda tu cita ahora' : 'Book your appointment now'}
+          {t('chat.done.bookHeading')}
         </div>
         {calendlyUrl && (
           <a href={calendlyUrl} target="_blank" rel="noopener noreferrer"
@@ -634,7 +616,7 @@ function AppointmentHandoff({ community, locale }) {
                      background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
                      borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>
             <span style={{ fontSize: 18 }}>📅</span>
-            <span>{es ? 'Reservar una cita →' : 'Book an appointment →'}</span>
+            <span>{t('chat.done.bookCta')}</span>
           </a>
         )}
         {waHref && (
@@ -643,7 +625,7 @@ function AppointmentHandoff({ community, locale }) {
                      background: '#25d366', color: '#fff',
                      borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14 }}>
             <span style={{ fontSize: 18 }}>💬</span>
-            <span>{es ? 'Escribir por WhatsApp →' : 'Message us on WhatsApp →'}</span>
+            <span>{t('chat.done.waCta')}</span>
           </a>
         )}
         {emailHref && !calendlyUrl && (
@@ -653,7 +635,7 @@ function AppointmentHandoff({ community, locale }) {
                      borderRadius: 8, textDecoration: 'none', fontWeight: 600, fontSize: 14,
                      border: '1px solid var(--tax-border)' }}>
             <span style={{ fontSize: 18 }}>✉️</span>
-            <span>{es ? 'Enviar un email →' : 'Send us an email →'}</span>
+            <span>{t('chat.done.emailCta')}</span>
           </a>
         )}
       </div>

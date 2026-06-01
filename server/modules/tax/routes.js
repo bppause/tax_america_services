@@ -951,6 +951,7 @@ module.exports = function createTaxRouter(deps) {
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
     const productSlug   = trim(body.productSlug || '', 200);
+    const siteLocale    = body.locale === 'en' ? 'en' : 'es';
     const messages      = Array.isArray(body.messages) ? body.messages : [];
 
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
@@ -1053,7 +1054,8 @@ module.exports = function createTaxRouter(deps) {
       '',
       `- If none of the above apply, reply with no token.`,
       `- Never use more than one token per reply. Priority: [NEEDS_OWNER] > [VERIFY_WITH_OWNER] > [READY_TO_CONNECT].`,
-      `- Reply in the same language the user is writing in (English or Spanish).`,
+      `- The visitor's site language is "${siteLocale === 'es' ? 'Spanish' : 'English'}". Default to that`,
+      `  language for all responses. If the user writes in the other language, switch to match them.`,
     ].filter(Boolean).join('\n');
 
     let Anthropic;
