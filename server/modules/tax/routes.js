@@ -359,7 +359,7 @@ module.exports = function createTaxRouter(deps) {
 
     const { data: products, error: pErr } = await supabase
       .from('tax_products')
-      .select('id, slug, category, enabled, display_order, name_i18n, description_i18n, long_description_i18n, required_documents, icon, video_url, cadence_kind, anchor_rule, employee_notes_i18n')
+      .select('id, slug, category, enabled, display_order, name_i18n, description_i18n, long_description_i18n, required_documents, icon, video_url, cadence_kind, anchor_rule, employee_notes_i18n, certifications')
       .eq('community_id', slug)
       .eq('enabled', true)
       .order('display_order', { ascending: true });
@@ -694,7 +694,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(404).json({ error: 'Tax community not found.' });
     }
     const { data, error } = await supabase.from('tax_employees')
-      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order')
+      .select('id, name, first_name, middle_name, last_name, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications')
       .eq('community_id', slug)
       .eq('show_on_homepage', true)
       .eq('status', 'active')
