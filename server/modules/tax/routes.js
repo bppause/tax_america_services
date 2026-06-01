@@ -849,6 +849,7 @@ module.exports = function createTaxRouter(deps) {
       .slice(0, 20);                                  // cap so we can't be flooded
     const productSlug = productSlugs[0] || '';
     const message = trim(body.message, MAX_TEXT_LEN);
+    const needsOwnerReason = trim(body.needsOwnerReason || '', 500) || null;
     // AI conversation transcript from the chat widget — saved verbatim
     // so the owner can see exactly what the lead asked and was told.
     const aiConversation = (() => {
@@ -909,6 +910,7 @@ module.exports = function createTaxRouter(deps) {
       product_slugs: productSlugs,
       message,
       ai_conversation: aiConversation,
+      needs_owner_reason: needsOwnerReason,
       preferred_locale: preferredLocale,
       status: 'new',
       source: aiConversation ? 'ai_chat' : 'landing',
@@ -999,21 +1001,26 @@ module.exports = function createTaxRouter(deps) {
 
     const systemPrompt = [
       `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
-      `Your job is to answer questions prospects have about the services offered, help them understand`,
-      `what service fits their situation, and — when they are ready — invite them to send their contact`,
-      `details so a team member can follow up.`,
+      `Your job is to answer general questions about services offered, help prospects understand what`,
+      `service fits their situation, and — when they need personalized help — hand them off to the team.`,
       '',
       `Services offered:\n${productLines || '(No services listed yet)'}`,
       '',
       focusName ? `The visitor is currently looking at the "${focusName}" service. Start the conversation focused there, but answer questions about any service.` : '',
       '',
       `Behavior guidelines:`,
-      `- Be concise and friendly. Answer honestly; do not invent fees or timelines.`,
+      `- Be concise and friendly. Answer honestly; do not invent fees, timelines, or specific tax advice.`,
       `- Ask one clarifying question at a time to understand the prospect's situation.`,
-      `- After 3 or more exchanges, or whenever the prospect expresses clear interest, offer to connect`,
-      `  them with the team by ending your reply with exactly the token [READY_TO_CONNECT] on its own line.`,
-      `- You can also include [READY_TO_CONNECT] earlier if the user explicitly asks to be contacted.`,
-      `- Do NOT include [READY_TO_CONNECT] on the very first reply or before you have answered at least one question.`,
+      `- Use [NEEDS_OWNER: <one-line reason>] when the user needs hands-on professional help — examples:`,
+      `  specific tax situation requiring review of their documents, pricing/quote request, complex`,
+      `  multi-year or multi-state filing, audit representation, business formation advice, or anything`,
+      `  that requires looking at their actual numbers. Include a brief warm explanation before the token.`,
+      `- Use [READY_TO_CONNECT] after 3 or more general exchanges or when the prospect expresses clear`,
+      `  interest in moving forward without a specific complex need.`,
+      `- You can include either token earlier if the user explicitly asks to be contacted or asks a`,
+      `  question you cannot answer without seeing their documents.`,
+      `- Do NOT include either token on the very first reply.`,
+      `- Only use one token per reply, never both. [NEEDS_OWNER] takes priority.`,
       `- Reply in the same language the user is writing in (English or Spanish).`,
     ].filter(Boolean).join('\n');
 
@@ -1037,8 +1044,14 @@ module.exports = function createTaxRouter(deps) {
     }
 
     const readyToConnect = aiText.includes('[READY_TO_CONNECT]');
-    const message = aiText.replace(/\[READY_TO_CONNECT\]\s*/g, '').trim();
-    res.json({ message, readyToConnect });
+    const needsOwnerMatch = aiText.match(/\[NEEDS_OWNER:\s*([^\]]+)\]/);
+    const needsOwner = !!needsOwnerMatch;
+    const needsOwnerReason = needsOwnerMatch ? needsOwnerMatch[1].trim() : null;
+    const message = aiText
+      .replace(/\[READY_TO_CONNECT\]\s*/g, '')
+      .replace(/\[NEEDS_OWNER:[^\]]*\]\s*/g, '')
+      .trim();
+    res.json({ message, readyToConnect: readyToConnect || needsOwner, needsOwner, needsOwnerReason });
   });
 
   // Phase 4b: lead inbox lives at /admin/leads — see below. /leads stays

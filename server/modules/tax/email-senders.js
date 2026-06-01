@@ -182,13 +182,14 @@ module.exports = function createTaxSenders(deps) {
       : '';
 
     const isReturning = lead.source === 'returning_customer';
-
+    const needsOwnerReason = lead.needs_owner_reason || null;
 
     const lines = [
       isReturning
         ? `Inquiry from existing customer — ${community.name}:`
         : `New lead via ${community.name} landing page:`,
       isReturning ? '⚠️  This email is already associated with an existing customer.' : '',
+      needsOwnerReason ? `\n🧑‍💼 NEEDS PERSONALIZED ATTENTION:\n${needsOwnerReason}\n` : '',
       '',
       `Name:    ${lead.name}`,
       `Email:   ${lead.email}`,
@@ -220,9 +221,16 @@ module.exports = function createTaxSenders(deps) {
         </div>
     ` : '';
 
+    const needsOwnerHtml = needsOwnerReason ? `
+        <div style="background:#fffbeb;border:2px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+          <div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:4px">🧑‍💼 Needs personalized attention</div>
+          <div style="font-size:13px;color:#78350f;line-height:1.5">${escapeHtml(needsOwnerReason)}</div>
+        </div>` : '';
+
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:560px">
         <h2 style="margin-top:0">${isReturning ? 'Existing customer inquiry' : 'New lead'} — ${escapeHtml(community.name)}</h2>
+        ${needsOwnerHtml}
         ${isReturning ? `<div style="background:#fffbeb;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#92400e">⚠️ This email is already associated with an existing customer in your portal.</div>` : ''}
         <table style="border-collapse:collapse;width:100%">
           <tr><td style="padding:6px 8px;color:#555">Name</td><td style="padding:6px 8px"><strong>${escapeHtml(lead.name)}</strong></td></tr>

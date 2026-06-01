@@ -3313,6 +3313,9 @@ on conflict (id) do nothing;
 alter table public.tax_leads
   add column if not exists ai_conversation jsonb;
 
+alter table public.tax_leads
+  add column if not exists needs_owner_reason text;
+
 -- v_faq_chat_log: log AI chat queries and FAQ searches for owner insights
 create table if not exists public.tax_chat_logs (
   id uuid primary key default gen_random_uuid(),

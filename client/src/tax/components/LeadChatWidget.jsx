@@ -30,6 +30,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
   const [input, setInput]         = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [err, setErr]             = useState('');
+  const [needsOwnerReason, setNeedsOwnerReason] = useState(null);
   // Restore saved contact info from a previous session on this device.
   const STORAGE_KEY = 'tax_ai_contact_v1';
   const savedContact = (() => {
@@ -118,7 +119,12 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       });
       const updated = [...next, { role: 'assistant', content: res.message }];
       setMessages(updated);
-      if (res.readyToConnect) setPhase('contact');
+      if (res.needsOwner) {
+        setNeedsOwnerReason(res.needsOwnerReason || null);
+        setPhase('contact');
+      } else if (res.readyToConnect) {
+        setPhase('contact');
+      }
       // Fire-and-forget: log this AI chat interaction for owner insights
       taxApi.logChatInteraction(community.id, {
         kind: 'ai_chat',
@@ -178,6 +184,7 @@ export default function LeadChatWidget({ community, products, preselectedProduct
         website:   form.website,
         // Exclude the opening AI greeting (boilerplate) from the transcript.
         aiConversation: messages.filter((_m, i) => !(i === 0 && messages[0].role === 'assistant')),
+        needsOwnerReason,
         message: '',
       });
       // Persist contact info so returning users don't have to re-type it.
@@ -345,6 +352,24 @@ export default function LeadChatWidget({ community, products, preselectedProduct
         {/* Contact mini-form */}
         {(phase === 'contact' || phase === 'submitting') && (
           <div style={{ border: '1px solid var(--tax-border)', borderRadius: 10, overflow: 'hidden', background: 'var(--tax-bg-alt)' }}>
+            {/* Handoff context banner — shown when AI escalated to owner */}
+            {needsOwnerReason && (
+              <div style={{
+                padding: '10px 14px',
+                background: '#fffbeb', borderBottom: '1px solid #fcd34d',
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+              }}>
+                <span style={{ fontSize: 18, flexShrink: 0 }}>🧑‍💼</span>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: '#92400e', marginBottom: 2 }}>
+                    {es ? 'Esto requiere atención personalizada' : 'This needs personalized attention'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#78350f', lineHeight: 1.4 }}>
+                    {needsOwnerReason}
+                  </div>
+                </div>
+              </div>
+            )}
             {/* Who they're connecting with */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10,
