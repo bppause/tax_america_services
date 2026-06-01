@@ -118,7 +118,8 @@ export default function PublicCalendar({ communitySlug }) {
           community={community}
           communitySlug={communitySlug}
           homeBase={`/tax/${communitySlug}`}
-          sections={{ calendar: true }}
+          sections={null}
+          hideCalendar
         />
       )}
       <main>

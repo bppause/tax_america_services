@@ -9,7 +9,7 @@ import { useCalendlyPopup } from './CalendlySection';
 // scrolling doesn't compete with the menu.
 const MOBILE_BREAKPOINT = 760;
 
-export default function Header({ community, sections, communitySlug, homeBase }) {
+export default function Header({ community, sections, communitySlug, homeBase, hideCalendar }) {
   const { locale, t } = useT();
   const [logoFailed, setLogoFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -43,6 +43,7 @@ export default function Header({ community, sections, communitySlug, homeBase })
       : null,
     communitySlug,
     homeBase,
+    hideCalendar,
   });
 
   const renderLink = (l, opts = {}) => {
@@ -132,7 +133,7 @@ function buildNavLinks(sections, t, overrides = {}) {
   if (has('reviews')) out.push({ href: anchor('#testimonials'), label: t('nav.reviews') });
   if (has('news')) out.push({ href: anchor('#news'), label: t('nav.news') });
   if (has('articles')) out.push({ href: anchor('#articles'), label: t('nav.articles') });
-  if (has('calendar') && slug) out.push({ href: `/tax/${slug}/calendar`, label: t('nav.calendar') });
+  if (has('calendar') && slug && !overrides.hideCalendar) out.push({ href: `/tax/${slug}/calendar`, label: t('nav.calendar') });
   if (!sections || sections.faqs !== false) out.push({ href: anchor('#faqs'), label: t('nav.faqs') });
   out.push({ href: anchor('#about'), label: t('nav.about') });
   out.push({ href: anchor('#contact'), label: t('nav.contact') });
