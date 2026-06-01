@@ -119,6 +119,14 @@ export default function LeadChatWidget({ community, products, preselectedProduct
       const updated = [...next, { role: 'assistant', content: res.message }];
       setMessages(updated);
       if (res.readyToConnect) setPhase('contact');
+      // Fire-and-forget: log this AI chat interaction for owner insights
+      taxApi.logChatInteraction(community.id, {
+        kind: 'ai_chat',
+        query: text,
+        aiResponse: res.message,
+        locale,
+        sessionId: sessionRef.current,
+      }).catch(() => {});
     } catch (e) {
       setErr(e?.message || t('error.generic'));
     } finally {

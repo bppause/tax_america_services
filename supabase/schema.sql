@@ -3312,3 +3312,17 @@ on conflict (id) do nothing;
 -- what the lead asked and was told before they reached out.
 alter table public.tax_leads
   add column if not exists ai_conversation jsonb;
+
+-- v_faq_chat_log: log AI chat queries and FAQ searches for owner insights
+create table if not exists public.tax_chat_logs (
+  id uuid primary key default gen_random_uuid(),
+  community_id text not null references public.communities(id) on delete cascade,
+  session_id text,           -- random client-generated UUID per page load
+  kind text not null,        -- 'faq_search' | 'ai_chat'
+  query text not null,       -- the search term or user message
+  ai_response text,          -- AI reply (for ai_chat kind)
+  locale text default 'en',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_chat_logs_community on public.tax_chat_logs(community_id, created_at desc);
+alter table public.tax_chat_logs disable row level security;

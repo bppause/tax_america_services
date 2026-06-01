@@ -245,7 +245,7 @@ export default function FaqsSection({ communitySlug, mode = 'preview', max = 3, 
             <a href={`/tax/${communitySlug}/faqs`}
                className="tax-btn tax-btn--ghost"
                style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
-              {t('landing.faqs.viewAll')} →
+              {t('landing.faqs.viewAll')} &#x2192;
             </a>
           </div>
         )}

@@ -24,6 +24,8 @@ const { generatePeriods, reminderFireDates, toYmd } = require('./schedule');
 const PERIOD_LOOKAHEAD = 6;   // how many upcoming periods per schedule to keep populated
 const DEFAULT_TOKEN_VALID_DAYS_AFTER_DUE = 14;
 
+const { sendOwnerAiDigest } = require('./ai-digest');
+
 module.exports = function createTaxRemindersCron(deps) {
   const {
     supabase,
@@ -31,6 +33,8 @@ module.exports = function createTaxRemindersCron(deps) {
     publicAppUrl,
     emailConfigured,
     sendTaxReminderEmail,
+    sendSpanishEmail,
+    anthropicApiKey,
     auditLog,
   } = deps;
 
@@ -541,6 +545,21 @@ module.exports = function createTaxRemindersCron(deps) {
     try {
       const created = await ensureUpcomingPeriods();
       const fired = await fireReminders();
+
+      // Daily AI digest: fire-and-forget for each active tax community
+      if (emailConfigured && sendSpanishEmail) {
+        const { data: communities } = await supabase
+          .from('communities')
+          .select('id')
+          .eq('business_type', 'tax');
+        if (communities && communities.length > 0) {
+          for (const c of communities) {
+            sendOwnerAiDigest(c.id, { supabase, anthropicApiKey, sendSpanishEmail })
+              .catch(e => warn('[ai-digest] community', c.id, e?.message || e));
+          }
+        }
+      }
+
       return { created, fired };
     } catch (e) {
       warn('[tax-cron] run failed', e?.message || e);
