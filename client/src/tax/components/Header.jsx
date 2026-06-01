@@ -9,7 +9,7 @@ import { useCalendlyPopup } from './CalendlySection';
 // scrolling doesn't compete with the menu.
 const MOBILE_BREAKPOINT = 760;
 
-export default function Header({ community, sections, communitySlug }) {
+export default function Header({ community, sections, communitySlug, homeBase }) {
   const { locale, t } = useT();
   const [logoFailed, setLogoFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -42,6 +42,7 @@ export default function Header({ community, sections, communitySlug }) {
       ? { label: t('nav.schedule'), onClick: openCalendly }
       : null,
     communitySlug,
+    homeBase,
   });
 
   const renderLink = (l, opts = {}) => {
@@ -64,7 +65,7 @@ export default function Header({ community, sections, communitySlug }) {
   return (
     <header className="tax-header">
       <div className="tax-container tax-header__row">
-        <a href="#top" className="tax-brand" aria-label={community?.name || 'Tax Services'}>
+        <a href={homeBase || '#top'} className="tax-brand" aria-label={community?.name || 'Tax Services'}>
           {showLogo ? (
             <img
               src={community.logo_url}
@@ -121,17 +122,19 @@ export default function Header({ community, sections, communitySlug }) {
 function buildNavLinks(sections, t, overrides = {}) {
   const has = (k) => sections && sections[k] === true;
   const slug = overrides.communitySlug;
+  const home = overrides.homeBase || ''; // e.g. '/tax/tax-america-services' on sub-pages
+  const anchor = (hash) => home ? `${home}${hash}` : hash;
   const out = [
-    { href: '#services', label: t('nav.services') },
+    { href: anchor('#services'), label: t('nav.services') },
   ];
-  if (!sections || sections.team !== false) out.push({ href: '#team', label: t('nav.team') });
+  if (!sections || sections.team !== false) out.push({ href: anchor('#team'), label: t('nav.team') });
   if (overrides.schedule) out.push(overrides.schedule);
-  if (has('reviews')) out.push({ href: '#testimonials', label: t('nav.reviews') });
-  if (has('news')) out.push({ href: '#news', label: t('nav.news') });
-  if (has('articles')) out.push({ href: '#articles', label: t('nav.articles') });
+  if (has('reviews')) out.push({ href: anchor('#testimonials'), label: t('nav.reviews') });
+  if (has('news')) out.push({ href: anchor('#news'), label: t('nav.news') });
+  if (has('articles')) out.push({ href: anchor('#articles'), label: t('nav.articles') });
   if (has('calendar') && slug) out.push({ href: `/tax/${slug}/calendar`, label: t('nav.calendar') });
-  if (!sections || sections.faqs !== false) out.push({ href: '#faqs', label: t('nav.faqs') });
-  out.push({ href: '#about', label: t('nav.about') });
-  out.push({ href: '#contact', label: t('nav.contact') });
+  if (!sections || sections.faqs !== false) out.push({ href: anchor('#faqs'), label: t('nav.faqs') });
+  out.push({ href: anchor('#about'), label: t('nav.about') });
+  out.push({ href: anchor('#contact'), label: t('nav.contact') });
   return out;
 }

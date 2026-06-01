@@ -113,7 +113,14 @@ export default function PublicCalendar({ communitySlug }) {
 
   return (
     <div className="tax-app" style={brandStyle}>
-      {community && <Header community={community} />}
+      {community && (
+        <Header
+          community={community}
+          communitySlug={communitySlug}
+          homeBase={`/tax/${communitySlug}`}
+          sections={{ calendar: true }}
+        />
+      )}
       <main>
         <div className="tax-container" style={{ paddingTop: 24, paddingBottom: 8 }}>
           <a href={`/tax/${communitySlug}`}
