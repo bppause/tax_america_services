@@ -977,20 +977,33 @@ module.exports = function createTaxRouter(deps) {
     if (cErr) return sendSupabaseError(res, cErr);
     if (!community) return res.status(404).json({ error: 'Community not found.' });
 
-    // Load products to give the AI context about offered services.
-    const { data: products } = await supabase
-      .from('tax_products')
-      .select('slug, name_i18n, description_i18n, long_description_i18n, category')
-      .eq('community_id', community.id)
-      .eq('enabled', true)
-      .order('sort_order', { ascending: true });
+    // Load products and team certifications in parallel for AI context.
+    const [{ data: products }, { data: staff }] = await Promise.all([
+      supabase.from('tax_products')
+        .select('slug, name_i18n, description_i18n, long_description_i18n, category, certifications')
+        .eq('community_id', community.id).eq('enabled', true).order('sort_order', { ascending: true }),
+      supabase.from('tax_employees')
+        .select('name, first_name, last_name, title_i18n, certifications, role')
+        .eq('community_id', community.id).eq('status', 'active'),
+    ]);
 
     const productLines = (products || []).map(p => {
       const name = (p.name_i18n?.en || p.name_i18n?.es || p.slug);
       const desc = (p.long_description_i18n?.en || p.description_i18n?.en
                  || p.long_description_i18n?.es || p.description_i18n?.es || '');
-      return `- ${name} (${p.category}): ${desc.slice(0, 300)}`;
+      const certs = Array.isArray(p.certifications) && p.certifications.length
+        ? ` [requires: ${p.certifications.join(', ')}]` : '';
+      return `- ${name} (${p.category})${certs}: ${desc.slice(0, 300)}`;
     }).join('\n');
+
+    // Collect all unique certifications held by the team.
+    const allCerts = new Set();
+    (staff || []).forEach(s => {
+      if (Array.isArray(s.certifications)) s.certifications.forEach(c => allCerts.add(c));
+    });
+    const certLines = allCerts.size
+      ? `Team certifications & credentials: ${Array.from(allCerts).join(', ')}`
+      : '';
 
     const focusProduct = productSlug
       ? (products || []).find(p => p.slug === productSlug)
@@ -1001,25 +1014,31 @@ module.exports = function createTaxRouter(deps) {
 
     const systemPrompt = [
       `You are a helpful pre-sales assistant for ${community.name}, a tax and financial services firm.`,
-      `Your job is to answer general questions about services offered, help prospects understand what`,
-      `service fits their situation, and — when they need personalized help — hand them off to the team.`,
+      `Your job is to answer general questions about services, help prospects understand what fits their`,
+      `situation, and — when a question requires professional judgment — hand them off to the certified team.`,
       '',
       `Services offered:\n${productLines || '(No services listed yet)'}`,
       '',
-      focusName ? `The visitor is currently looking at the "${focusName}" service. Start the conversation focused there, but answer questions about any service.` : '',
+      certLines,
+      '',
+      focusName ? `The visitor is currently looking at the "${focusName}" service. Start focused there, but answer questions about any service.` : '',
       '',
       `Behavior guidelines:`,
-      `- Be concise and friendly. Answer honestly; do not invent fees, timelines, or specific tax advice.`,
+      `- Be concise and friendly. Answer general, educational questions about tax topics honestly.`,
+      `- NEVER provide specific tax advice, legal opinions, or determinations that depend on the`,
+      `  visitor's individual numbers, documents, or legal situation — those require a licensed professional.`,
       `- Ask one clarifying question at a time to understand the prospect's situation.`,
-      `- Use [NEEDS_OWNER: <one-line reason>] when the user needs hands-on professional help — examples:`,
-      `  specific tax situation requiring review of their documents, pricing/quote request, complex`,
-      `  multi-year or multi-state filing, audit representation, business formation advice, or anything`,
-      `  that requires looking at their actual numbers. Include a brief warm explanation before the token.`,
-      `- Use [READY_TO_CONNECT] after 3 or more general exchanges or when the prospect expresses clear`,
-      `  interest in moving forward without a specific complex need.`,
-      `- You can include either token earlier if the user explicitly asks to be contacted or asks a`,
-      `  question you cannot answer without seeing their documents.`,
-      `- Do NOT include either token on the very first reply.`,
+      `- Use [NEEDS_OWNER: <one-line reason>] immediately (even on the first substantive reply) when:`,
+      `  • The question requires a certified professional's judgment (CPA, EA, CAA, tax attorney)`,
+      `  • The answer depends on reviewing their actual documents, returns, or financials`,
+      `  • The topic involves legal liability, penalties, audit defense, or compliance determinations`,
+      `  • They ask for a specific deduction ruling, filing status determination, or entity structure advice`,
+      `  • They need a price quote or service scope tailored to their situation`,
+      `  • Anything where the wrong answer could cause them financial or legal harm`,
+      `  Before the token, give a brief warm explanation and name the specific credential from the team`,
+      `  that covers this (e.g. "This is a question for our Enrolled Agent" or "Our CPA can review this").`,
+      `- Use [READY_TO_CONNECT] after 3+ general exchanges or when the prospect is ready to move forward`,
+      `  with general service interest and no complex professional question.`,
       `- Only use one token per reply, never both. [NEEDS_OWNER] takes priority.`,
       `- Reply in the same language the user is writing in (English or Spanish).`,
     ].filter(Boolean).join('\n');
