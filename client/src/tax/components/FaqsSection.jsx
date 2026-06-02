@@ -88,16 +88,19 @@ export default function FaqsSection({ communitySlug, mode = 'preview', max = 3, 
         <h2>{pick('landing.faqs.heading')}</h2>
         <p className="tax-section__lede">{pick('landing.faqs.subheading')}</p>
 
-        {/* Topic chips row (preview mode only, when not searching) */}
-        {mode === 'preview' && !isSearching && populated.length > 1 && (
+        {/* Topic chips row (all modes when not searching) */}
+        {!isSearching && populated.length > 1 && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14, marginBottom: 4 }}>
             {populated.map(g => {
               const name = pickI18n(g.type.name_i18n, locale).value || g.type.slug;
               const typeSlug = g.type.slug || g.type.id;
+              const href = mode === 'full'
+                ? `#type-${typeSlug}`
+                : `/tax/${communitySlug}/faqs#type-${typeSlug}`;
               return (
                 <a
                   key={g.type.id}
-                  href={`/tax/${communitySlug}/faqs#type-${typeSlug}`}
+                  href={href}
                   style={{
                     padding: '5px 14px', borderRadius: 20, fontSize: 13,
                     background: 'color-mix(in srgb, var(--tax-brand-primary) 10%, #fff)',
