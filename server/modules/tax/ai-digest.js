@@ -41,6 +41,14 @@ async function sendOwnerAiDigest(communityId, deps) {
   if (cErr || !community) { warn('[ai-digest] community fetch error', cErr?.message); return; }
   if (!community.contact_email) return; // nowhere to send
 
+  // 2b. Fetch open tasks for this community (any status except 'completed'/'cancelled')
+  const { data: openTasks } = await supabase
+    .from('tax_tasks')
+    .select('id, title, status_key, priority, due_date, assigned_employee_id, tax_employees(display_name)')
+    .eq('community_id', communityId)
+    .not('status_key', 'in', '("completed","cancelled","closed")')
+    .order('due_date', { ascending: true, nullsFirst: false });
+
   // 3. Group by kind
   const aiChats = logs.filter(r => r.kind === 'ai_chat');
   const faqSearches = logs.filter(r => r.kind === 'faq_search');
@@ -83,6 +91,41 @@ async function sendOwnerAiDigest(communityId, deps) {
     return `<li style="margin-bottom:4px">${badge} ${escaped}</li>`;
   }).join('');
 
+  // Build open tasks section
+  let tasksHtml = '';
+  if (openTasks && openTasks.length > 0) {
+    const PRIORITY_BADGE = {
+      urgent: '<span style="background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700">URGENT</span>',
+      high:   '<span style="background:#fef9c3;color:#854d0e;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600">High</span>',
+      normal: '',
+      low:    '<span style="background:#f1f5f9;color:#64748b;padding:1px 6px;border-radius:4px;font-size:11px">Low</span>',
+    };
+    const STATUS_LABEL = { not_started: 'Not started', in_progress: 'In progress', blocked: 'Blocked' };
+
+    // Group by assignee
+    const byAssignee = {};
+    for (const task of openTasks) {
+      const key = task.assigned_employee_id || '__unassigned__';
+      const name = task.tax_employees?.display_name || 'Unassigned';
+      if (!byAssignee[key]) byAssignee[key] = { name, tasks: [] };
+      byAssignee[key].tasks.push(task);
+    }
+
+    const groupHtml = Object.values(byAssignee).map(({ name, tasks }) => {
+      const rows = tasks.map(task => {
+        const title = String(task.title).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const dueStr = task.due_date ? `<span style="color:#64748b;font-size:12px"> &mdash; due ${task.due_date}</span>` : '';
+        const statusStr = STATUS_LABEL[task.status_key] || task.status_key;
+        const badge = PRIORITY_BADGE[task.priority] || '';
+        return `<li style="margin-bottom:5px">${badge} ${title}${dueStr} <span style="color:#94a3b8;font-size:12px">[${statusStr}]</span></li>`;
+      }).join('');
+      return `<div style="margin-bottom:14px"><strong style="font-size:13px;color:#374151">${name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</strong><ul style="margin:4px 0;padding-left:18px;font-size:14px;line-height:1.7">${rows}</ul></div>`;
+    }).join('');
+
+    tasksHtml = `<h3 style="margin:24px 0 8px;font-size:16px">Open Tasks (${openTasks.length})</h3>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;background:#fff">${groupHtml}</div>`;
+  }
+
   const insightsHtml = aiInsights
     ? `<h3 style="margin:24px 0 8px;font-size:16px">AI-Generated Insights</h3>
        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:14px 16px;font-size:14px;line-height:1.6;white-space:pre-wrap">${aiInsights.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>`
@@ -104,6 +147,7 @@ async function sendOwnerAiDigest(communityId, deps) {
   </div>
   <h3 style="margin:20px 0 8px;font-size:16px">All Visitor Queries (last 24h)</h3>
   <ul style="padding-left:18px;font-size:14px;line-height:1.7">${queryListHtml}</ul>
+  ${tasksHtml}
   ${insightsHtml}
   <p style="margin-top:24px;font-size:12px;color:#888">This digest is sent once daily. To stop receiving it, contact your platform admin.</p>
 </div>`;
