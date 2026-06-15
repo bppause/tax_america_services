@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import LocaleSwitcher from './LocaleSwitcher';
 import { useCalendlyPopup } from './CalendlySection';
@@ -101,7 +102,7 @@ export default function Header({ community, sections, communitySlug, homeBase, h
         </button>
       </div>
 
-      {menuOpen && (
+      {menuOpen && createPortal(
         <div className="tax-nav__overlay" onClick={() => setMenuOpen(false)}>
           <nav id="tax-mobile-nav" className="tax-nav tax-nav--mobile"
                aria-label="Main"
@@ -111,7 +112,8 @@ export default function Header({ community, sections, communitySlug, homeBase, h
               <LocaleSwitcher />
             </div>
           </nav>
-        </div>
+        </div>,
+        document.body
       )}
     </header>
   );
