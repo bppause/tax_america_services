@@ -50,9 +50,9 @@
 .tax-nav { display: flex; align-items: center; gap: 18px; }
 .tax-nav a { color: var(--tax-text); text-decoration: none; font-size: 14px; }
 .tax-nav a:hover { color: var(--tax-brand-primary); }
-/* Nav entries that trigger a popup (e.g. Schedule → Calendly) render
-   as buttons but should read like the rest of the nav, not like form
-   submit buttons. */
+/* Nav entries that trigger a popup/new tab (e.g. Schedule → booking
+   link) render as buttons but should read like the rest of the nav,
+   not like form submit buttons. */
 .tax-nav__link--button {
   background: transparent; border: 0; padding: 0; margin: 0;
   font: inherit; color: var(--tax-text); cursor: pointer;
@@ -309,7 +309,7 @@
 .tax-twopath__card .tax-form textarea { min-height: 80px; }
 /* Inside the narrower two-path card the email/phone row would be too
    tight side-by-side at every common viewport width — always stack
-   it. The standalone fallback form (no Calendly) still uses the
+   it. The standalone fallback form (no booking link) still uses the
    1fr 1fr layout via the global rule. */
 .tax-twopath__card .tax-form__row2 { grid-template-columns: 1fr; }
 
@@ -326,6 +326,12 @@
   padding: 24px 0; color: var(--tax-muted); font-size: 13px;
 }
 .tax-footer__row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.tax-footer__legal {
+  margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--tax-border);
+  font-size: 12px; line-height: 1.5; color: var(--tax-muted); max-width: 860px;
+}
+.tax-footer__legal strong { display: block; margin-bottom: 4px; }
+.tax-footer__legal p { margin: 0; }
 
 /* ── Loading / error full-screen ────────────────────────────────────────── */
 .tax-fullscreen {

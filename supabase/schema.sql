@@ -2688,12 +2688,20 @@ exception when undefined_table then
   raise notice 'storage.buckets table not available — create the tax-staff-photos bucket via Supabase Dashboard';
 end $$;
 
--- Calendly integration. Per-community URL surfaced on the public landing
--- page in a "Schedule a consultation" section. Empty string = section is
--- hidden. Validated server-side to require the canonical calendly.com
--- host so a typo can't embed an arbitrary site in the iframe.
+-- Booking-scheduler integration. Per-community URL surfaced on the public
+-- landing page in a "Schedule a consultation" section. Empty string = section
+-- is hidden. Validated server-side to require a known scheduler host
+-- (calendly.com or book.titan.email) so a typo can't point the CTA at an
+-- arbitrary site. Column name kept as calendly_url for backwards
+-- compatibility even though it now also holds Titan booking links.
 alter table public.communities
   add column if not exists calendly_url text not null default '';
+
+-- Tax America Services switched its booking provider from Calendly to
+-- Titan's scheduler. Re-run safe: only touches this one seeded community.
+update public.communities
+  set calendly_url = 'https://book.titan.email/taxamericaservices'
+  where id = 'tax-america-services';
 
 alter table public.communities
   add column if not exists website_url text not null default '';

@@ -3725,11 +3725,11 @@ ${closingHtml}
       const raw = String(body.calendly_url || '').trim();
       if (raw === '') update.calendly_url = '';
       else {
-        // Accept only canonical Calendly URLs so a typo doesn't end up
-        // embedding an arbitrary site in an iframe on the landing page.
-        if (!/^https:\/\/(www\.)?calendly\.com\/[A-Za-z0-9._\-/?=&]+$/i.test(raw)) {
+        // Accept only known booking-scheduler hosts so a typo doesn't end
+        // up pointing the landing page's "Schedule" CTA at an arbitrary site.
+        if (!/^https:\/\/(www\.)?(calendly\.com|book\.titan\.email)\/[A-Za-z0-9._\-/?=&]+$/i.test(raw)) {
           return res.status(400).json({ error: 'calendly_invalid',
-            message: 'Calendly URL must be https://calendly.com/your-handle (or .../your-handle/event).' });
+            message: 'Booking URL must be a Calendly link (https://calendly.com/your-handle) or a Titan booking link (https://book.titan.email/your-handle).' });
         }
         update.calendly_url = raw.slice(0, 500);
       }
