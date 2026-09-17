@@ -1384,7 +1384,7 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
           <Field id="cs-country" label={t('owner.settings.community.country')}
                  value={form.country} onChange={v => onField('country', v)} />
           <Field id="cs-calendly" label={t('owner.settings.community.calendly')}
-                 type="url" placeholder="https://calendly.com/your-handle"
+                 type="url" placeholder="https://book.titan.email/your-handle"
                  hint={t('owner.settings.community.calendlyHint')}
                  value={form.calendly_url}
                  onChange={v => onField('calendly_url', v)} />

@@ -1,5 +1,5 @@
 import { useT } from '../i18n';
-import { useCalendlyPopup } from './CalendlySection';
+import { useBookingLink } from './CalendlySection';
 import { useLandingCopy } from '../lib/landingCopy';
 
 export default function Hero({ community }) {
@@ -10,14 +10,14 @@ export default function Hero({ community }) {
     : (community?.tagline_en || community?.tagline)
   ) || t('hero.tagline_fallback');
 
-  // When the practice has a Calendly URL set, the primary hero CTA
-  // opens the popup widget directly — fastest path to a booked
-  // consultation. Without a URL, fall back to the lead-form anchor
-  // so the button still has somewhere to land.
-  const { open: openCalendly, available: calendlyAvailable } =
-    useCalendlyPopup(community?.calendly_url, locale);
+  // When the practice has a booking link set, the primary hero CTA
+  // opens it directly — fastest path to a booked consultation. Without
+  // a URL, fall back to the lead-form anchor so the button still has
+  // somewhere to land.
+  const { open: openBooking, available: bookingAvailable } =
+    useBookingLink(community?.calendly_url, locale);
 
-  const primaryLabel = calendlyAvailable
+  const primaryLabel = bookingAvailable
     ? pick('hero.cta_book')
     : pick('hero.cta_primary');
 
@@ -27,9 +27,9 @@ export default function Hero({ community }) {
         <h1>{tagline}</h1>
         <p>{pick('hero.subtitle')}</p>
         <div className="tax-hero__ctas">
-          {calendlyAvailable ? (
+          {bookingAvailable ? (
             <button type="button" className="tax-btn tax-btn--primary"
-                    onClick={openCalendly}>
+                    onClick={openBooking}>
               {primaryLabel}
             </button>
           ) : (

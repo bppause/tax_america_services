@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useT } from '../i18n';
 import LocaleSwitcher from './LocaleSwitcher';
-import { useCalendlyPopup } from './CalendlySection';
+import { useBookingLink } from './CalendlySection';
 
 // Hamburger threshold + cleanup. On wider viewports the nav is a horizontal
 // row; below 760px we collapse to an icon button that toggles an overlay
@@ -18,12 +18,12 @@ export default function Header({ community, sections, communitySlug, homeBase, h
     .split(/\s+/).map(w => w[0] || '').join('').slice(0, 3).toUpperCase();
   const showLogo = Boolean(community?.logo_url) && !logoFailed;
 
-  // Schedule nav entry opens the Calendly popup directly — the
+  // Schedule nav entry opens the booking link directly — the
   // standalone Schedule section was folded into Contact, so a plain
   // href="#schedule" would scroll to nothing. Hidden when no URL is
   // configured.
-  const { open: openCalendly, available: calendlyAvailable } =
-    useCalendlyPopup(community?.calendly_url, locale);
+  const { open: openBooking, available: bookingAvailable } =
+    useBookingLink(community?.calendly_url, locale);
 
   // Close + restore scroll on Escape / route changes.
   useEffect(() => {
@@ -39,8 +39,8 @@ export default function Header({ community, sections, communitySlug, homeBase, h
   }, [menuOpen]);
 
   const navLinks = buildNavLinks(sections, t, {
-    schedule: calendlyAvailable
-      ? { label: t('nav.schedule'), onClick: openCalendly }
+    schedule: bookingAvailable
+      ? { label: t('nav.schedule'), onClick: openBooking }
       : null,
     communitySlug,
     homeBase,

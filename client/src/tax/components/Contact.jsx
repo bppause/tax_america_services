@@ -1,6 +1,6 @@
 import { useT } from '../i18n';
 import LeadForm from './LeadForm';
-import { useCalendlyPopup } from './CalendlySection';
+import { useBookingLink } from './CalendlySection';
 import { useLandingCopy } from '../lib/landingCopy';
 
 // Address used for two purposes:
@@ -41,8 +41,8 @@ export default function Contact({ community, products, initialProductSlug }) {
       )}`
     : '';
 
-  const { open: openCalendly, available: calendlyAvailable } =
-    useCalendlyPopup(community?.calendly_url, locale);
+  const { open: openBooking, available: bookingAvailable } =
+    useBookingLink(community?.calendly_url, locale);
 
   const infoCard = (
     <ContactInfoCard t={t}
@@ -57,10 +57,10 @@ export default function Contact({ community, products, initialProductSlug }) {
         <h2>{pick('getStarted.heading')}</h2>
         <p className="tax-section__lede">{pick('getStarted.subheading')}</p>
 
-        {/* Two parallel paths to action when Calendly is configured.
+        {/* Two parallel paths to action when a booking link is configured.
             Without it the lead form keeps the legacy two-column
             layout with the contact-info card on its right. */}
-        {calendlyAvailable ? (
+        {bookingAvailable ? (
           <>
             <div className="tax-twopath">
               <article className="tax-twopath__card">
@@ -68,7 +68,7 @@ export default function Contact({ community, products, initialProductSlug }) {
                 <h3 className="tax-twopath__title">{pick('getStarted.scheduleHeading')}</h3>
                 <p className="tax-twopath__body">{pick('getStarted.scheduleBody')}</p>
                 <button type="button" className="tax-btn tax-btn--primary tax-btn--block"
-                        onClick={openCalendly}>
+                        onClick={openBooking}>
                   {pick('landing.calendly.cta')}
                 </button>
               </article>
@@ -95,8 +95,8 @@ export default function Contact({ community, products, initialProductSlug }) {
 }
 
 // Practice address / phone / WhatsApp / email + a Google Maps embed.
-// Renders below the two-path layout when Calendly is on, or beside the
-// lead form when it isn't.
+// Renders below the two-path layout when a booking link is on, or beside
+// the lead form when it isn't.
 function ContactInfoCard({ t, address, hasMap, directionsHref, embedSrc, community, waNumber, waHref }) {
   return (
     <>
