@@ -3214,6 +3214,16 @@ do $$ begin
     check (tax_news_refresh_interval_days between 1 and 30);
 exception when duplicate_object then null; end $$;
 
+-- Master switch for every visitor-facing AI feature (the public AI chat
+-- bot on the landing page and inside each service's detail modal, plus
+-- the AI mentions in the hero blurb, WhatsApp broadcast composer, and
+-- the "how AI is used" footer legal notice). Server-enforced on
+-- POST /leads/chat, not just hidden client-side. Defaults to FALSE so a
+-- fresh or existing community never talks to Claude on a visitor's
+-- behalf until the owner explicitly turns it on in Settings.
+alter table public.communities
+  add column if not exists tax_ai_features_enabled boolean not null default false;
+
 -- New relationship types covering services that lacked one (Phase 4n.66).
 -- Existing ones (LLC, S-Corp, payroll, etc.) already have FAQs; these
 -- three close the coverage gap for the public site's service grid.

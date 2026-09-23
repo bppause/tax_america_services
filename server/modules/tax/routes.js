@@ -971,12 +971,17 @@ module.exports = function createTaxRouter(deps) {
 
     const { data: community, error: cErr } = await supabase
       .from('communities')
-      .select('id, name, contact_email, default_locale')
+      .select('id, name, contact_email, default_locale, tax_ai_features_enabled')
       .eq('id', communitySlug)
       .eq('business_type', TAX_BUSINESS_TYPE)
       .maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!community) return res.status(404).json({ error: 'Community not found.' });
+    // Server-enforced, not just hidden client-side — a direct API call
+    // can't bypass the owner's AI-features toggle (Settings → AI features).
+    if (!community.tax_ai_features_enabled) {
+      return res.status(403).json({ error: 'ai_disabled', message: 'AI features are turned off for this site.' });
+    }
 
     // Load products and team certifications in parallel for AI context.
     const [{ data: products }, { data: staff }] = await Promise.all([
@@ -3355,6 +3360,31 @@ ${closingHtml}
     res.json({ ok: true, limit });
   });
 
+  // Master switch for every visitor-facing AI feature (chat bot on the
+  // landing page + inside service detail modals, hero/services AI
+  // blurbs, WhatsApp broadcast AI mentions, and the AI-use footer
+  // notice). Defaults to false — see the tax_ai_features_enabled
+  // column comment in schema.sql. POST /leads/chat re-checks this
+  // server-side, so hiding the widget client-side isn't the only gate.
+  router.put('/admin/community-settings/ai-features-enabled', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const enabled = Boolean(req.body?.enabled);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { error } = await supabase.from('communities')
+      .update({ tax_ai_features_enabled: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: enabled ? 'ai_features_enable' : 'ai_features_disable',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+      });
+    } catch (_e) {}
+    res.json({ ok: true, enabled });
+  });
+
   router.put('/admin/community-settings/reminders-enabled', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
     const communitySlug = trim(req.body?.communitySlug, 200);
@@ -3651,7 +3681,7 @@ ${closingHtml}
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
         tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
-        tax_news_refresh_interval_days,
+        tax_news_refresh_interval_days, tax_ai_features_enabled,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,

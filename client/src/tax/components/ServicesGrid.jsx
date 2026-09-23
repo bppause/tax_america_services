@@ -21,6 +21,7 @@ export default function ServicesGrid({ products, community, onRequestService }) 
   const { pick } = useLandingCopy();
   const [openId, setOpenId] = useState(null);
   const open = products.find(p => p.id === openId) || null;
+  const aiEnabled = !!community?.tax_ai_features_enabled;
 
   const onRequest = (slug) => {
     setOpenId(null);
@@ -48,7 +49,7 @@ export default function ServicesGrid({ products, community, onRequestService }) 
         <p className="tax-section__lede">{pick('services.subheading')}</p>
 
         {/* AI agent availability banner */}
-        {community && (
+        {aiEnabled && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 10,
             background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
@@ -80,7 +81,7 @@ export default function ServicesGrid({ products, community, onRequestService }) 
                       aria-label={t('services.card.openAria', { name })}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div className="tax-service-card__icon">{ICON_LETTER[p.icon] || '•'}</div>
-                  {community && (
+                  {aiEnabled && (
                     <span style={{
                       fontSize: 10, fontWeight: 700, letterSpacing: '.4px',
                       background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
@@ -127,6 +128,7 @@ export default function ServicesGrid({ products, community, onRequestService }) 
 function ServiceDetailModal({ product, locale, t, community, products, onClose, onRequest }) {
   const closeRef = useRef(null);
   const [tab, setTab] = useState('info'); // 'info' | 'chat'
+  const aiEnabled = !!community?.tax_ai_features_enabled;
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -167,8 +169,8 @@ function ServiceDetailModal({ product, locale, t, community, products, onClose, 
         <span className="tax-service-card__category">{categoryLabel}</span>
         <h3 id="svcmodal-title" className="tax-modal__title">{name}</h3>
 
-        {/* Tab bar */}
-        {community && (
+        {/* Tab bar — only worth showing when there's a second tab (AI chat) */}
+        {aiEnabled && (
           <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--tax-border)' }}>
             {['info', 'chat'].map(tabKey => (
               <button key={tabKey} type="button"
@@ -220,7 +222,7 @@ function ServiceDetailModal({ product, locale, t, community, products, onClose, 
               </div>
             )}
             <div className="tax-modal__actions">
-              {community && (
+              {aiEnabled && (
                 <button type="button" className="tax-btn tax-btn--ghost"
                         onClick={() => setTab('chat')}
                         style={{ color: 'var(--tax-brand-primary, #1d3a6d)' }}>
@@ -239,7 +241,7 @@ function ServiceDetailModal({ product, locale, t, community, products, onClose, 
           </>
         )}
 
-        {tab === 'chat' && community && (
+        {tab === 'chat' && aiEnabled && (
           <div style={{ height: 440 }}>
             <LeadChatWidget
               community={community}
