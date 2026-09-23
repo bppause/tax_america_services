@@ -196,6 +196,8 @@ const taxRouter = taxModule.createRouter({
   isEnvGlobalAdminEmail,
   runReminderCron: taxRemindersCron.run,
   fireReminderForPeriod: taxRemindersCron.fireForPeriod,
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+  googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY || '',
 });
 app.use('/api/m/tax', taxRouter);
 
