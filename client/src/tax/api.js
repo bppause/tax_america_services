@@ -308,6 +308,7 @@ export const taxApi = {
   adminSetNewsTopics(auth, payload)                  { return request('PUT',    '/admin/community-settings/news-topics', payload, auth, { admin: true }); },
   adminSetNewsDisplayLimit(auth, payload)            { return request('PUT',    '/admin/community-settings/news-display-limit', payload, auth, { admin: true }); },
   adminSetNewsAutoRefresh(auth, payload)             { return request('PUT',    '/admin/community-settings/news-auto-refresh', payload, auth, { admin: true }); },
+  adminSetNewsRefreshInterval(auth, payload)         { return request('PUT',    '/admin/community-settings/news-refresh-interval', payload, auth, { admin: true }); },
   adminGetNewsVideoUploadUrl(auth, payload)          { return request('POST',   '/admin/news/video-upload-url', payload, auth, { admin: true }); },
 
   // Phase 4n.67: auto-FAQ regenerate for an existing service.

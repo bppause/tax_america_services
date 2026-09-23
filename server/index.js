@@ -211,6 +211,16 @@ taxRemindersCron.start({ intervalMs: 12 * 60 * 60 * 1000, initialDelayMs: 60 * 1
 // crosses the threshold sends.
 taxDigestCron.start({ intervalMs: 5 * 60 * 1000, initialDelayMs: 90 * 1000 });
 
+// Tax news auto-refresh cron — ticks hourly, but each community only
+// actually gets a fresh AI-grounded batch once its own configured
+// tax_news_refresh_interval_days has elapsed (owner-editable in
+// Owner Settings → News). No-ops entirely when ANTHROPIC_API_KEY is unset.
+setTimeout(() => {
+  const tick = () => { taxRouter.refreshAllNews().catch(e => warn('[tax-news-cron] tick failed', e?.message || e)); };
+  tick();
+  setInterval(tick, 60 * 60 * 1000);
+}, 2 * 60 * 1000);
+
 // Public SEO endpoint — lists active tax community landings. Lives at root
 // (search-engine convention). robots.txt is static under client/public/.
 app.get('/sitemap.xml', async (req, res) => {

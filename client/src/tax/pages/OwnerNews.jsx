@@ -135,15 +135,18 @@ function SettingsPanel({ settings, auth, community, t, onSaved, onMsg }) {
   const topicsInitial = Array.isArray(settings?.tax_news_topics) ? settings.tax_news_topics : [];
   const limitInitial = Number(settings?.tax_news_display_limit) || 5;
   const autoInitial = settings?.tax_news_auto_refresh !== false;
+  const intervalInitial = Number(settings?.tax_news_refresh_interval_days) || 1;
   const [topics, setTopics] = useState(topicsInitial);
   const [draft, setDraft] = useState('');
   const [limit, setLimit] = useState(String(limitInitial));
   const [auto, setAuto] = useState(autoInitial);
+  const [interval, setInterval_] = useState(String(intervalInitial));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { setTopics(topicsInitial); }, [JSON.stringify(topicsInitial)]); // eslint-disable-line
   useEffect(() => { setLimit(String(limitInitial)); }, [limitInitial]);
   useEffect(() => { setAuto(autoInitial); }, [autoInitial]);
+  useEffect(() => { setInterval_(String(intervalInitial)); }, [intervalInitial]);
 
   const addTopic = () => {
     const s = draft.trim();
@@ -162,6 +165,8 @@ function SettingsPanel({ settings, auth, community, t, onSaved, onMsg }) {
       const n = Math.max(1, Math.min(20, Math.round(Number(limit) || 5)));
       await taxApi.adminSetNewsDisplayLimit(auth, { communitySlug: community.id, limit: n });
       await taxApi.adminSetNewsAutoRefresh(auth, { communitySlug: community.id, enabled: auto });
+      const days = Math.max(1, Math.min(30, Math.round(Number(interval) || 1)));
+      await taxApi.adminSetNewsRefreshInterval(auth, { communitySlug: community.id, days });
       onMsg({ kind: 'success', text: t('owner.settings.saved') });
       onSaved();
     } catch (e) { onMsg({ kind: 'error', text: e?.message || '' }); }
@@ -229,7 +234,17 @@ function SettingsPanel({ settings, auth, community, t, onSaved, onMsg }) {
           <input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} />
           {t('owner.news.settings.autoLabel')}
         </label>
+        <label style={{ fontSize: 13, color: 'var(--tax-muted)', opacity: auto ? 1 : .5 }}>
+          {t('owner.news.settings.intervalLabel')}&nbsp;
+          <input type="number" min="1" max="30" value={interval} disabled={!auto}
+                 onChange={e => setInterval_(e.target.value)}
+                 style={{ width: 60 }} />
+          &nbsp;{t('owner.news.settings.intervalUnit')}
+        </label>
       </div>
+      <p style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--tax-muted)' }}>
+        {t('owner.news.settings.intervalHint')}
+      </p>
 
       <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
               onClick={onSave} disabled={busy}>
