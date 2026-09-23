@@ -3651,6 +3651,7 @@ ${closingHtml}
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
         tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
+        tax_news_refresh_interval_days,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
@@ -8743,9 +8744,12 @@ ${closingHtml}
   // surfacing with a dedicated table (`tax_news_articles`) that holds
   // both manual entries and AI-refreshed items (source='ai').
   //
-  // Owners configure topics + display limit in Owner Settings → News, and
-  // can fire a manual refresh that calls Claude (web_search grounded).
-  // Daily cron is wired in server/index.js when ANTHROPIC_API_KEY is set.
+  // Owners configure topics, display limit, and refresh cadence in Owner
+  // Settings → News, and can fire a manual refresh that calls Claude
+  // (web_search grounded). An hourly cron in server/index.js calls
+  // refreshAllNews() below, which auto-refreshes each community once its
+  // own tax_news_refresh_interval_days has elapsed — only when
+  // ANTHROPIC_API_KEY is set and tax_news_auto_refresh is true.
   const NEWS_VIDEOS_BUCKET = 'tax-videos';
 
   // GET /community/:slug/news — public list. Returns active rows newest
@@ -8980,6 +8984,19 @@ ${closingHtml}
     res.json({ ok: true, enabled });
   });
 
+  router.put('/admin/community-settings/news-refresh-interval', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const raw = Number(req.body?.days);
+    const days = Math.max(1, Math.min(30, Math.round(Number.isFinite(raw) ? raw : 1)));
+    const { error } = await supabase.from('communities')
+      .update({ tax_news_refresh_interval_days: days, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, days });
+  });
+
   // Signed upload URL for a news-article video. Owner-only. Returns a
   // path + signed URL the browser PUTs the file to directly. Caller
   // stores the returned `path` in tax_news_articles.video_storage_path
@@ -9012,16 +9029,24 @@ ${closingHtml}
     });
   });
 
-  // Expose the helper so the cron in server/index.js can call it.
+  // Expose the helper so the cron in server/index.js can call it. Runs on a
+  // frequent tick (hourly) but only actually refreshes a community once its
+  // own tax_news_refresh_interval_days has elapsed since the last refresh —
+  // that's what lets the owner dial cadence down to "every few days"
+  // instead of hard-coding daily for everyone.
   router.refreshAllNews = async function refreshAllNews() {
     if (!ANTHROPIC_API_KEY) return { skipped: 'no_api_key', refreshed: 0 };
     const { data: rows } = await supabase.from('communities')
-      .select('id, tax_news_auto_refresh, tax_news_topics')
+      .select('id, tax_news_auto_refresh, tax_news_topics, tax_news_refresh_interval_days, tax_news_last_refreshed_at')
       .eq('business_type', TAX_BUSINESS_TYPE);
     let refreshed = 0;
+    const now = Date.now();
     for (const c of (rows || [])) {
       if (c.tax_news_auto_refresh === false) continue;
       if (!Array.isArray(c.tax_news_topics) || c.tax_news_topics.length === 0) continue;
+      const intervalDays = Math.max(1, Math.min(30, Number(c.tax_news_refresh_interval_days) || 1));
+      const lastRefreshed = c.tax_news_last_refreshed_at ? new Date(c.tax_news_last_refreshed_at).getTime() : 0;
+      if (now - lastRefreshed < intervalDays * 24 * 60 * 60 * 1000) continue;
       try {
         const r = await refreshNewsForCommunity(c.id);
         if (r.ok) refreshed++;

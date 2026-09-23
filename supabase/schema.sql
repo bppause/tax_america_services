@@ -3203,6 +3203,16 @@ alter table public.communities
   add column if not exists tax_news_auto_refresh boolean not null default true;
 alter table public.communities
   add column if not exists tax_news_last_refreshed_at timestamptz;
+-- tax_news_refresh_interval_days: how many days must pass since
+-- tax_news_last_refreshed_at before the cron (server/index.js, checked
+-- hourly) asks Claude for a fresh batch again. Only takes effect while
+-- tax_news_auto_refresh is true; ignored for manual "Refresh now" clicks.
+alter table public.communities
+  add column if not exists tax_news_refresh_interval_days smallint not null default 1;
+do $$ begin
+  alter table public.communities add constraint tax_news_refresh_interval_days_chk
+    check (tax_news_refresh_interval_days between 1 and 30);
+exception when duplicate_object then null; end $$;
 
 -- New relationship types covering services that lacked one (Phase 4n.66).
 -- Existing ones (LLC, S-Corp, payroll, etc.) already have FAQs; these
