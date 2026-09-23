@@ -38,7 +38,7 @@ function interpolate(text, name) {
   return (text || '').replace(/\{name\}/g, name);
 }
 
-function buildServicesBlock(locale, products, selectedIds) {
+function buildServicesBlock(locale, products, selectedIds, aiEnabled) {
   const enabled = products
     .filter(p => p.enabled && selectedIds.has(p.id))
     .sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
@@ -46,9 +46,11 @@ function buildServicesBlock(locale, products, selectedIds) {
     const pname = pickI18n(p.name_i18n, locale).value || p.slug;
     const pdesc = pickI18n(p.description_i18n, locale).value || '';
     const emoji = CATEGORY_EMOJI[p.category] || '•';
-    const ctaLabel = locale === 'es'
-      ? `Más información y chatea con nuestro asistente de IA 🤖`
-      : `Learn More & Chat with our AI assistant 🤖`;
+    const ctaLabel = aiEnabled
+      ? (locale === 'es'
+          ? `Más información y chatea con nuestro asistente de IA 🤖`
+          : `Learn More & Chat with our AI assistant 🤖`)
+      : (locale === 'es' ? `Más información` : `Learn More`);
     const ctaLine = `${ctaLabel} {SITE}#service-${p.slug}`;
     return [`${emoji} *${pname}*`, pdesc, ctaLine].filter(Boolean).join('\n');
   }).join('\n\n');
@@ -87,13 +89,16 @@ function buildMessage(locale, settings, products, publicUrl, pdfUrl, template, s
   const tpl = (field) => interpolate(template[locale]?.[field] ?? DEFAULTS[locale][field], name);
   const svcLabel   = locale === 'es' ? 'Nuestros servicios:' : 'Our services:';
   const langUrl    = `${publicUrl}?lang=${locale}`;
-  const svcBlock   = buildServicesBlock(locale, products, selectedIds).replace(/\{SITE\}/g, langUrl);
+  const aiEnabled  = Boolean(settings.tax_ai_features_enabled);
+  const svcBlock   = buildServicesBlock(locale, products, selectedIds, aiEnabled).replace(/\{SITE\}/g, langUrl);
   const ctaBlock   = buildContactBlock(locale, settings).replace(/\{SITE\}/g, langUrl);
-  const aiCta      = buildAiCtaBlock(locale, publicUrl);
+  const aiCta      = aiEnabled ? buildAiCtaBlock(locale, publicUrl) : '';
   const brochLine  = locale === 'es'
     ? `📄 Portafolio de servicios: ${pdfUrl}`
     : `📄 Services portfolio: ${pdfUrl}`;
-  return [tpl('opening'), '', svcLabel, '', svcBlock, '', aiCta, '', ctaBlock, '', brochLine, '', tpl('closing'), '', tpl('signoff')].join('\n');
+  return [tpl('opening'), '', svcLabel, '', svcBlock, '', aiCta, '', ctaBlock, '', brochLine, '', tpl('closing'), '', tpl('signoff')]
+    .filter((line, i, arr) => !(line === '' && arr[i - 1] === '')) // collapse the blank pair left by an empty aiCta
+    .join('\n');
 }
 
 // ── TemplateBlock — one section of the editor ─────────────────────────────
@@ -218,8 +223,9 @@ export default function OwnerWhatsApp() {
   const hasServices = enabledProducts.length > 0;
   const hasSelected = selectedIds.size > 0;
   const langUrlPreview = `${publicUrl}?lang=${msgLocale}`;
-  const svcPreview  = settings ? buildServicesBlock(msgLocale, enabledProducts, selectedIds).replace(/\{SITE\}/g, langUrlPreview) : '';
-  const aiCtaPreview = buildAiCtaBlock(msgLocale, langUrlPreview);
+  const aiEnabledPreview = Boolean(settings?.tax_ai_features_enabled);
+  const svcPreview  = settings ? buildServicesBlock(msgLocale, enabledProducts, selectedIds, aiEnabledPreview).replace(/\{SITE\}/g, langUrlPreview) : '';
+  const aiCtaPreview = aiEnabledPreview ? buildAiCtaBlock(msgLocale, langUrlPreview) : '';
   const ctaPreview  = settings ? buildContactBlock(msgLocale, settings).replace(/\{SITE\}/g, langUrlPreview) : '';
   const brochLine   = msgLocale === 'es' ? `📄 Portafolio de servicios: ${pdfUrl}` : `📄 Services portfolio: ${pdfUrl}`;
 
@@ -378,10 +384,14 @@ export default function OwnerWhatsApp() {
                   : svcPreview}
             </TemplateBlock>
 
-            {/* AI assistant CTA — auto, drives lead to chat widget */}
-            <TemplateBlock label={t('owner.whatsapp.block.aiCta')}>
-              <span style={{ color: '#4f46e5' }}>{aiCtaPreview}</span>
-            </TemplateBlock>
+            {/* AI assistant CTA — auto, drives lead to chat widget.
+                Hidden entirely when AI features are off (Settings → AI
+                features) — buildMessage omits this section too. */}
+            {aiEnabledPreview && (
+              <TemplateBlock label={t('owner.whatsapp.block.aiCta')}>
+                <span style={{ color: '#4f46e5' }}>{aiCtaPreview}</span>
+              </TemplateBlock>
+            )}
 
             {/* Contact — locked, from settings */}
             <TemplateBlock

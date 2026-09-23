@@ -9,10 +9,12 @@ export default function Footer({ community }) {
         <div>{t('footer.copyright', { year, name: community?.name || '' })}</div>
         <div>{t('footer.poweredBy')}</div>
       </div>
-      <div className="tax-container tax-footer__legal">
-        <strong>{t('footer.aiNotice.heading')}</strong>
-        <p>{t('footer.aiNotice.body')}</p>
-      </div>
+      {community?.tax_ai_features_enabled && (
+        <div className="tax-container tax-footer__legal">
+          <strong>{t('footer.aiNotice.heading')}</strong>
+          <p>{t('footer.aiNotice.body')}</p>
+        </div>
+      )}
     </footer>
   );
 }

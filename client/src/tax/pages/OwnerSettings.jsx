@@ -175,6 +175,19 @@ export default function OwnerSettings() {
     }
   };
 
+  const onToggleAiFeaturesEnabled = async (enabled) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetAiFeaturesEnabled(auth, { communitySlug: community.id, enabled });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (err) return <EmployeeShell community={community} active="settings"><div className="tax-msg tax-msg--error">{err}</div></EmployeeShell>;
   if (!settings) return <EmployeeShell community={community} active="settings"><p>{t('loading')}</p></EmployeeShell>;
 
@@ -182,6 +195,7 @@ export default function OwnerSettings() {
   const docsEnabled = Boolean(settings.tax_customer_documents_enabled);
   const portalEnabled = Boolean(settings.tax_customer_portal_enabled);
   const remindersEnabled = Boolean(settings.tax_customer_reminders_enabled);
+  const aiFeaturesEnabled = Boolean(settings.tax_ai_features_enabled);
   const lookaheadMonths = Number(settings.tax_task_lookahead_months) || 6;
   const thresholds = {
     urgent:   Number(settings.tax_task_urgent_days   ?? 3),
@@ -281,6 +295,47 @@ export default function OwnerSettings() {
               <div style={{ fontWeight: 600 }}>{t('owner.settings.docs.on')}</div>
               <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
                 {t('owner.settings.docs.onHint')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        storageKey="aiFeatures"
+        defaultOpen={aiFeaturesEnabled}
+        title={t('owner.settings.aiFeatures.title')}
+        subtitle={t('owner.settings.aiFeatures.subtitle')}
+        statusLabel={aiFeaturesEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+        enabled={aiFeaturesEnabled}>
+        <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: !aiFeaturesEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="ai-features-enabled" disabled={busy}
+                   checked={!aiFeaturesEnabled} onChange={() => onToggleAiFeaturesEnabled(false)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.aiFeatures.off')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.aiFeatures.offHint')}
+              </div>
+            </div>
+          </label>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: aiFeaturesEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="ai-features-enabled" disabled={busy}
+                   checked={aiFeaturesEnabled} onChange={() => onToggleAiFeaturesEnabled(true)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.aiFeatures.on')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.aiFeatures.onHint')}
               </div>
             </div>
           </label>

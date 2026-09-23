@@ -198,63 +198,69 @@ export default function Landing({ communitySlug }) {
         <NewsSection communitySlug={communitySlug}
                      articles={news} displayLimit={newsLimit} />
         <ArticlesSection communitySlug={communitySlug} />
-        <FaqsSection communitySlug={communitySlug} community={community} onOpenChat={() => setChatOpen(true)} />
+        <FaqsSection communitySlug={communitySlug} community={community}
+                     onOpenChat={community.tax_ai_features_enabled ? () => setChatOpen(true) : undefined} />
         <About />
         <Contact community={community} products={products}
                  initialProductSlug={pendingService} />
         <Footer community={community} />
 
-        {/* Floating AI chat button */}
-        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1200, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          {!chatOpen && (
-            <span style={{
-              background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
-              fontSize: 12, fontWeight: 700, padding: '5px 12px',
-              borderRadius: 20, whiteSpace: 'nowrap',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
-              animation: 'tax-pulse-label 2s ease-in-out infinite',
-            }}>
-              {locale === 'es' ? '🤖 Pregunta al asistente de IA' : '🤖 Ask our AI assistant'}
-            </span>
-          )}
-          <button type="button"
-            onClick={() => setChatOpen(o => !o)}
-            aria-label={locale === 'es' ? 'Abrir asistente virtual' : 'Open AI assistant'}
-            style={{
-              width: 56, height: 56, borderRadius: '50%',
-              background: 'var(--tax-brand-primary, #1d3a6d)',
-              color: '#fff', border: 'none', cursor: 'pointer',
-              boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
-              fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-            {chatOpen ? '×' : '💬'}
-          </button>
-        </div>
-
-        {chatOpen && (
-          <div style={{
-            position: 'fixed', bottom: 90, right: 24, zIndex: 1200,
-            width: 360, maxWidth: 'calc(100vw - 32px)',
-            height: 520, maxHeight: 'calc(100vh - 110px)',
-            background: '#fff', border: '1px solid var(--tax-border)',
-            borderRadius: 14, boxShadow: '0 8px 32px rgba(0,0,0,0.16)',
-            display: 'flex', flexDirection: 'column', overflow: 'hidden',
-          }}>
-            <div style={{
-              padding: '12px 16px', background: 'var(--tax-brand-primary, #1d3a6d)',
-              color: '#fff', fontWeight: 600, fontSize: 14, display: 'flex',
-              justifyContent: 'space-between', alignItems: 'center',
-            }}>
-              <span>{locale === 'es' ? 'Asistente virtual' : 'AI Assistant'}</span>
-              <button type="button" onClick={() => setChatOpen(false)}
-                style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
-                ×
+        {/* Floating AI chat button — hidden entirely when the owner has
+            AI features turned off (Settings → AI features). */}
+        {community.tax_ai_features_enabled && (
+          <>
+            <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 1200, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+              {!chatOpen && (
+                <span style={{
+                  background: 'var(--tax-brand-primary, #1d3a6d)', color: '#fff',
+                  fontSize: 12, fontWeight: 700, padding: '5px 12px',
+                  borderRadius: 20, whiteSpace: 'nowrap',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+                  animation: 'tax-pulse-label 2s ease-in-out infinite',
+                }}>
+                  {locale === 'es' ? '🤖 Pregunta al asistente de IA' : '🤖 Ask our AI assistant'}
+                </span>
+              )}
+              <button type="button"
+                onClick={() => setChatOpen(o => !o)}
+                aria-label={locale === 'es' ? 'Abrir asistente virtual' : 'Open AI assistant'}
+                style={{
+                  width: 56, height: 56, borderRadius: '50%',
+                  background: 'var(--tax-brand-primary, #1d3a6d)',
+                  color: '#fff', border: 'none', cursor: 'pointer',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.22)',
+                  fontSize: 24, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                {chatOpen ? '×' : '💬'}
               </button>
             </div>
-            <div style={{ flex: 1, overflow: 'hidden', padding: 12 }}>
-              <LeadChatWidget community={community} products={products} />
-            </div>
-          </div>
+
+            {chatOpen && (
+              <div style={{
+                position: 'fixed', bottom: 90, right: 24, zIndex: 1200,
+                width: 360, maxWidth: 'calc(100vw - 32px)',
+                height: 520, maxHeight: 'calc(100vh - 110px)',
+                background: '#fff', border: '1px solid var(--tax-border)',
+                borderRadius: 14, boxShadow: '0 8px 32px rgba(0,0,0,0.16)',
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
+              }}>
+                <div style={{
+                  padding: '12px 16px', background: 'var(--tax-brand-primary, #1d3a6d)',
+                  color: '#fff', fontWeight: 600, fontSize: 14, display: 'flex',
+                  justifyContent: 'space-between', alignItems: 'center',
+                }}>
+                  <span>{locale === 'es' ? 'Asistente virtual' : 'AI Assistant'}</span>
+                  <button type="button" onClick={() => setChatOpen(false)}
+                    style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>
+                    ×
+                  </button>
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden', padding: 12 }}>
+                  <LeadChatWidget community={community} products={products} />
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </LandingCopyProvider>
