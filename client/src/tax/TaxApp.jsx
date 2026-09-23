@@ -46,6 +46,7 @@ import OwnerRelationshipTypes from './pages/OwnerRelationshipTypes';
 import OwnerSetup from './pages/OwnerSetup';
 import OwnerWhatsApp from './pages/OwnerWhatsApp';
 import OwnerNews from './pages/OwnerNews';
+import OwnerTestimonials from './pages/OwnerTestimonials';
 import TaxReport from './pages/TaxReport';
 import PlatformDashboard from './pages/PlatformDashboard';
 import PlatformCommunityCreate from './pages/PlatformCommunityCreate';
@@ -104,6 +105,7 @@ function parseTaxPath() {
     if (parts[3] === 'whatsapp') return { route: 'owner-whatsapp', slug };
     if (parts[3] === 'articles') return { route: 'owner-articles', slug };
     if (parts[3] === 'news')     return { route: 'owner-news', slug };
+    if (parts[3] === 'testimonials') return { route: 'owner-testimonials', slug };
     if (parts[3] === 'faqs')     return { route: 'owner-faqs', slug };
     if (parts[3] === 'service-catalog') return { route: 'owner-service-catalog', slug };
     if (parts[3] === 'audit')    return { route: 'owner-audit', slug };
@@ -262,6 +264,7 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-settings') return <OwnerSettings />;
   if (parsed.route === 'owner-articles') return <OwnerHelpAdmin />;
   if (parsed.route === 'owner-news') return <OwnerNews />;
+  if (parsed.route === 'owner-testimonials') return <OwnerTestimonials />;
   if (parsed.route === 'owner-faqs') return <OwnerFaqAdmin />;
   if (parsed.route === 'owner-service-catalog') return <OwnerServicesAdmin />;
   if (parsed.route === 'owner-tasks') return <OwnerTasks />;

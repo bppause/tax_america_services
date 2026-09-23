@@ -223,6 +223,16 @@ setTimeout(() => {
   setInterval(tick, 60 * 60 * 1000);
 }, 2 * 60 * 1000);
 
+// Google Reviews auto-sync cron — once daily, pulls the latest reviews for
+// every community with a saved Place ID and auto-sync enabled (owner-
+// editable in Owner Settings → Testimonials). No-ops entirely when
+// GOOGLE_PLACES_API_KEY is unset.
+setTimeout(() => {
+  const tick = () => { taxRouter.autoSyncAllGoogleReviews().catch(e => warn('[google-reviews-cron] tick failed', e?.message || e)); };
+  tick();
+  setInterval(tick, 24 * 60 * 60 * 1000);
+}, 3 * 60 * 1000);
+
 // Public SEO endpoint — lists active tax community landings. Lives at root
 // (search-engine convention). robots.txt is static under client/public/.
 app.get('/sitemap.xml', async (req, res) => {
