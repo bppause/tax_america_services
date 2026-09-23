@@ -103,6 +103,7 @@ export default function EmployeeShell({ community, active, children }) {
                 {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                 {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                 {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
+                {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
                 {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
                 {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
               </div>
