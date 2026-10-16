@@ -26,3 +26,16 @@ export function formatLastSignInCompact(iso, locale, t) {
       .format(new Date(iso));
   } catch (_e) { return iso; }
 }
+
+// Date + time, no wrapping text and no "never" fallback (caller decides
+// what to show for a null timestamp). Used where knowing *when today*
+// something happened matters — e.g. a task's "last viewed" line/tooltip
+// — unlike the date-only compact variant above.
+export function formatDateTime(iso, locale) {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'es-ES',
+      { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      .format(new Date(iso));
+  } catch (_e) { return iso; }
+}
