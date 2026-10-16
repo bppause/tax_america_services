@@ -19,6 +19,10 @@ export default function EmployeeShell({ community, active, children }) {
   const { fbUser, employee, signOut, impersonation, exitImpersonation, customerAccess } = useEmployeeAuth();
   const base = community ? `/tax/${community.id}/employee` : '#';
   const isAdmin = employee?.role === 'admin';
+  // Owner-wide setting (Settings → Admin/staff view) — trims the sidebar
+  // to the essentials. Individual pages (e.g. Tasks) read this too, to
+  // drop their own advanced controls in sync with the simpler menu.
+  const isSimple = community?.tax_ui_mode === 'simple';
   // Permission gate for nav links — owner-revoked keys hide their
   // corresponding sidebar items. Server re-checks each request, so this
   // is UX hygiene, not a security boundary.
@@ -108,47 +112,79 @@ export default function EmployeeShell({ community, active, children }) {
               {employee && navLink('dashboard', `${base}/dashboard`, t('employee.nav.dashboard'))}
             </div>
 
-            {/* Operations — the day-to-day work surfaces. Leads sits
-                here because converting them IS operational work. Hidden
-                entirely for an admin with view_customers revoked — a
-                "site admin" account that never touches customer data. */}
-            {employee && perm('view_customers') && (
-              <div className="tax-shell__group">
-                <div className="tax-shell__group-label">{t('employee.nav.groupOperations')}</div>
-                {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
-                {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
-                {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
-                {isAdmin && perm('manage_leads') &&
-                  navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
-              </div>
-            )}
+            {isSimple ? (
+              <>
+                {/* Simple mode (Settings → Admin/staff view): two groups
+                    covering exactly the essentials — running the business
+                    and keeping the website/app current. Everything more
+                    niche (Progress analytics, News, Testimonials, WhatsApp
+                    template, Email templates, Audit) is reachable again
+                    by switching back to Detailed. */}
+                {employee && perm('view_customers') && (
+                  <div className="tax-shell__group">
+                    <div className="tax-shell__group-label">{t('employee.nav.groupBusiness')}</div>
+                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
+                    {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
+                    {isAdmin && perm('manage_leads') &&
+                      navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
+                  </div>
+                )}
+                {isAdmin && (
+                  <div className="tax-shell__group">
+                    <div className="tax-shell__group-label">{t('employee.nav.groupWebsite')}</div>
+                    {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
+                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
+                    {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
+                    {perm('manage_employees')       && navLink('staff',    `${base}/staff`,            t('employee.nav.staff'))}
+                    {perm('manage_settings')        && navLink('settings', `${base}/settings`,         t('employee.nav.settings'))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                {/* Operations — the day-to-day work surfaces. Leads sits
+                    here because converting them IS operational work. Hidden
+                    entirely for an admin with view_customers revoked — a
+                    "site admin" account that never touches customer data. */}
+                {employee && perm('view_customers') && (
+                  <div className="tax-shell__group">
+                    <div className="tax-shell__group-label">{t('employee.nav.groupOperations')}</div>
+                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
+                    {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
+                    {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
+                    {isAdmin && perm('manage_leads') &&
+                      navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
+                  </div>
+                )}
 
-            {/* Public homepage — anything you edit here changes the
-                public landing page (Services / Articles / FAQs). The
-                "Meet the team" section is curated per-employee from
-                Practice setup → Staff → Public profile card. */}
-            {isAdmin && (
-              <div className="tax-shell__group">
-                <div className="tax-shell__group-label">{t('employee.nav.groupPublicHomepage')}</div>
-                {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
-                {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
-                {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
-                {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
-                {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
-                {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
-              </div>
-            )}
+                {/* Public homepage — anything you edit here changes the
+                    public landing page (Services / Articles / FAQs). The
+                    "Meet the team" section is curated per-employee from
+                    Practice setup → Staff → Public profile card. */}
+                {isAdmin && (
+                  <div className="tax-shell__group">
+                    <div className="tax-shell__group-label">{t('employee.nav.groupPublicHomepage')}</div>
+                    {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
+                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
+                    {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
+                    {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
+                    {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
+                    {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
+                  </div>
+                )}
 
-            {/* Practice setup — rarely touched. Templates, staff,
-                community-wide toggles, audit trail. */}
-            {isAdmin && (
-              <div className="tax-shell__group">
-                <div className="tax-shell__group-label">{t('employee.nav.groupPracticeSetup')}</div>
-                {perm('manage_employees')       && navLink('staff',          `${base}/staff`,           t('employee.nav.staff'))}
-                {perm('manage_email_templates') && navLink('email-templates', `${base}/email-templates`, t('employee.nav.emailTemplates'))}
-                {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
-                {perm('view_audit_logs')        && navLink('audit',          `${base}/audit`,            t('employee.nav.audit'))}
-              </div>
+                {/* Practice setup — rarely touched. Templates, staff,
+                    community-wide toggles, audit trail. */}
+                {isAdmin && (
+                  <div className="tax-shell__group">
+                    <div className="tax-shell__group-label">{t('employee.nav.groupPracticeSetup')}</div>
+                    {perm('manage_employees')       && navLink('staff',          `${base}/staff`,           t('employee.nav.staff'))}
+                    {perm('manage_email_templates') && navLink('email-templates', `${base}/email-templates`, t('employee.nav.emailTemplates'))}
+                    {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
+                    {perm('view_audit_logs')        && navLink('audit',          `${base}/audit`,            t('employee.nav.audit'))}
+                  </div>
+                )}
+              </>
             )}
 
             {/* You group — personal / non-admin tools. */}

@@ -62,6 +62,10 @@ export default function OwnerTasks() {
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
   const isAdmin = employee?.role === 'admin';
+  // Settings → Admin/staff view. Simple mode locks this page to a plain
+  // list: no Kanban/Calendar/Periods, no bulk actions, no blocked-by/
+  // review/time-tracking panel in the edit modal.
+  const isSimple = community?.tax_ui_mode === 'simple';
 
   const [statuses, setStatuses] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -92,6 +96,12 @@ export default function OwnerTasks() {
   useEffect(() => {
     try { localStorage.setItem('tax.tasks.view', view); } catch { /* ignore */ }
   }, [view]);
+  // Simple mode only ever shows the plain list — fall back immediately
+  // if a saved preference (from before switching modes) points elsewhere.
+  useEffect(() => {
+    if (isSimple && view !== 'list') setView('list');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSimple]);
   const [groupBy, setGroupBy] = useState(() => {
     try { return localStorage.getItem('tax.tasks.groupBy') || 'none'; }
     catch { return 'none'; }
@@ -273,6 +283,7 @@ export default function OwnerTasks() {
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
           defaultAssignee={employee?.id || ''} locale={locale} t={t}
+          isSimple={isSimple}
           onCustomersChanged={(c) => setCustomers(prev => [c, ...prev])}
           onClose={() => setShowAdd(false)}
           onSaved={() => { setShowAdd(false); load(); }}
@@ -287,6 +298,7 @@ export default function OwnerTasks() {
           products={products} relationshipTypes={relationshipTypes}
           tasks={tasks} employeeId={employee?.id || ''}
           defaultAssignee={employee?.id || ''} locale={locale} t={t}
+          isSimple={isSimple}
           onCustomersChanged={(c) => setCustomers(prev => [c, ...prev])}
           onClose={() => setEditingTask(null)}
           onSaved={() => { setEditingTask(null); load(); }}
@@ -300,6 +312,7 @@ export default function OwnerTasks() {
         groupBy={groupBy} setGroupBy={setGroupBy}
         sortKey={sortKey} setSortKey={setSortKey}
         periodsGroup={periodsGroup} setPeriodsGroup={setPeriodsGroup}
+        simple={isSimple}
         t={t}
       />
 
@@ -311,7 +324,7 @@ export default function OwnerTasks() {
         locale={locale} t={t}
       />
 
-      {selectedIds.size > 0 && (
+      {selectedIds.size > 0 && !isSimple && (
         <BulkActionBar
           selectedIds={selectedIds}
           tasks={tasks || []}
@@ -356,8 +369,9 @@ export default function OwnerTasks() {
                               customerById={customerById} employeeById={employeeById}
                               productById={productById} isAdmin={isAdmin}
                               auth={auth} onEdit={setEditingTask} onChange={load}
-                              selectedIds={selectedIds} toggleSelect={toggleSelect}
-                              selectMany={selectMany}
+                              selectedIds={isSimple ? undefined : selectedIds}
+                              toggleSelect={isSimple ? undefined : toggleSelect}
+                              selectMany={isSimple ? undefined : selectMany}
                               locale={locale} t={t} />
           )
       }
@@ -1024,7 +1038,7 @@ function TaskFormModal({
   mode, task, auth, community, isAdmin,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
-  defaultAssignee, locale, t,
+  defaultAssignee, locale, t, isSimple,
   onCustomersChanged, onClose, onSaved,
 }) {
   const isEdit = mode === 'edit';
@@ -1244,7 +1258,7 @@ function TaskFormModal({
             <textarea rows={4} value={notes} onChange={e => { setNotes(e.target.value); scheduleAutoSave({ notes: e.target.value }); }} maxLength={4000} />
           </div>
 
-          {isEdit && (
+          {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks} employees={employees}
                                 isAdmin={isAdmin} employeeId={employeeId}
                                 auth={auth} locale={locale} t={t} />
@@ -1834,7 +1848,7 @@ function InlineCustomerCreateModal({ auth, community, relationshipTypes, locale,
 }
 
 // ─── Toolbar: My-tasks toggle + due chips + view-mode + group-by ─────────
-function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupBy, setGroupBy, sortKey, setSortKey, periodsGroup, setPeriodsGroup, t }) {
+function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupBy, setGroupBy, sortKey, setSortKey, periodsGroup, setPeriodsGroup, simple, t }) {
   const DUE_CHIPS = [
     { key: '',         label: t('owner.tasks.chip.all') },
     { key: 'overdue',  label: t('owner.tasks.chip.overdue') },
@@ -1861,7 +1875,7 @@ function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupB
         ))}
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-        {view === 'list' && (
+        {!simple && view === 'list' && (
           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
             <span style={{ color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700 }}>
               {t('owner.tasks.groupBy.label')}
@@ -1876,7 +1890,7 @@ function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupB
             </select>
           </label>
         )}
-        {view === 'list' && (
+        {!simple && view === 'list' && (
           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
             <span style={{ color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700 }}>
               {t('owner.tasks.sort.label')}
@@ -1891,7 +1905,7 @@ function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupB
             </select>
           </label>
         )}
-        {view === 'periods' && (
+        {!simple && view === 'periods' && (
           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
             <span style={{ color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700 }}>
               {t('owner.tasks.groupBy.label')}
@@ -1904,23 +1918,25 @@ function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupB
             </select>
           </label>
         )}
-        <div role="tablist" style={{
-          display: 'inline-flex', border: '1px solid var(--tax-border)', borderRadius: 6, overflow: 'hidden',
-        }}>
-          {['list', 'periods', 'calendar', 'kanban'].map(v => (
-            <button key={v} type="button" onClick={() => setView(v)}
-                    style={{
-                      padding: '6px 10px', border: 0, cursor: 'pointer',
-                      background: view === v
-                        ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
-                        : '#fff',
-                      color: view === v ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
-                      fontWeight: view === v ? 700 : 500, fontSize: 12,
-                    }}>
-              {t(`owner.tasks.view.${v}`)}
-            </button>
-          ))}
-        </div>
+        {!simple && (
+          <div role="tablist" style={{
+            display: 'inline-flex', border: '1px solid var(--tax-border)', borderRadius: 6, overflow: 'hidden',
+          }}>
+            {['list', 'periods', 'calendar', 'kanban'].map(v => (
+              <button key={v} type="button" onClick={() => setView(v)}
+                      style={{
+                        padding: '6px 10px', border: 0, cursor: 'pointer',
+                        background: view === v
+                          ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                          : '#fff',
+                        color: view === v ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                        fontWeight: view === v ? 700 : 500, fontSize: 12,
+                      }}>
+                {t(`owner.tasks.view.${v}`)}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

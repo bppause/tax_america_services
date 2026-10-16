@@ -188,6 +188,19 @@ export default function OwnerSettings() {
     }
   };
 
+  const onSetUiMode = async (mode) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetUiMode(auth, { communitySlug: community.id, mode });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (err) return <EmployeeShell community={community} active="settings"><div className="tax-msg tax-msg--error">{err}</div></EmployeeShell>;
   if (!settings) return <EmployeeShell community={community} active="settings"><p>{t('loading')}</p></EmployeeShell>;
 
@@ -196,6 +209,7 @@ export default function OwnerSettings() {
   const portalEnabled = Boolean(settings.tax_customer_portal_enabled);
   const remindersEnabled = Boolean(settings.tax_customer_reminders_enabled);
   const aiFeaturesEnabled = Boolean(settings.tax_ai_features_enabled);
+  const uiMode = settings.tax_ui_mode === 'simple' ? 'simple' : 'detailed';
   const lookaheadMonths = Number(settings.tax_task_lookahead_months) || 6;
   const thresholds = {
     urgent:   Number(settings.tax_task_urgent_days   ?? 3),
@@ -212,6 +226,51 @@ export default function OwnerSettings() {
         <div className={`tax-msg tax-msg--${msg.kind === 'error' ? 'error' : 'success'}`}
              style={{ marginBottom: 16 }}>{msg.text}</div>
       )}
+
+      {/* Interface mode — meta-setting that controls how much of the rest
+          of the admin/staff portal everyone sees. Deliberately placed
+          above every other group since it changes what the team's whole
+          experience looks like, not just one feature. */}
+      <CollapsibleSection
+        storageKey="uiMode"
+        defaultOpen={true}
+        title={t('owner.settings.uiMode.title')}
+        subtitle={t('owner.settings.uiMode.subtitle')}
+        statusLabel={uiMode === 'simple' ? t('owner.settings.uiMode.simple') : t('owner.settings.uiMode.detailed')}
+        enabled={uiMode === 'detailed'}>
+        <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: uiMode === 'simple' ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="ui-mode" disabled={busy}
+                   checked={uiMode === 'simple'} onChange={() => onSetUiMode('simple')}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.uiMode.simple')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.uiMode.simpleHint')}
+              </div>
+            </div>
+          </label>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: busy ? 'wait' : 'pointer',
+            background: uiMode === 'detailed' ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+          }}>
+            <input type="radio" name="ui-mode" disabled={busy}
+                   checked={uiMode === 'detailed'} onChange={() => onSetUiMode('detailed')}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.uiMode.detailed')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.uiMode.detailedHint')}
+              </div>
+            </div>
+          </label>
+        </div>
+      </CollapsibleSection>
 
       {/* Group 1 — Customer portal & access. Cards that decide what the
           customer-facing side of the product does at all. */}
