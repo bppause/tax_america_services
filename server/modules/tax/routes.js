@@ -6443,9 +6443,16 @@ ${closingHtml}
     const byService = new Map();
     const totals = { open: 0, in_progress: 0, done: 0, overdue: 0 };
 
+    // Practice-wide tasks (no product_id) get their own synthetic
+    // "No service" bucket instead of being dropped — otherwise the
+    // totals here silently undercounted vs. the Tasks page, which does
+    // show them (see the Service filter's "No service" option).
+    const NO_SERVICE_PRODUCT = {
+      id: '__none__', slug: '__none__',
+      name_i18n: { en: 'No service (practice-wide)', es: 'Sin servicio (toda la oficina)' },
+    };
     for (const t of tasks || []) {
       if (allowedCustomers && t.customer_id && !allowedCustomers.has(t.customer_id)) continue;
-      if (!t.product_id) continue;
 
       const isDone = !!t.completed_at || terminalKeys.has(t.status_key);
       const isOverdue = !isDone && t.due_date && t.due_date < today;
@@ -6457,11 +6464,11 @@ ${closingHtml}
       else totals.open++;
       if (isOverdue) totals.overdue++;
 
-      const skey = t.product_id;
+      const skey = t.product_id || '__none__';
       let svc = byService.get(skey);
       if (!svc) {
         svc = {
-          product: t.product || { id: t.product_id, slug: t.product_id, name_i18n: {} },
+          product: t.product_id ? (t.product || { id: t.product_id, slug: t.product_id, name_i18n: {} }) : NO_SERVICE_PRODUCT,
           totals: { open: 0, in_progress: 0, done: 0, overdue: 0, total: 0 },
           customersMap: new Map(),
         };
