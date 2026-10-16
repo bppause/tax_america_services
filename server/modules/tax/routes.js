@@ -7367,7 +7367,25 @@ ${closingHtml}
     q = applyListFilter(q, req.query.status,     'status_key',           60);
     q = applyListFilter(q, req.query.assignedTo, 'assigned_employee_id', 200);
     q = applyListFilter(q, req.query.customerId, 'customer_id',          200);
-    q = applyListFilter(q, req.query.productId,  'product_id',           200);
+    // Service filter supports a '__none__' pseudo-id alongside real
+    // product ids — picks out practice-wide tasks (no product_id) that
+    // applyListFilter's plain eq/in can't express. Mixing '__none__'
+    // with real ids ORs the two (e.g. "No service" + "Bookkeeping").
+    {
+      const raw = trim(req.query.productId || '', 2000);
+      const ids = raw ? raw.split(',').map(x => trim(x, 200)).filter(Boolean) : [];
+      const wantsNoService = ids.includes('__none__');
+      const realIds = ids.filter(id => id !== '__none__');
+      if (wantsNoService && realIds.length) {
+        q = q.or(`product_id.is.null,product_id.in.(${realIds.join(',')})`);
+      } else if (wantsNoService) {
+        q = q.is('product_id', null);
+      } else if (realIds.length === 1) {
+        q = q.eq('product_id', realIds[0]);
+      } else if (realIds.length > 1) {
+        q = q.in('product_id', realIds);
+      }
+    }
     // Narrow to tasks whose customer is the chosen type. Pre-resolves
     // matching customer IDs because PostgREST embedded-resource
     // filters get awkward when combined with the customer_id list

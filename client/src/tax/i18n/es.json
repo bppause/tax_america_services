@@ -768,6 +768,7 @@
   "owner.tasks.filter.allPriorities": "Todas las prioridades",
   "owner.tasks.filter.anyOwner": "Cualquier responsable",
   "owner.tasks.filter.anyService": "Cualquier servicio",
+  "owner.tasks.filter.noService": "Sin servicio (toda la oficina)",
   "owner.tasks.filter.anyCustomer": "Cualquier cliente o empresa",
   "owner.tasks.filter.searchCustomers": "Buscar clientes, empresa, correo, teléfono…",
   "owner.tasks.filter.searchServices": "Buscar servicios…",
