@@ -4,6 +4,7 @@ import { pickI18n } from '../i18n';
 import { displayPersonName } from '../lib/personName';
 import { effectiveUrgency, colorOf, priorityColorOf, resolveThresholds } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
+import { formatDateTime } from '../lib/lastSignIn';
 
 // Hover card shared by every task surface in the employee portal —
 // Calendar pips, Kanban cards, Tasks list rows, Periods view, the
@@ -189,6 +190,15 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
             <span>{pickI18n(status.label_i18n, locale).value || status.key}</span>
           </>
         )}
+        <span style={{ color: 'var(--tax-muted)' }}>{t('owner.tasks.lastViewed.label')}</span>
+        <span>
+          {task.last_viewed_at
+            ? t('owner.tasks.lastViewed.hoverValue', {
+                name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
+                date: formatDateTime(task.last_viewed_at, locale),
+              })
+            : t('owner.tasks.lastViewed.neverHover')}
+        </span>
       </div>
     </div>,
     document.body

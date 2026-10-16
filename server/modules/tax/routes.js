@@ -6256,9 +6256,10 @@ ${closingHtml}
     let openQ = supabase.from('tax_tasks')
       .select(`
         id, customer_id, product_id, title, status_key, priority, due_date, completed_at,
-        assigned_employee_id,
+        assigned_employee_id, last_viewed_at, last_viewed_by_employee_id,
         customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email ),
-        product:tax_products ( id, slug, name_i18n )
+        product:tax_products ( id, slug, name_i18n ),
+        last_viewed_by:tax_employees!tax_tasks_last_viewed_by_employee_id_fkey ( id, name, email )
       `)
       .eq('community_id', communitySlug)
       .is('archived_at', null)
