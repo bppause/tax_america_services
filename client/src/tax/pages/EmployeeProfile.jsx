@@ -55,7 +55,12 @@ export default function EmployeeProfile() {
       inApp: ch.includes('in_app'),
       email: ch.includes('email'),
     });
-  }, [employee]);
+    // Keyed on id, not the employee object itself: refreshMe() after every
+    // autosave hands back a new object reference for the same row, and
+    // re-syncing on that would blow away whatever the user is still
+    // mid-typing (e.g. a name field) with the pre-edit snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employee?.id]);
 
   // Phase 4n.11: fetch the notification-type catalog + this employee's
   // current per-type prefs. Falls back to the type's default_channels when
