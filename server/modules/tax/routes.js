@@ -6432,6 +6432,24 @@ ${closingHtml}
     if (filterAssignee) q = q.eq('assigned_employee_id', filterAssignee);
     if (filterCustomer) q = q.eq('customer_id', filterCustomer);
     if (typeCustomerIds) q = q.in('customer_id', typeCustomerIds);
+    // Service filter — same '__none__' pseudo-id convention as the
+    // Tasks page's Service filter (GET /admin/tasks). Empty/absent
+    // means "all tasks," matching the Tasks page default.
+    {
+      const raw = trim(req.query.serviceId || '', 2000);
+      const ids = raw ? raw.split(',').map(x => trim(x, 200)).filter(Boolean) : [];
+      const wantsNoService = ids.includes('__none__');
+      const realIds = ids.filter(id => id !== '__none__');
+      if (wantsNoService && realIds.length) {
+        q = q.or(`product_id.is.null,product_id.in.(${realIds.join(',')})`);
+      } else if (wantsNoService) {
+        q = q.is('product_id', null);
+      } else if (realIds.length === 1) {
+        q = q.eq('product_id', realIds[0]);
+      } else if (realIds.length > 1) {
+        q = q.in('product_id', realIds);
+      }
+    }
     const { data: tasks, error } = await q;
     if (error) return sendSupabaseError(res, error);
 
