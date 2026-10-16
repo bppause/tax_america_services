@@ -597,6 +597,7 @@
   "owner.permissions.view_audit_logs.desc": "Leer el registro de auditoría del despacho: quién cambió qué y cuándo.",
   "owner.tasks.add": "Agregar tarea",
   "owner.tasks.chip.mine": "Mis tareas",
+  "owner.tasks.chip.hideCompleted": "Ocultar completadas",
   "owner.tasks.chip.all": "Todas",
   "owner.tasks.chip.overdue": "Vencidas",
   "owner.tasks.chip.today": "Hoy",
