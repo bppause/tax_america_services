@@ -3441,6 +3441,29 @@ ${closingHtml}
     res.json({ ok: true, enabled });
   });
 
+  // Simple vs. Detailed admin/staff portal mode — owner-wide, read by
+  // every employee at login (GET /employee/me) so the sidebar and
+  // per-page controls (e.g. Tasks) know which experience to render.
+  router.put('/admin/community-settings/ui-mode', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const mode = req.body?.mode === 'simple' ? 'simple' : 'detailed';
+    const { error } = await supabase.from('communities')
+      .update({ tax_ui_mode: mode, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'ui_mode_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { mode },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, mode });
+  });
+
   router.put('/admin/community-settings/reminders-enabled', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
     const communitySlug = trim(req.body?.communitySlug, 200);
@@ -3737,7 +3760,7 @@ ${closingHtml}
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
         tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
-        tax_news_refresh_interval_days, tax_ai_features_enabled,
+        tax_news_refresh_interval_days, tax_ai_features_enabled, tax_ui_mode,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
@@ -10960,7 +10983,7 @@ ${closingHtml}
     stampLastSignIn('tax_employees', emp.id, emp.last_sign_in_at);
     const [{ data: community }, assignments, { data: companion }] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale, contact_email, phone')
+        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale, contact_email, phone, tax_ui_mode')
         .eq('id', emp.community_id).maybeSingle(),
       // Only fetch assignments for staff; for admin the list would be ALL
       // customers which is a different display ("All customers in this

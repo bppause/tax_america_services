@@ -390,6 +390,7 @@ export const taxApi = {
   adminSetDocumentsEnabled(auth, payload)        { return request('PUT',  '/admin/community-settings/documents-enabled', payload, auth, { admin: true }); },
   adminSetPortalEnabled(auth, payload)           { return request('PUT',  '/admin/community-settings/portal-enabled', payload, auth, { admin: true }); },
   adminSetAiFeaturesEnabled(auth, payload)       { return request('PUT',  '/admin/community-settings/ai-features-enabled', payload, auth, { admin: true }); },
+  adminSetUiMode(auth, payload)                  { return request('PUT',  '/admin/community-settings/ui-mode', payload, auth, { admin: true }); },
 
   adminListProducts(auth, communitySlug)         { return request('GET',  `/admin/products?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
   adminCreateProduct(auth, payload)              { return request('POST', '/admin/products', payload, auth, { admin: true }); },

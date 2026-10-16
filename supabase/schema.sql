@@ -3224,6 +3224,19 @@ exception when duplicate_object then null; end $$;
 alter table public.communities
   add column if not exists tax_ai_features_enabled boolean not null default false;
 
+-- Simple vs. Detailed admin/staff portal mode. 'detailed' is today's full
+-- experience (unchanged default, so no existing team is surprised by
+-- features disappearing). 'simple' trims the sidebar to the essentials
+-- and strips advanced per-page controls (e.g. Tasks loses its Kanban/
+-- Calendar/Periods views, bulk actions, and the blocked-by/review/
+-- time-tracking panel) — owner-wide, not a per-employee preference.
+alter table public.communities
+  add column if not exists tax_ui_mode text not null default 'detailed';
+do $$ begin
+  alter table public.communities add constraint tax_ui_mode_chk
+    check (tax_ui_mode in ('simple', 'detailed'));
+exception when duplicate_object then null; end $$;
+
 -- New relationship types covering services that lacked one (Phase 4n.66).
 -- Existing ones (LLC, S-Corp, payroll, etc.) already have FAQs; these
 -- three close the coverage gap for the public site's service grid.
