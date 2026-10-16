@@ -760,6 +760,7 @@
   "owner.tasks.progress.nudgeComplete": "Se detuvo el cronómetro — ¿marcar esta tarea como \"{status}\" ahora?",
   "owner.tasks.lastViewed": "Visto por última vez por {name} · {date}",
   "owner.tasks.lastViewed.someone": "un compañero",
+  "owner.tasks.lastViewed.never": "⚠ Nadie lo ha visto todavía",
   "owner.tasks.errTitle": "El título de la tarea es obligatorio.",
   "owner.tasks.showNotes": "Ver notas",
   "owner.tasks.hideNotes": "Ocultar notas",

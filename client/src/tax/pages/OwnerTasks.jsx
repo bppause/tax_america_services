@@ -374,7 +374,7 @@ export default function OwnerTasks() {
             )
           : view === 'kanban' ? (
               <TasksKanban tasks={tasks} statuses={statuses} community={community}
-                           auth={auth} onChange={load}
+                           auth={auth} onChange={load} hideCompleted={hideCompleted}
                            onEdit={setEditingTask} locale={locale} t={t} />
             )
           : (
@@ -1213,13 +1213,19 @@ function TaskFormModal({
             <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
           )}
         </div>
-        {isEdit && task.last_viewed_at && (
-          <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
-            {t('owner.tasks.lastViewed', {
-              name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
-              date: formatLastSignInCompact(task.last_viewed_at, locale, t),
-            })}
-          </div>
+        {isEdit && (
+          task.last_viewed_at ? (
+            <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
+              {t('owner.tasks.lastViewed', {
+                name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
+                date: formatLastSignInCompact(task.last_viewed_at, locale, t),
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: '#b45309', fontWeight: 700, marginBottom: 8 }}>
+              {t('owner.tasks.lastViewed.never')}
+            </div>
+          )
         )}
         <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
@@ -2738,12 +2744,16 @@ function TasksCalendar({ tasks, community, statuses, onEdit, locale, t }) {
 }
 
 // ─── Kanban view (status columns + native drag-and-drop) ─────────────────
-function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, locale, t }) {
+function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideCompleted, locale, t }) {
   const thresholds = resolveThresholds(community);
   const todayIso = new Date().toISOString().slice(0, 10);
-  const cols = statuses.length
+  let cols = statuses.length
     ? statuses.slice().sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
     : [{ id: 'fallback', key: 'not_started', label_i18n: { en: 'Not started', es: 'Sin iniciar' } }];
+  // Hide-completed also drops the terminal-status column itself (it'd
+  // otherwise sit empty) so the remaining columns pick up its width —
+  // the grid is evenly split across cols.length, which recomputes here.
+  if (hideCompleted) cols = cols.filter(col => !col.is_terminal);
   const tasksByStatus = new Map();
   for (const tt of tasks) {
     const arr = tasksByStatus.get(tt.status_key) || [];
