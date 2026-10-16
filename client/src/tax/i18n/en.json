@@ -769,6 +769,7 @@
   "owner.tasks.filter.allPriorities": "All priorities",
   "owner.tasks.filter.anyOwner": "Any owner",
   "owner.tasks.filter.anyService": "Any service",
+  "owner.tasks.filter.noService": "No service (practice-wide)",
   "owner.tasks.filter.anyCustomer": "Any customer or company",
   "owner.tasks.filter.searchCustomers": "Search customers, company, email, phone…",
   "owner.tasks.filter.searchServices": "Search services…",

@@ -22,6 +22,10 @@ import TaskHover from '../components/TaskHover';
 //   Notes          → notes textarea
 
 const PRIORITY_OPTIONS = ['urgent', 'high', 'normal', 'low'];
+// Pseudo service-id for practice-wide tasks (no product_id). Lets the
+// Service filter isolate them alongside — or instead of — real services.
+// Server-side match lives in GET /admin/tasks' productId handling.
+const NO_SERVICE_ID = '__none__';
 
 function formatDuration(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds || 0));
@@ -428,10 +432,13 @@ function FilterBar({ filters, setFilters, statuses, employees, products, custome
     label: displayPersonName(em) || em.email,
     sub: em.email || '',
   }));
-  const productOptions = products.map(p => ({
-    id: p.id,
-    label: pickI18n(p.name_i18n, locale).value || p.slug,
-  }));
+  const productOptions = [
+    { id: NO_SERVICE_ID, label: t('owner.tasks.filter.noService') },
+    ...products.map(p => ({
+      id: p.id,
+      label: pickI18n(p.name_i18n, locale).value || p.slug,
+    })),
+  ];
   return (
     <div style={{ display: 'grid', gap: 8, marginBottom: 16,
                   padding: 12, background: 'var(--tax-bg-alt)', borderRadius: 8 }}>
