@@ -248,30 +248,42 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
 function AccessScopePill({ emp, t }) {
   if (emp.status === 'archived') return null;
   const isAdmin = emp.role === 'admin';
+  // An admin can still have view_customers revoked — a "site admin" who
+  // configures the public site/app but never sees customer records.
+  const isWebAdmin = isAdmin && emp.permissions?.view_customers === false;
   const count = Number(emp.assigned_customer_count) || 0;
-  const label = isAdmin
-    ? t('owner.staff.access.all')
-    : (count === 0
-        ? t('owner.staff.access.none')
-        : t('owner.staff.access.assigned', { count }));
-  const tint = isAdmin
-    ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
-        fg: 'var(--tax-brand-primary)',
-        bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
-    : count === 0
-      ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
-          fg: '#7f1d1d',
-          bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
-      : { bg: 'var(--tax-bg-alt)',
-          fg: 'var(--tax-text)',
-          bd: 'var(--tax-border)' };
+  const label = isWebAdmin
+    ? t('owner.staff.access.webAdmin')
+    : isAdmin
+      ? t('owner.staff.access.all')
+      : (count === 0
+          ? t('owner.staff.access.none')
+          : t('owner.staff.access.assigned', { count }));
+  const tint = isWebAdmin
+    ? { bg: 'color-mix(in srgb, #6b7280 10%, #fff)',
+        fg: '#374151',
+        bd: 'color-mix(in srgb, #6b7280 30%, #fff)' }
+    : isAdmin
+      ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+          fg: 'var(--tax-brand-primary)',
+          bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
+      : count === 0
+        ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
+            fg: '#7f1d1d',
+            bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
+        : { bg: 'var(--tax-bg-alt)',
+            fg: 'var(--tax-text)',
+            bd: 'var(--tax-border)' };
+  const hint = isWebAdmin
+    ? t('owner.staff.access.webAdminHint')
+    : isAdmin ? t('owner.staff.access.allHint') : t('owner.staff.access.assignedHint');
   return (
     <span style={{
       marginLeft: 6, padding: '1px 8px', borderRadius: 999,
       background: tint.bg, color: tint.fg, border: `1px solid ${tint.bd}`,
       fontSize: 11, fontWeight: 600,
     }}
-          title={isAdmin ? t('owner.staff.access.allHint') : t('owner.staff.access.assignedHint')}>
+          title={hint}>
       {label}
     </span>
   );

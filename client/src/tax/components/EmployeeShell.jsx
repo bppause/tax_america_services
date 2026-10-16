@@ -83,15 +83,19 @@ export default function EmployeeShell({ community, active, children }) {
             </div>
 
             {/* Operations — the day-to-day work surfaces. Leads sits
-                here because converting them IS operational work. */}
-            <div className="tax-shell__group">
-              <div className="tax-shell__group-label">{t('employee.nav.groupOperations')}</div>
-              {employee && navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
-              {employee && navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
-              {employee && navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
-              {isAdmin && perm('manage_leads') &&
-                navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
-            </div>
+                here because converting them IS operational work. Hidden
+                entirely for an admin with view_customers revoked — a
+                "site admin" account that never touches customer data. */}
+            {employee && perm('view_customers') && (
+              <div className="tax-shell__group">
+                <div className="tax-shell__group-label">{t('employee.nav.groupOperations')}</div>
+                {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
+                {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
+                {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
+                {isAdmin && perm('manage_leads') &&
+                  navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
+              </div>
+            )}
 
             {/* Public homepage — anything you edit here changes the
                 public landing page (Services / Articles / FAQs). The

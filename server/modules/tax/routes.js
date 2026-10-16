@@ -1252,7 +1252,7 @@ module.exports = function createTaxRouter(deps) {
   });
 
   router.get('/admin/customers', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const communitySlug = trim(req.query.communitySlug || '', 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
 
@@ -1425,7 +1425,7 @@ module.exports = function createTaxRouter(deps) {
   // or they can self-link by signing in (Phase 2a). No subscription is
   // created — owner adds those via SQL/curl until Phase 4b ships subscription UI.
   router.post('/admin/customers', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
     const email = trim(body.email, 200).toLowerCase();
@@ -1538,7 +1538,7 @@ module.exports = function createTaxRouter(deps) {
   // relationships, or if the original send failed/got missed by the
   // customer. Always uses the current relationship set + customer locale.
   router.post('/admin/customers/:id/send-welcome', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const result = await sendWelcomeForCustomer(customerId);
     if (result.skipped) {
@@ -1559,7 +1559,7 @@ module.exports = function createTaxRouter(deps) {
   // open in WhatsApp. The message body is generated server-side so both
   // channels share the same content and language logic.
   router.post('/admin/customers/:id/send-inquiry', async (req, res) => {
-    const adminUser = await requireOwnerAdmin(req, res); if (!adminUser) return;
+    const adminUser = await requireOwnerAdmin(req, res, 'view_customers'); if (!adminUser) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const channel = body.channel === 'whatsapp' ? 'whatsapp' : 'email';
@@ -1752,7 +1752,7 @@ ${closingHtml}
   // The client shows this in an editable textarea; the edited version is
   // posted back to send-inquiry as customMessage.
   router.post('/admin/customers/:id/preview-inquiry', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const productIds = Array.isArray(body.productIds) ? body.productIds.map(String) : [];
@@ -2476,7 +2476,7 @@ ${closingHtml}
   // /employee/me) lights up automatically. Sends the welcome email by
   // default — owner can suppress with sendWelcomeEmail: false.
   router.post('/admin/customers/:id/promote-to-staff', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const role = body.role === 'admin' ? 'admin' : 'staff';
@@ -2534,7 +2534,7 @@ ${closingHtml}
   // customer's relationships so the relationship-driven cron stops
   // generating new periods.
   router.put('/admin/customers/:id/status', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const status = String(body.status || '').toLowerCase();
@@ -2586,7 +2586,7 @@ ${closingHtml}
   });
 
   router.post('/admin/customers/import', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
     const csvText = String(body.csv || '');
@@ -2918,7 +2918,7 @@ ${closingHtml}
   // subscriptions + counts for documents and threads. The dashboard composes
   // these into the customer detail page in one round trip.
   router.get('/admin/customers/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const id = trim(req.params.id, 200);
     const { data: cust, error: cErr } = await supabase.from('tax_customers')
       .select('id, community_id, email, name, business_name, customer_type, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, status, notes, firebase_uid, last_sign_in_at, created_at, updated_at')
@@ -2983,7 +2983,7 @@ ${closingHtml}
   });
 
   router.get('/admin/periods', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const communitySlug = trim(req.query.communitySlug || '', 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
 
@@ -3008,7 +3008,7 @@ ${closingHtml}
   // reminder cron respects status — periods in 'filed' or 'skipped' stop
   // generating reminders.
   router.put('/admin/periods/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const periodId = trim(req.params.id, 200);
     const body = req.body || {};
     const update = { updated_at: new Date().toISOString() };
@@ -3050,7 +3050,7 @@ ${closingHtml}
   // identity. Schema for changing the login email lives in Phase 5 with
   // a proper re-link flow.
   router.put('/admin/customers/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const update = { updated_at: new Date().toISOString() };
@@ -4647,7 +4647,7 @@ ${closingHtml}
   // active_schedule_slugs=null (= all schedules), reminder_offsets_days &
   // reminder_channels use platform defaults from the column DEFAULTs.
   router.post('/admin/customers/:id/subscriptions', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const productId = trim(body.productId, 200);
@@ -4690,7 +4690,7 @@ ${closingHtml}
   // reminderOffsetsDays?, reminderChannels?, startDate? }. Each field is
   // optional; only provided ones are updated.
   router.put('/admin/subscriptions/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const subId = trim(req.params.id, 200);
     const body = req.body || {};
     const update = { updated_at: new Date().toISOString() };
@@ -4774,7 +4774,7 @@ ${closingHtml}
   // for the audit trail. If the owner truly needs to purge a subscription,
   // they can do it via SQL.
   router.delete('/admin/subscriptions/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const subId = trim(req.params.id, 200);
     const { error } = await supabase.from('tax_subscriptions')
       .update({ status: 'cancelled', updated_at: new Date().toISOString() })
@@ -4787,7 +4787,7 @@ ${closingHtml}
   // Status values come from the schema check constraint:
   //   new | contacted | converted | closed
   router.get('/admin/leads', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
@@ -5836,7 +5836,7 @@ ${closingHtml}
   // active relationships) and join the override row if one exists. Used by
   // the customer detail page to render the override editor.
   router.get('/admin/customers/:id/workflow-overrides', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     if (!customerId) return res.status(400).json({ error: 'customerId required.' });
     const { data: cust } = await supabase.from('tax_customers')
@@ -5867,7 +5867,7 @@ ${closingHtml}
   });
 
   router.put('/admin/customers/:customerId/workflow-overrides/:ruleId', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.customerId, 200);
     const ruleId = trim(req.params.ruleId, 200);
     const body = req.body || {};
@@ -5911,7 +5911,7 @@ ${closingHtml}
   });
 
   router.delete('/admin/customers/:customerId/workflow-overrides/:ruleId', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.customerId, 200);
     const ruleId = trim(req.params.ruleId, 200);
     const id = `tcwo_${customerId}_${ruleId}`.slice(0, 200);
@@ -6055,7 +6055,7 @@ ${closingHtml}
 
     // Determine the visible-customers set ONCE; reuse across queries.
     let allowedCustomerIds = null; // null = all (admin)
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const visible = await getVisibleCustomerIdsForEmployee(emp);
       allowedCustomerIds = Array.isArray(visible) ? visible : [];
     }
@@ -6110,7 +6110,7 @@ ${closingHtml}
     let newLeads7d = 0;
     let leadsCount30d = 0;
     let convertedCount30d = 0;
-    if (emp.role === 'admin') {
+    if (isFullCustomerAdmin(emp)) {
       const { data: recent } = await supabase.from('tax_leads')
         .select('id, community_id, name, first_name, last_name, email, phone, product_slugs, product_slug, message, status, created_at')
         .eq('community_id', communitySlug)
@@ -6210,7 +6210,7 @@ ${closingHtml}
     }
 
     let allowedCustomers = null; // null = all
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const visible = await getVisibleCustomerIdsForEmployee(emp);
       if (Array.isArray(visible)) allowedCustomers = new Set(visible);
     }
@@ -6339,7 +6339,7 @@ ${closingHtml}
       `)
       .eq('community_id', communitySlug);
 
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const visible = await getVisibleCustomerIdsForEmployee(emp);
       if (Array.isArray(visible)) {
         if (!visible.length) return res.json({ rows: [] });
@@ -6436,7 +6436,7 @@ ${closingHtml}
       .select('id, community_id, customer_id').eq('id', periodId).maybeSingle();
     if (!period) return res.status(404).json({ error: 'Period not found.' });
     if (period.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    if (emp.role !== 'admin' && period.customer_id) {
+    if (!isFullCustomerAdmin(emp) && period.customer_id) {
       const ok = await canEmployeeSeeCustomer(emp, period.customer_id);
       if (!ok) return res.status(403).json({ error: 'Not assigned to this customer.' });
     }
@@ -7153,7 +7153,7 @@ ${closingHtml}
 
     // Non-admin staff scope: only tasks assigned to them or to customers
     // they have visibility on. Admin sees everything.
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const visible = await getVisibleCustomerIdsForEmployee(emp);
       if (Array.isArray(visible)) {
         // Build an OR: assigned to me, OR customer in my scope, OR
@@ -7312,7 +7312,7 @@ ${closingHtml}
       .is('archived_at', null)
       .not('service_auto_task_id', 'is', null);
 
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const visible = await getVisibleCustomerIdsForEmployee(emp);
       if (Array.isArray(visible)) {
         if (!visible.length) {
@@ -7579,7 +7579,7 @@ ${closingHtml}
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       // staff can edit tasks they own or that are scoped to a customer they see
       const isMine = cur.assigned_employee_id === emp.id;
       const inScope = cur.customer_id && (await canEmployeeSeeCustomer(emp, cur.customer_id));
@@ -7759,7 +7759,7 @@ ${closingHtml}
       .is('archived_at', null)
       .order('pending_review_at', { ascending: true })
       .limit(50);
-    if (emp.role !== 'admin') q = q.eq('reviewer_employee_id', emp.id);
+    if (!isFullCustomerAdmin(emp)) q = q.eq('reviewer_employee_id', emp.id);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
     res.json({ tasks: data || [] });
@@ -7801,7 +7801,7 @@ ${closingHtml}
     if (selErr) return sendSupabaseError(res, selErr);
 
     let allowedIds = (rows || []).filter(r => r.community_id === emp.community_id).map(r => r.id);
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const visible = await getVisibleCustomerIdsForEmployee(emp);
       const visSet = Array.isArray(visible) ? new Set(visible) : null;
       allowedIds = (rows || [])
@@ -9388,7 +9388,7 @@ ${closingHtml}
 
   // ── GET /admin/customers/:id/relationships ── (global admin)
   router.get('/admin/customers/:id/relationships', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const id = trim(req.params.id, 200);
     const { data, error } = await supabase.from('tax_customer_relationships')
       .select(`
@@ -9418,7 +9418,7 @@ ${closingHtml}
     if (cust.community_id !== emp.community_id) {
       return res.status(403).json({ error: 'Wrong community.' });
     }
-    if (emp.role !== 'admin') {
+    if (!isFullCustomerAdmin(emp)) {
       const ok = await canEmployeeSeeCustomer(emp, id);
       if (!ok) return res.status(403).json({ error: 'Not assigned to this customer.' });
     }
@@ -9688,7 +9688,7 @@ ${closingHtml}
   });
 
   router.post('/admin/customers/:id/relationships', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const typeId = trim(req.body?.relationshipTypeId, 200);
     const notes = trim(req.body?.notes, MAX_TEXT_LEN);
@@ -9736,7 +9736,7 @@ ${closingHtml}
 
   // ── DELETE /admin/customers/:id/relationships/:relId ── (global admin)
   router.delete('/admin/customers/:id/relationships/:relId', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const relId = trim(req.params.relId, 200);
     const actorEmail = trim(req.get('x-admin-email') || '', 200).toLowerCase();
@@ -10172,7 +10172,7 @@ ${closingHtml}
 
   // ── GET /admin/customers/:id/documents ── (global admin)
   router.get('/admin/customers/:id/documents', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const { data, error } = await supabase.from('tax_documents')
       .select('id, community_id, source, kind, file_name, mime_type, size_bytes, status, uploaded_at, uploaded_by_role, uploaded_by_email, period_id, created_at')
@@ -10186,7 +10186,7 @@ ${closingHtml}
   // Owner uploads a document FOR the customer (completed return, etc.). On
   // finalize the customer gets an in-app + email notification.
   router.post('/admin/customers/:id/documents/upload-url', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const fileName = sanitizeFileName(body.fileName);
@@ -10234,7 +10234,7 @@ ${closingHtml}
   // ── POST /admin/documents/:id/finalize ── (global admin)
   // Flips to uploaded + notifies the customer.
   router.post('/admin/documents/:id/finalize', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const docId = trim(req.params.id, 200);
     const { data: doc } = await supabase.from('tax_documents')
       .select('id, community_id, customer_id, source, status, file_name, kind')
@@ -10259,7 +10259,7 @@ ${closingHtml}
 
   // ── GET /admin/documents/:id/download-url ── (global admin)
   router.get('/admin/documents/:id/download-url', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const docId = trim(req.params.id, 200);
     const { data: doc } = await supabase.from('tax_documents')
       .select('id, storage_path, file_name, status, deleted_at').eq('id', docId).maybeSingle();
@@ -10276,7 +10276,7 @@ ${closingHtml}
   // data the practice doesn't want lingering. Use the soft-delete on the
   // customer endpoint when keeping the audit trail matters more.
   router.delete('/admin/documents/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const docId = trim(req.params.id, 200);
     const { data: doc } = await supabase.from('tax_documents')
       .select('id, storage_path').eq('id', docId).maybeSingle();
@@ -10455,7 +10455,7 @@ ${closingHtml}
 
   // ── ADMIN: GET /admin/threads ── (owner; optionally filtered)
   router.get('/admin/threads', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_message_threads')
       .select(`
@@ -10474,7 +10474,7 @@ ${closingHtml}
 
   // ── ADMIN: GET /admin/threads/:id ── (owner; returns + flips practice_unread to false)
   router.get('/admin/threads/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const id = trim(req.params.id, 200);
     const { data: thread } = await supabase.from('tax_message_threads')
       .select(`
@@ -10498,7 +10498,7 @@ ${closingHtml}
 
   // ── ADMIN: POST /admin/threads/:id/messages ── (owner reply)
   router.post('/admin/threads/:id/messages', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const id = trim(req.params.id, 200);
     const messageBody = trim(req.body?.body, MAX_MESSAGE_BODY);
     if (!messageBody) return res.status(400).json({ error: 'Message body required.' });
@@ -10524,7 +10524,7 @@ ${closingHtml}
 
   // ── ADMIN: POST /admin/threads/:id/read ──
   router.post('/admin/threads/:id/read', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const id = trim(req.params.id, 200);
     const { error } = await supabase.from('tax_message_threads')
       .update({ practice_unread: false, updated_at: new Date().toISOString() }).eq('id', id);
@@ -11001,19 +11001,28 @@ ${closingHtml}
   // ── Phase 3b visibility helper ──────────────────────────────────────────
   // Returns:
   //   null              → employee sees ALL customers in the community
-  //                       (role === 'admin')
+  //                       (role === 'admin' with view_customers granted)
   //   string[]          → exact set of customer IDs the employee may see
-  //                       (role === 'staff' with assignments — possibly empty)
+  //                       (role === 'staff' with assignments — possibly
+  //                       empty — or an admin with view_customers revoked,
+  //                       who gets [] unconditionally: "site admin, not
+  //                       customer-facing")
   // Callers should treat [] as "nothing visible" and short-circuit lists.
+  function isFullCustomerAdmin(emp) {
+    return emp.role === 'admin' && hasEmployeePermission(emp, 'view_customers');
+  }
   async function getVisibleCustomerIdsForEmployee(emp) {
+    if (!hasEmployeePermission(emp, 'view_customers')) return [];
     if (emp.role === 'admin') return null;
     const { data } = await supabase.from('tax_employee_customer_assignments')
       .select('customer_id').eq('employee_id', emp.id).eq('active', true);
     return (data || []).map(r => r.customer_id);
   }
 
-  // Sugar: returns true when emp can see this customer (admin always can).
+  // Sugar: returns true when emp can see this customer (admin always can,
+  // unless view_customers has been revoked — see isFullCustomerAdmin above).
   async function canEmployeeSeeCustomer(emp, customerId) {
+    if (!hasEmployeePermission(emp, 'view_customers')) return false;
     if (emp.role === 'admin') return true;
     const { data } = await supabase.from('tax_employee_customer_assignments')
       .select('id').eq('employee_id', emp.id).eq('customer_id', customerId)
@@ -11241,7 +11250,7 @@ ${closingHtml}
 
     // Leads are a community-level queue; only admins see them in triage.
     let newLeads = [];
-    if (emp.role === 'admin') {
+    if (isFullCustomerAdmin(emp)) {
       const { data } = await supabase.from('tax_leads')
         .select('id, name, email, product_slug, product_slugs, created_at')
         .eq('community_id', emp.community_id).eq('status', 'new')
@@ -11991,6 +12000,17 @@ ${closingHtml}
     if (!communitySlug || !targetId || !['customer', 'employee'].includes(targetType)) {
       return res.status(400).json({ error: 'communitySlug, targetType (customer|employee), and targetId required.' });
     }
+    // Impersonating a customer is a customer-visibility action; an employee
+    // impersonation (e.g. to debug a staff view) isn't, so only gate the
+    // customer path. Global-admin (env-list) callers have no employee row
+    // and no permissions map, so they're never subject to this check.
+    if (targetType === 'customer' && auth.source === 'employee' &&
+        !hasEmployeePermission(auth.employee, 'view_customers')) {
+      return res.status(403).json({
+        error: 'permission_revoked',
+        message: 'Your owner revoked the "view_customers" permission.',
+      });
+    }
 
     // The admin must be a role='admin' employee in this community. Global
     // admin (env header) callers can impersonate too — they look up the
@@ -12150,7 +12170,7 @@ ${closingHtml}
 
   // GET /admin/customers/:id/assignments — list employees on a customer
   router.get('/admin/customers/:id/assignments', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const customerId = trim(req.params.id, 200);
     const { data, error } = await supabase.from('tax_employee_customer_assignments')
       .select(`
