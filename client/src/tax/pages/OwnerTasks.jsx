@@ -367,7 +367,7 @@ export default function OwnerTasks() {
             <TasksGroupedList tasks={tasks} groupBy={groupBy} community={community}
                               statuses={statuses} employees={employees}
                               customerById={customerById} employeeById={employeeById}
-                              productById={productById} isAdmin={isAdmin}
+                              productById={productById} isAdmin={isAdmin} employeeId={employee?.id}
                               auth={auth} onEdit={setEditingTask} onChange={load}
                               selectedIds={isSimple ? undefined : selectedIds}
                               toggleSelect={isSimple ? undefined : toggleSelect}
@@ -858,7 +858,7 @@ function GroupSelectAll({ tasks, selectedIds, toggleSelect, selectMany, t }) {
   );
 }
 
-function TaskRow({ task, auth, community, statuses, employees, customerById, employeeById, productById, isAdmin, onEdit, onChange, selected, onToggleSelect, locale, t }) {
+function TaskRow({ task, auth, community, statuses, employees, customerById, employeeById, productById, isAdmin, employeeId, onEdit, onChange, selected, onToggleSelect, locale, t }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [showNotes, setShowNotes] = useState(false);
@@ -897,6 +897,9 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
     catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
   };
+  // Admins can always delete; a non-admin may also delete a task they
+  // themselves assigned (created), mirroring the server-side check.
+  const canDelete = isAdmin || (!!employeeId && task.created_by_employee_id === employeeId);
 
   return (
     <TaskHover task={task} statuses={statuses}
@@ -998,7 +1001,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
                   style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
             {t('owner.tasks.edit')}
           </button>
-          {isAdmin && (
+          {canDelete && (
             <button type="button" onClick={onDelete} disabled={busy}
                     className="tax-btn tax-btn--ghost tax-btn--sm"
                     style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}>
@@ -1979,7 +1982,7 @@ function DuePill({ dueDate, thresholds, t }) {
 
 // ─── Grouped list view ───────────────────────────────────────────────────
 function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
-                            customerById, employeeById, productById, isAdmin,
+                            customerById, employeeById, productById, isAdmin, employeeId,
                             auth, onEdit, onChange,
                             selectedIds, toggleSelect, selectMany,
                             locale, t }) {
@@ -1992,7 +1995,7 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
           <TaskRow key={task.id} task={task} auth={auth} community={community}
                    statuses={statuses} employees={employees}
                    customerById={customerById} employeeById={employeeById}
-                   productById={productById} isAdmin={isAdmin}
+                   productById={productById} isAdmin={isAdmin} employeeId={employeeId}
                    onEdit={() => onEdit(task)}
                    onChange={onChange}
                    selected={selectedIds?.has(task.id)}
@@ -2060,7 +2063,7 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
                 <TaskRow key={task.id} task={task} auth={auth} community={community}
                          statuses={statuses} employees={employees}
                          customerById={customerById} employeeById={employeeById}
-                         productById={productById} isAdmin={isAdmin}
+                         productById={productById} isAdmin={isAdmin} employeeId={employeeId}
                          onEdit={() => onEdit(task)}
                          onChange={onChange}
                          selected={selectedIds?.has(task.id)}
@@ -2421,7 +2424,7 @@ function PeriodCard({ period: p, isOpen, onToggle, cached,
                 <TaskRow key={tt.id} task={tt} auth={auth} community={community}
                          statuses={statuses} employees={employees}
                          customerById={customerById} employeeById={employeeById}
-                         productById={productById} isAdmin={isAdmin}
+                         productById={productById} isAdmin={isAdmin} employeeId={employeeId}
                          selected={selectedIds?.has(tt.id)}
                          onToggleSelect={toggleSelect ? () => toggleSelect(tt.id) : undefined}
                          onEdit={onEdit} onChange={onTaskChange}

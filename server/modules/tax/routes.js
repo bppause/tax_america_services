@@ -7989,10 +7989,11 @@ ${closingHtml}
     res.json({ ok: true, updated: allowedIds.length });
   });
 
-  // DELETE /admin/tasks/:id — admin-only by default. Staff can edit /
-  // complete a task they're assigned to but cannot remove it; an owner
-  // who wants to delegate deletion can promote the employee to admin
-  // or grant the action through a future permission key.
+  // DELETE /admin/tasks/:id — admin, or the employee who assigned the task,
+  // may delete it. Staff can edit / complete a task they're assigned to but
+  // cannot remove it unless they're also the one who assigned it; an owner
+  // who wants to delegate deletion further can promote the employee to
+  // admin or grant the action through a future permission key.
   router.delete('/admin/tasks/:id', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const taskId = trim(req.params.id, 200);
@@ -8000,9 +8001,10 @@ ${closingHtml}
       .select('id, community_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    if (emp.role !== 'admin') {
-      return res.status(403).json({ error: 'task_delete_admin_only',
-        message: 'Only an admin can delete a task.' });
+    const isAssigner = !!cur.created_by_employee_id && cur.created_by_employee_id === emp.id;
+    if (emp.role !== 'admin' && !isAssigner) {
+      return res.status(403).json({ error: 'task_delete_not_allowed',
+        message: 'Only an admin or the employee who assigned this task can delete it.' });
     }
     const { error } = await supabase.from('tax_tasks').delete().eq('id', taskId);
     if (error) return sendSupabaseError(res, error);
