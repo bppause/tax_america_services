@@ -149,6 +149,7 @@ const {
 } = require('./modules/tax/email-senders')({
   sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery,
   publicAppUrl: () => publicAppUrl(),
+  supabase,
 });
 
 const taxRemindersCron = require('./modules/tax/reminders')({
