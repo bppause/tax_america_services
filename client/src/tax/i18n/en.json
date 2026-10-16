@@ -761,6 +761,7 @@
   "owner.tasks.progress.nudgeComplete": "Timer stopped — mark this task as \"{status}\" now?",
   "owner.tasks.lastViewed": "Last viewed by {name} · {date}",
   "owner.tasks.lastViewed.someone": "a teammate",
+  "owner.tasks.lastViewed.never": "⚠ Not yet viewed by anyone",
   "owner.tasks.errTitle": "Task title is required.",
   "owner.tasks.showNotes": "Show notes",
   "owner.tasks.hideNotes": "Hide notes",

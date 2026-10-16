@@ -1213,13 +1213,19 @@ function TaskFormModal({
             <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
           )}
         </div>
-        {isEdit && task.last_viewed_at && (
-          <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
-            {t('owner.tasks.lastViewed', {
-              name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
-              date: formatLastSignInCompact(task.last_viewed_at, locale, t),
-            })}
-          </div>
+        {isEdit && (
+          task.last_viewed_at ? (
+            <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
+              {t('owner.tasks.lastViewed', {
+                name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
+                date: formatLastSignInCompact(task.last_viewed_at, locale, t),
+              })}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: '#b45309', fontWeight: 700, marginBottom: 8 }}>
+              {t('owner.tasks.lastViewed.never')}
+            </div>
+          )
         )}
         <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
