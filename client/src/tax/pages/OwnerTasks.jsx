@@ -22,6 +22,15 @@ import TaskHover from '../components/TaskHover';
 
 const PRIORITY_OPTIONS = ['urgent', 'high', 'normal', 'low'];
 
+function formatDuration(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h === 0 && m === 0) return '<1m';
+  if (h === 0) return `${m}m`;
+  return `${h}h ${m}m`;
+}
+
 // Inline completion-note prompt. When a status change would move the
 // task into a terminal bucket and there's no existing note (or the
 // patch isn't already supplying one), prompt the user via
@@ -276,6 +285,7 @@ export default function OwnerTasks() {
           auth={auth} community={community} isAdmin={isAdmin}
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
+          tasks={tasks} employeeId={employee?.id || ''}
           defaultAssignee={employee?.id || ''} locale={locale} t={t}
           onCustomersChanged={(c) => setCustomers(prev => [c, ...prev])}
           onClose={() => setEditingTask(null)}
@@ -1013,6 +1023,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
 function TaskFormModal({
   mode, task, auth, community, isAdmin,
   statuses, employees, customers, products, relationshipTypes,
+  tasks, employeeId,
   defaultAssignee, locale, t,
   onCustomersChanged, onClose, onSaved,
 }) {
@@ -1233,6 +1244,12 @@ function TaskFormModal({
             <textarea rows={4} value={notes} onChange={e => { setNotes(e.target.value); scheduleAutoSave({ notes: e.target.value }); }} maxLength={4000} />
           </div>
 
+          {isEdit && (
+            <TaskProgressPanel task={task} tasks={tasks} employees={employees}
+                                isAdmin={isAdmin} employeeId={employeeId}
+                                auth={auth} locale={locale} t={t} />
+          )}
+
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
           <div style={{ display: 'flex', gap: 8 }}>
@@ -1262,6 +1279,317 @@ function TaskFormModal({
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Per-task progress surface — the part of the picture the plain status
+// dropdown doesn't show: is this task blocked on another one, does it
+// need a reviewer's sign-off before it really counts as done, and how
+// much time has actually gone into it. All three were already fully
+// built server-side (blocked_by_task_id, requires_review/pending_review,
+// tax_task_time_entries) but had no UI at all until now. Self-contained
+// on purpose — it manages its own save calls instead of going through
+// the parent form's autosave/onSaved plumbing, so starting a timer or
+// approving a review never risks closing the modal.
+function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, auth, locale, t }) {
+  // ── Time tracking ──────────────────────────────────────────────────────
+  const [entries, setEntries] = useState(null);
+  const [totalSeconds, setTotalSeconds] = useState(0);
+  const [timeErr, setTimeErr] = useState('');
+  const [timeBusy, setTimeBusy] = useState(false);
+  const [showLogForm, setShowLogForm] = useState(false);
+  const [manualStart, setManualStart] = useState('');
+  const [manualEnd, setManualEnd] = useState('');
+  const [manualNote, setManualNote] = useState('');
+
+  const loadTime = () => {
+    taxApi.adminGetTaskTimeEntries(auth, task.id)
+      .then(d => { setEntries(d.entries || []); setTotalSeconds(d.total_seconds || 0); })
+      .catch(e => setTimeErr(e?.message || ''));
+  };
+  useEffect(loadTime, [task.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const myRunning = (entries || []).find(e => !e.ended_at && e.employee_id === employeeId);
+  const othersRunning = (entries || []).find(e => !e.ended_at && e.employee_id !== employeeId);
+
+  // Keep the total moving while a timer runs by re-pulling the server's
+  // live-inclusive total periodically instead of ticking a local clock.
+  useEffect(() => {
+    if (!myRunning && !othersRunning) return;
+    const id = setInterval(loadTime, 30000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [myRunning?.id, othersRunning?.id]);
+
+  const onToggleTimer = async () => {
+    setTimeBusy(true); setTimeErr('');
+    try {
+      if (myRunning) await taxApi.adminStopTaskTimer(auth, task.id);
+      else await taxApi.adminStartTaskTimer(auth, task.id);
+      loadTime();
+    } catch (e) { setTimeErr(e?.message || ''); }
+    finally { setTimeBusy(false); }
+  };
+
+  const onLogManual = async (e) => {
+    e.preventDefault();
+    if (!manualStart || !manualEnd) return;
+    setTimeBusy(true); setTimeErr('');
+    try {
+      // <input type="datetime-local"> values are naive local wall-clock
+      // strings with no timezone — new Date(...) parses them as the
+      // browser's local time, so .toISOString() converts to an
+      // unambiguous UTC instant before it crosses the wire (the server
+      // may run in a different timezone than the browser).
+      await taxApi.adminLogTaskTime(auth, task.id, {
+        startedAt: new Date(manualStart).toISOString(),
+        endedAt: new Date(manualEnd).toISOString(),
+        note: manualNote.trim(),
+      });
+      setManualStart(''); setManualEnd(''); setManualNote(''); setShowLogForm(false);
+      loadTime();
+    } catch (e) { setTimeErr(e?.message || ''); }
+    finally { setTimeBusy(false); }
+  };
+
+  const onDeleteEntry = async (id) => {
+    if (!window.confirm(t('owner.tasks.progress.deleteEntryConfirm'))) return;
+    try { await taxApi.adminDeleteTimeEntry(auth, id); loadTime(); }
+    catch (e) { setTimeErr(e?.message || ''); }
+  };
+
+  // ── Review ──────────────────────────────────────────────────────────────
+  const [requiresReview, setRequiresReview] = useState(!!task.requires_review);
+  const [reviewerEmployeeId, setReviewerEmployeeId] = useState(task.reviewer_employee_id || '');
+  const [reviewConfigBusy, setReviewConfigBusy] = useState(false);
+  const [reviewConfigErr, setReviewConfigErr] = useState('');
+  const [reviewBusy, setReviewBusy] = useState(false);
+  const [reviewErr, setReviewErr] = useState('');
+  const [reviewNote, setReviewNote] = useState('');
+  const [reviewDecision, setReviewDecision] = useState(null); // local override right after approve/reject
+
+  const approved = reviewDecision === 'approve' || !!task.reviewed_at;
+  const changesRequested = reviewDecision === 'reject';
+  const pendingReview = !approved && !changesRequested && !!task.pending_review_at && !task.reviewed_at;
+  const isReviewer = isAdmin || (task.reviewer_employee_id && task.reviewer_employee_id === employeeId);
+  const reviewerEmp = employees.find(e => e.id === reviewerEmployeeId);
+
+  const onSetRequiresReview = async (val) => {
+    setRequiresReview(val);
+    setReviewConfigBusy(true); setReviewConfigErr('');
+    try { await taxApi.adminUpdateTask(auth, task.id, { requiresReview: val }); }
+    catch (e) { setReviewConfigErr(e?.message || ''); }
+    finally { setReviewConfigBusy(false); }
+  };
+  const onSetReviewer = async (val) => {
+    setReviewerEmployeeId(val);
+    setReviewConfigBusy(true); setReviewConfigErr('');
+    try { await taxApi.adminUpdateTask(auth, task.id, { reviewerEmployeeId: val }); }
+    catch (e) { setReviewConfigErr(e?.message || ''); }
+    finally { setReviewConfigBusy(false); }
+  };
+  const onReview = async (decision) => {
+    setReviewBusy(true); setReviewErr('');
+    try {
+      await taxApi.adminReviewTask(auth, task.id, { decision, note: reviewNote.trim() });
+      setReviewDecision(decision);
+    } catch (e) { setReviewErr(e?.message || ''); }
+    finally { setReviewBusy(false); }
+  };
+
+  // ── Blocked by ────────────────────────────────────────────────────────
+  const [blockedByTaskId, setBlockedByTaskId] = useState(task.blocked_by_task_id || '');
+  const [blockedBusy, setBlockedBusy] = useState(false);
+  const [blockedErr, setBlockedErr] = useState('');
+  const blocker = (tasks || []).find(x => x.id === blockedByTaskId);
+  const blockerDone = blocker ? !!blocker.completed_at : true;
+
+  const onSetBlockedBy = async (id) => {
+    setBlockedByTaskId(id);
+    setBlockedBusy(true); setBlockedErr('');
+    try { await taxApi.adminUpdateTask(auth, task.id, { blockedByTaskId: id }); }
+    catch (e) { setBlockedErr(e?.message || ''); }
+    finally { setBlockedBusy(false); }
+  };
+
+  const badgeStyle = (bg, fg) => ({
+    fontSize: 11, fontWeight: 700, color: fg, background: bg,
+    padding: '1px 8px', borderRadius: 999,
+  });
+
+  return (
+    <div style={{
+      marginTop: 8, padding: 14, borderRadius: 10,
+      background: 'var(--tax-bg-alt)', display: 'grid', gap: 16,
+    }}>
+      <div style={{ fontWeight: 700, fontSize: 13 }}>{t('owner.tasks.progress.heading')}</div>
+
+      {/* Blocked by */}
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {t('owner.tasks.progress.blockedBy')}
+        </label>
+        {isAdmin ? (
+          <select value={blockedByTaskId} disabled={blockedBusy}
+                  onChange={e => onSetBlockedBy(e.target.value)}>
+            <option value="">{t('owner.tasks.progress.blockedByNone')}</option>
+            {(tasks || []).filter(x => x.id !== task.id).map(x => (
+              <option key={x.id} value={x.id}>
+                {x.title}{x.completed_at ? ` (${t('owner.tasks.progress.done')})` : ''}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div style={{ fontSize: 13, marginTop: 2 }}>
+            {blocker ? blocker.title : t('owner.tasks.progress.blockedByNone')}
+          </div>
+        )}
+        {blocker && (
+          <div style={{ marginTop: 4, fontSize: 12, color: blockerDone ? 'var(--tax-success, #166534)' : '#92400e' }}>
+            {blockerDone ? t('owner.tasks.progress.blockerDone') : t('owner.tasks.progress.blockerNotDone')}
+          </div>
+        )}
+        {blockedErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{blockedErr}</div>}
+      </div>
+
+      {/* Review */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.tasks.progress.review')}
+          </label>
+          {approved && <span style={badgeStyle('#dcfce7', '#166534')}>{t('owner.tasks.progress.reviewApproved')}</span>}
+          {!approved && pendingReview && <span style={badgeStyle('#fffbeb', '#92400e')}>{t('owner.tasks.progress.reviewPending')}</span>}
+          {!approved && !pendingReview && changesRequested && <span style={badgeStyle('#fee2e2', '#991b1b')}>{t('owner.tasks.progress.reviewChangesRequested')}</span>}
+        </div>
+
+        {isAdmin && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+              <input type="checkbox" checked={requiresReview} disabled={reviewConfigBusy}
+                     onChange={e => onSetRequiresReview(e.target.checked)} />
+              {t('owner.tasks.progress.requiresReview')}
+            </label>
+            {requiresReview && (
+              <select value={reviewerEmployeeId} disabled={reviewConfigBusy}
+                      onChange={e => onSetReviewer(e.target.value)}>
+                <option value="">{t('owner.tasks.progress.reviewerAny')}</option>
+                {employees.filter(e => e.role === 'admin' && e.permissions?.view_customers !== false).map(e => (
+                  <option key={e.id} value={e.id}>{displayPersonName(e) || e.email}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
+        {!isAdmin && requiresReview && (
+          <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
+            {reviewerEmp
+              ? t('owner.tasks.progress.reviewerIs', { name: displayPersonName(reviewerEmp) || reviewerEmp.email })
+              : t('owner.tasks.progress.reviewerAny')}
+          </div>
+        )}
+        {reviewConfigErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{reviewConfigErr}</div>}
+
+        {pendingReview && isReviewer && (
+          <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+            <textarea rows={2} placeholder={t('owner.tasks.progress.reviewNotePlaceholder')}
+                      value={reviewNote} onChange={e => setReviewNote(e.target.value)} maxLength={4000} />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm" disabled={reviewBusy}
+                      onClick={() => onReview('approve')}>
+                {t('owner.tasks.progress.approve')}
+              </button>
+              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={reviewBusy}
+                      style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
+                      onClick={() => onReview('reject')}>
+                {t('owner.tasks.progress.requestChanges')}
+              </button>
+            </div>
+          </div>
+        )}
+        {reviewErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{reviewErr}</div>}
+      </div>
+
+      {/* Time logged */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('owner.tasks.progress.timeLogged', { duration: formatDuration(totalSeconds) })}
+          </label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button type="button"
+                    className={myRunning ? 'tax-btn tax-btn--ghost tax-btn--sm' : 'tax-btn tax-btn--primary tax-btn--sm'}
+                    disabled={timeBusy}
+                    style={myRunning ? { color: 'var(--tax-error)', borderColor: 'var(--tax-error)' } : undefined}
+                    onClick={onToggleTimer}>
+              {myRunning ? t('owner.tasks.progress.stopTimer') : t('owner.tasks.progress.startTimer')}
+            </button>
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                    onClick={() => setShowLogForm(o => !o)}>
+              {t('owner.tasks.progress.logManually')}
+            </button>
+          </div>
+        </div>
+        {myRunning && (
+          <div style={{ fontSize: 12, color: 'var(--tax-brand-primary)', marginTop: 4 }}>
+            {t('owner.tasks.progress.timerRunningSince', { time: new Date(myRunning.started_at).toLocaleTimeString(locale) })}
+          </div>
+        )}
+        {!myRunning && othersRunning && (
+          <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>
+            {t('owner.tasks.progress.someoneElseRunning', {
+              name: displayPersonName(othersRunning.employee) || othersRunning.employee?.email || '',
+            })}
+          </div>
+        )}
+        {showLogForm && (
+          <form onSubmit={onLogManual} style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+            <div className="tax-form__row2">
+              <div>
+                <label style={{ fontSize: 11 }}>{t('owner.tasks.progress.start')}</label>
+                <input type="datetime-local" value={manualStart} onChange={e => setManualStart(e.target.value)} required />
+              </div>
+              <div>
+                <label style={{ fontSize: 11 }}>{t('owner.tasks.progress.end')}</label>
+                <input type="datetime-local" value={manualEnd} onChange={e => setManualEnd(e.target.value)} required />
+              </div>
+            </div>
+            <input type="text" placeholder={t('owner.tasks.progress.notePlaceholder')}
+                   value={manualNote} onChange={e => setManualNote(e.target.value)} maxLength={4000} />
+            <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm" disabled={timeBusy}>
+              {t('owner.tasks.progress.addEntry')}
+            </button>
+          </form>
+        )}
+        {timeErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{timeErr}</div>}
+        {entries && entries.length > 0 && (
+          <div style={{ marginTop: 8, display: 'grid', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
+            {entries.map(en => {
+              const emp = en.employee;
+              const canManage = isAdmin || en.employee_id === employeeId;
+              return (
+                <div key={en.id} style={{
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--tax-border)',
+                }}>
+                  <span>
+                    {emp ? (displayPersonName(emp) || emp.email) : ''} —{' '}
+                    {en.ended_at ? formatDuration(en.duration_seconds) : t('owner.tasks.progress.running')}
+                    {en.note ? ` — ${en.note}` : ''}
+                  </span>
+                  {canManage && (
+                    <button type="button" onClick={() => onDeleteEntry(en.id)}
+                            style={{ border: 0, background: 'none', color: 'var(--tax-muted)', cursor: 'pointer', fontSize: 12 }}>
+                      {t('owner.services.delete')}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

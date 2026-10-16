@@ -508,6 +508,21 @@ export const taxApi = {
   adminFillMissingTranslations(auth)          { return request('POST',   '/admin/tasks/fill-missing-translations', {}, auth); },
   adminBulkUpdateTasks(auth, payload)         { return request('PATCH',  '/admin/tasks/bulk', payload, auth); },
   adminDeleteTask(auth, id)                   { return request('DELETE', `/admin/tasks/${encodeURIComponent(id)}`, undefined, auth); },
+
+  // Review queue (Phase 4n.56) — a designated reviewer (or any admin)
+  // signs off on a task sitting in pending-review state.
+  adminReviewTask(auth, id, payload)          { return request('POST', `/admin/tasks/${encodeURIComponent(id)}/review`, payload, auth); },
+  adminTasksAwaitingReview(auth)              { return request('GET',  '/admin/tasks/awaiting-review', undefined, auth); },
+
+  // Per-task time tracking — total + entries, start/stop timer, manual
+  // backfill, and edit/delete of a single entry.
+  adminGetTaskTimeEntries(auth, taskId)       { return request('GET',  `/admin/tasks/${encodeURIComponent(taskId)}/time-entries`, undefined, auth); },
+  adminStartTaskTimer(auth, taskId, payload = {}) { return request('POST', `/admin/tasks/${encodeURIComponent(taskId)}/time-entries/start`, payload, auth); },
+  adminStopTaskTimer(auth, taskId, payload = {})  { return request('POST', `/admin/tasks/${encodeURIComponent(taskId)}/time-entries/stop`, payload, auth); },
+  adminLogTaskTime(auth, taskId, payload)     { return request('POST', `/admin/tasks/${encodeURIComponent(taskId)}/time-entries`, payload, auth); },
+  adminUpdateTimeEntry(auth, entryId, payload){ return request('PUT',  `/admin/time-entries/${encodeURIComponent(entryId)}`, payload, auth); },
+  adminDeleteTimeEntry(auth, entryId)         { return request('DELETE', `/admin/time-entries/${encodeURIComponent(entryId)}`, undefined, auth); },
+  adminGetRunningTimer(auth)                  { return request('GET',  '/admin/employees/me/running-timer', undefined, auth); },
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
   adminCancelSubscription(auth, subId)           { return request('DELETE', `/admin/subscriptions/${encodeURIComponent(subId)}`, undefined, auth, { admin: true }); },
