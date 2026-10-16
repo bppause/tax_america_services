@@ -439,6 +439,8 @@
   "owner.progress.kpi.overdue": "Vencidas",
   "owner.progress.kpi.ofAll": "del total",
   "owner.progress.col.customer": "Cliente",
+  "owner.progress.taskSingular": "tarea",
+  "owner.progress.taskPlural": "tareas",
   "owner.progress.col.done": "Listas",
   "owner.progress.col.inProgress": "En curso",
   "owner.progress.col.open": "Abiertas",
