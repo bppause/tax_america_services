@@ -41,6 +41,7 @@ export default function OwnerLeads() {
   const [products, setProducts] = useState([]);
   const [relTypes, setRelTypes] = useState([]);
   const [err, setErr] = useState('');
+  const [busyExport, setBusyExport] = useState(false);
 
   // Debounce the business-name input so each keystroke doesn't refetch.
   useEffect(() => {
@@ -60,6 +61,21 @@ export default function OwnerLeads() {
       .catch(e => setErr(e?.message || t('error.loadFailed')));
   };
   useEffect(load, [fbUser, community, filter, typeFilter, businessName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Exports the currently filtered view (same status/type/businessName
+  // params the list uses).
+  const onExport = async () => {
+    setBusyExport(true); setErr('');
+    try {
+      const opts = {};
+      if (STATUS_VALUES.includes(filter)) opts.status = filter;
+      if (typeFilter !== 'all') opts.customerType = typeFilter;
+      if (typeFilter === 'business' && businessName) opts.businessName = businessName;
+      await taxApi.adminExportLeadsXlsx(auth, community.id, opts);
+    } catch (e) {
+      setErr(e?.message || t('error.loadFailed'));
+    } finally { setBusyExport(false); }
+  };
 
   // Products + relationship types — needed by the convert dialog to
   // suggest relationships based on the lead's requested services.
@@ -86,7 +102,14 @@ export default function OwnerLeads() {
 
   return (
     <EmployeeShell community={community} active="leads">
-      <h2 style={{ marginTop: 0 }}>{t('owner.leads.title')}</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ marginTop: 0 }}>{t('owner.leads.title')}</h2>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                onClick={onExport} disabled={busyExport}
+                style={{ color: 'var(--tax-text)' }}>
+          {busyExport ? t('lead.submitting') : t('owner.leads.exportBtn')}
+        </button>
+      </div>
       <p className="tax-section__lede">{t('owner.leads.subtitle')}</p>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}

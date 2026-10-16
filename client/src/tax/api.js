@@ -94,6 +94,32 @@ async function request(method, path, body, auth, { admin, timeoutMs } = {}) {
   return parsed;
 }
 
+// Fetches a binary file (xlsx export, etc.) with admin auth headers and
+// triggers the browser's save dialog. Throws the same shaped error as
+// request() on a non-2xx response so callers can show it inline.
+async function downloadAdminFile(path, auth, fallbackFilename) {
+  const res = await fetch(BASE + path, { method: 'GET', headers: adminAuthHeaders(auth) });
+  if (!res.ok) {
+    let parsed = null;
+    try { parsed = await res.json(); } catch (_e) { /* body wasn't JSON */ }
+    const err = new Error((parsed && parsed.error) || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.body = parsed;
+    throw err;
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('content-disposition') || '';
+  const match = cd.match(/filename="([^"]+)"/);
+  const filename = (match && match[1]) || fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const taxApi = {
   // Public (Phase 1 + 1.5)
   getCommunity(slug)              { return request('GET',  `/community/${encodeURIComponent(slug)}`); },
@@ -170,6 +196,14 @@ export const taxApi = {
     if (opts.customerType) qs.set('customerType', opts.customerType);
     if (opts.includeArchived) qs.set('includeArchived', 'true');
     return request('GET',  `/admin/customers?${qs.toString()}`, undefined, auth, { admin: true });
+  },
+  adminExportCustomersXlsx(auth, communitySlug, opts = {}) {
+    const qs = new URLSearchParams({ communitySlug });
+    if (opts.q) qs.set('q', opts.q);
+    if (opts.relationshipTypeIds) qs.set('relationshipTypeIds', opts.relationshipTypeIds);
+    if (opts.customerType) qs.set('customerType', opts.customerType);
+    if (opts.includeArchived) qs.set('includeArchived', opts.includeArchived);
+    return downloadAdminFile(`/admin/customers/export.xlsx?${qs.toString()}`, auth, 'customers.xlsx');
   },
 
   // Staff + admin: scoped customer search via the employee gate.
@@ -484,6 +518,13 @@ export const taxApi = {
     if (opts.customerType) qs.set('customerType', opts.customerType);
     if (opts.businessName) qs.set('businessName', opts.businessName);
     return request('GET',  `/admin/leads?${qs.toString()}`, undefined, auth, { admin: true });
+  },
+  adminExportLeadsXlsx(auth, communitySlug, opts = {}) {
+    const qs = new URLSearchParams({ communitySlug });
+    if (opts.status) qs.set('status', opts.status);
+    if (opts.customerType) qs.set('customerType', opts.customerType);
+    if (opts.businessName) qs.set('businessName', opts.businessName);
+    return downloadAdminFile(`/admin/leads/export.xlsx?${qs.toString()}`, auth, 'leads.xlsx');
   },
   adminUpdateLead(auth, leadId, payload)         { return request('PUT',  `/admin/leads/${encodeURIComponent(leadId)}`, payload, auth, { admin: true }); },
   adminConvertLead(auth, leadId, payload = {})   { return request('POST', `/admin/leads/${encodeURIComponent(leadId)}/convert`, payload, auth, { admin: true }); },

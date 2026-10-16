@@ -97,6 +97,8 @@ export default function OwnerCustomers() {
   });
   const [busyAdd, setBusyAdd] = useState(false);
   const [addMsg, setAddMsg] = useState({ kind: 'idle', text: '' });
+  const [busyExport, setBusyExport] = useState(false);
+  const [exportErr, setExportErr] = useState('');
 
   // Debounce the search input so we don't refetch on every keystroke.
   const debounceRef = useRef(null);
@@ -121,6 +123,22 @@ export default function OwnerCustomers() {
     p.then(d => setCustomers(d.customers || []))
      .catch(e => setErr(e?.message || t('error.loadFailed')))
      .finally(() => setLoading(false));
+  };
+
+  // Exports the same filtered view currently on screen — same q /
+  // relationshipTypeIds / customerType / includeArchived the list uses.
+  const onExport = async () => {
+    setBusyExport(true); setExportErr('');
+    try {
+      await taxApi.adminExportCustomersXlsx(auth, community.id, {
+        q: search,
+        relationshipTypeIds: relationshipFilter.join(','),
+        customerType: customerTypeFilter !== 'all' ? customerTypeFilter : undefined,
+        includeArchived: includeArchived ? 'true' : undefined,
+      });
+    } catch (e) {
+      setExportErr(e?.message || t('error.loadFailed'));
+    } finally { setBusyExport(false); }
   };
   useEffect(load, [fbUser, community, search, relationshipFilter, customerTypeFilter, includeArchived, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -315,6 +333,11 @@ export default function OwnerCustomers() {
         {isAdmin && (
           <div style={{ display: 'flex', gap: 8 }}>
             <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                    onClick={onExport} disabled={busyExport}
+                    style={{ color: 'var(--tax-text)' }}>
+              {busyExport ? t('lead.submitting') : t('owner.customers.exportBtn')}
+            </button>
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                     onClick={() => { setImporting(im => !im); setAdding(false); }}
                     style={{ color: 'var(--tax-text)' }}>
               {importing ? t('owner.customers.cancelImport') : t('owner.customers.importBtn')}
@@ -329,6 +352,7 @@ export default function OwnerCustomers() {
       <p className="tax-section__lede">
         {isAdmin ? t('owner.customers.subtitle') : t('owner.customers.subtitleStaff')}
       </p>
+      {exportErr && <div className="tax-msg tax-msg--error">{exportErr}</div>}
 
       {isAdmin && importing && (
         <ImportCustomers auth={auth} community={community}

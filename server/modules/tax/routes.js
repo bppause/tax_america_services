@@ -37,6 +37,7 @@ const { generatePeriods: generateSchedulePeriods } = require('./schedule');
 const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
 const { generateFaqsForService, inferRelationshipCategory } = require('./faq-autogen');
 const { translateText, buildTitleI18n } = require('../../core/translate');
+const XLSX = require('xlsx');
 
 const TAX_BUSINESS_TYPE = 'tax';
 const MAX_TEXT_LEN = 4000;
@@ -47,6 +48,19 @@ const MAX_TOKEN_LEN = 64;
 const trim = (v, max) => String(v || '').trim().slice(0, max);
 const localeOf = (v) => (normalizeLanguage(v) === 'en' ? 'en' : 'es');
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+// Builds a one-sheet .xlsx from an array of plain row objects (each
+// object's keys become the header row, in insertion order) and streams
+// it as a file download. Used by the Customers/Leads export endpoints.
+function sendXlsxWorkbook(res, filename, sheetName, rows) {
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, String(sheetName || 'Sheet1').slice(0, 31));
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/[^A-Za-z0-9._-]+/g, '_')}"`);
+  res.send(buf);
+}
 
 module.exports = function createTaxRouter(deps) {
   const {
@@ -1266,6 +1280,48 @@ module.exports = function createTaxRouter(deps) {
         scopedCustomerIds: null,            // admin sees the whole community
       });
       res.json({ customers });
+    } catch (e) {
+      return sendSupabaseError(res, e);
+    }
+  });
+
+  // GET /admin/customers/export.xlsx — same filters as the list view
+  // (q, relationshipTypeIds, customerType, includeArchived) so "export
+  // what I'm looking at" works from the same filter state; omit them to
+  // export the whole community. Admin-only, same as Import.
+  router.get('/admin/customers/export.xlsx', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
+    const communitySlug = trim(req.query.communitySlug || '', 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+
+    try {
+      const customers = await searchCustomers({
+        communitySlug,
+        q: req.query.q,
+        relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
+        customerType: req.query.customerType,
+        includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
+        scopedCustomerIds: null,
+      });
+      const rows = customers.map(c => ({
+        Name: c.customer_type === 'business' ? (c.business_name || c.name) : (c.name || ''),
+        Type: c.customer_type === 'business' ? 'Business' : 'Individual',
+        Email: c.email || '',
+        Phone: c.phone || '',
+        WhatsApp: c.whatsapp || '',
+        'Address line 1': c.address?.line1 || '',
+        'Address line 2': c.address?.line2 || '',
+        City: c.address?.city || '',
+        State: c.address?.state || '',
+        'Postal code': c.address?.postal_code || '',
+        Country: c.address?.country || '',
+        Services: (c.relationships || [])
+          .map(r => r.type?.name_i18n?.en || r.type?.name_i18n?.es || r.type?.slug || '')
+          .filter(Boolean).join(', '),
+        Status: c.status || '',
+        'Created at': c.created_at ? c.created_at.slice(0, 10) : '',
+      }));
+      sendXlsxWorkbook(res, `customers-${communitySlug}.xlsx`, 'Customers', rows);
     } catch (e) {
       return sendSupabaseError(res, e);
     }
@@ -4806,6 +4862,43 @@ ${closingHtml}
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
     res.json({ leads: data || [] });
+  });
+
+  // GET /admin/leads/export.xlsx — same status/customerType/businessName
+  // filters as the list view; omit them to export every lead. Admin-only.
+  router.get('/admin/leads/export.xlsx', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    let q = supabase.from('tax_leads')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
+      .eq('community_id', communitySlug)
+      .order('created_at', { ascending: false }).limit(10000);
+    const statusFilter = trim(req.query.status, 40);
+    if (statusFilter) q = q.eq('status', statusFilter);
+    const ctNorm = String(req.query.customerType || '').toLowerCase().trim();
+    if (ctNorm === 'business' || ctNorm === 'individual') q = q.eq('customer_type', ctNorm);
+    const bizName = trim(req.query.businessName, 200);
+    if (bizName) q = q.ilike('company', `%${bizName.replace(/[%_]/g, ' ')}%`);
+    const { data, error } = await q;
+    if (error) return sendSupabaseError(res, error);
+    const rows = (data || []).map(l => ({
+      Name: l.name || '',
+      Type: l.customer_type === 'business' ? 'Business' : 'Individual',
+      Company: l.company || '',
+      Email: l.email || '',
+      Phone: l.phone || '',
+      WhatsApp: l.whatsapp || '',
+      'Services of interest': (Array.isArray(l.product_slugs) && l.product_slugs.length
+        ? l.product_slugs : (l.product_slug ? [l.product_slug] : [])).join(', '),
+      Message: l.message || '',
+      Status: l.status || '',
+      Notes: l.notes || '',
+      'Contacted at': l.contacted_at ? l.contacted_at.slice(0, 10) : '',
+      'Close reason': l.close_reason || '',
+      'Created at': l.created_at ? l.created_at.slice(0, 10) : '',
+    }));
+    sendXlsxWorkbook(res, `leads-${communitySlug}.xlsx`, 'Leads', rows);
   });
 
   // PUT /admin/leads/:id — body { status?, notes? }. Setting status to
