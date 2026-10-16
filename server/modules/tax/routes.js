@@ -69,6 +69,7 @@ module.exports = function createTaxRouter(deps) {
     auditLog,
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
+    sendTaxTaskStatusChangedEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
@@ -2454,6 +2455,73 @@ ${closingHtml}
     }
   }
 
+  // Notify a task's assignee when its status changes — in-app always
+  // (unless the employee turned that off), email only when both the
+  // employee's own preference AND the community's staff-email toggle
+  // allow it. References getEmployeeChannels / EMPLOYEE_NOTIFICATION_TYPES
+  // and communityStaffEmailFlag, both defined further down this file —
+  // safe since this function only runs once a request calls it, long
+  // after module load has finished setting those up.
+  async function notifyTaskStatusChanged({ taskId, oldStatusKey, newStatusKey, actor }) {
+    if (!newStatusKey || oldStatusKey === newStatusKey) return;
+    try {
+      const { data: task } = await supabase.from('tax_tasks')
+        .select(`
+          id, community_id, title, due_date, priority, assigned_employee_id,
+          customer:tax_customers ( id, name, business_name, email )
+        `).eq('id', taskId).maybeSingle();
+      if (!task || !task.assigned_employee_id) return;
+      if (actor && task.assigned_employee_id === actor.id) return;
+      const [{ data: assignee }, { data: community }, { data: statusOpts }] = await Promise.all([
+        supabase.from('tax_employees')
+          .select('id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs')
+          .eq('id', task.assigned_employee_id).maybeSingle(),
+        supabase.from('communities')
+          .select('id, name').eq('id', task.community_id).maybeSingle(),
+        supabase.from('tax_task_status_options')
+          .select('key, label_i18n').eq('community_id', task.community_id)
+          .in('key', [oldStatusKey, newStatusKey].filter(Boolean)),
+      ]);
+      if (!assignee || assignee.status === 'archived') return;
+      const assigneeLang = assignee.locale === 'en' ? 'en' : 'es';
+      const labelFor = (key) => {
+        const opt = (statusOpts || []).find(s => s.key === key);
+        return (opt && (opt.label_i18n?.[assigneeLang] || opt.label_i18n?.es || opt.label_i18n?.en)) || key;
+      };
+      const channels = getEmployeeChannels(assignee, 'task_status_changed');
+      if (channels.includes('in_app')) {
+        await supabase.from('tax_employee_notifications').insert({
+          id: 'tenot_' + uuidv4().slice(0, 12),
+          community_id: task.community_id,
+          employee_id: assignee.id,
+          type: 'task_status_changed',
+          title_i18n: {
+            es: `Cambió el estado: ${task.title}`,
+            en: `Status changed: ${task.title}`,
+          },
+          body_i18n: {
+            es: `${labelFor(oldStatusKey)} → ${labelFor(newStatusKey)}`,
+            en: `${labelFor(oldStatusKey)} → ${labelFor(newStatusKey)}`,
+          },
+          payload: { taskId, oldStatusKey, newStatusKey },
+        });
+      }
+      if (channels.includes('email')
+          && assignee.email
+          && typeof sendTaxTaskStatusChangedEmail === 'function'
+          && await communityStaffEmailFlag(task.community_id, 'tax_staff_email_task_status_changed_enabled')) {
+        await sendTaxTaskStatusChangedEmail({
+          community: community || { id: task.community_id, name: '' },
+          task, assignee, actor,
+          oldStatusLabel: labelFor(oldStatusKey),
+          newStatusLabel: labelFor(newStatusKey),
+        });
+      }
+    } catch (e) {
+      warn('[tax-task-status] notify failed', e?.message || e);
+    }
+  }
+
   // Shared welcome-email plumbing — loads the customer, community, and the
   // current relationships, builds the portal URL, hands off to the email
   // sender. Audit-logged.
@@ -3565,6 +3633,7 @@ ${closingHtml}
   const STAFF_EMAIL_TYPE_COLUMNS = {
     lead:              'tax_staff_email_lead_enabled',
     task_assigned:     'tax_staff_email_task_assigned_enabled',
+    task_status_changed: 'tax_staff_email_task_status_changed_enabled',
     message:           'tax_staff_email_message_enabled',
     signature_signed:  'tax_staff_email_signature_signed_enabled',
     staff_welcome:     'tax_staff_email_welcome_enabled',
@@ -3755,6 +3824,7 @@ ${closingHtml}
         tax_email_message_enabled, tax_email_signature_enabled,
         tax_staff_emails_master_enabled,
         tax_staff_email_lead_enabled, tax_staff_email_task_assigned_enabled,
+        tax_staff_email_task_status_changed_enabled,
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
@@ -7257,12 +7327,14 @@ ${closingHtml}
         due_date, notes, completed_at, created_at, updated_at,
         blocked_by_task_id, requires_review, reviewer_employee_id,
         pending_review_at, reviewed_at, reviewed_by_employee_id, review_note,
+        last_viewed_at, last_viewed_by_employee_id,
         customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, address ),
         product:tax_products ( id, slug, name_i18n, category ),
         auto_task:tax_service_auto_tasks ( id, title_i18n, cadence_kind, anchor_rule ),
         assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email ),
         creator:tax_employees!tax_tasks_created_by_employee_id_fkey ( id, name, email ),
-        reviewer:tax_employees!tax_tasks_reviewer_employee_id_fkey ( id, name, email )
+        reviewer:tax_employees!tax_tasks_reviewer_employee_id_fkey ( id, name, email ),
+        last_viewed_by:tax_employees!tax_tasks_last_viewed_by_employee_id_fkey ( id, name, email )
       `)
       .eq('community_id', communitySlug)
       .is('archived_at', null);
@@ -7808,6 +7880,14 @@ ${closingHtml}
         actor: emp,
       });
     }
+    if (update.status_key && update.status_key !== cur.status_key) {
+      await notifyTaskStatusChanged({
+        taskId,
+        oldStatusKey: cur.status_key,
+        newStatusKey: update.status_key,
+        actor: emp,
+      });
+    }
     res.json({ ok: true });
   });
 
@@ -8076,6 +8156,27 @@ ${closingHtml}
       return acc + live;
     }, 0);
     res.json({ entries: entries || [], total_seconds: total });
+  });
+
+  // POST /admin/tasks/:id/viewed — stamps who most recently opened this
+  // task's edit modal and when. Lets the owner see whether the assignee
+  // has actually looked at a task, surfaced as "Last viewed" in the UI.
+  // Same visibility gate as logging time: admin, the assignee/creator,
+  // or staff with customer-level access to this task's customer.
+  router.post('/admin/tasks/:id/viewed', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const taskId = trim(req.params.id, 200);
+    const { data: task } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+    if (!task) return res.status(404).json({ error: 'Task not found.' });
+    if (!(await canEmployeeLogTimeOnTask(emp, task))) {
+      return res.status(403).json({ error: 'Not allowed to view this task.' });
+    }
+    const { error } = await supabase.from('tax_tasks')
+      .update({ last_viewed_at: new Date().toISOString(), last_viewed_by_employee_id: emp.id })
+      .eq('id', taskId);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
   });
 
   // Start a timer. Caller's currently-running entry (across any task)
@@ -10905,6 +11006,15 @@ ${closingHtml}
       description_i18n: {
         en: 'When a customer e-signs an engagement letter, 8879, or any signature request you sent.',
         es: 'Cuando un cliente firma electrónicamente una carta de compromiso, 8879 u otra solicitud que envió.',
+      },
+      default_channels: ['in_app'],
+    },
+    {
+      key: 'task_status_changed',
+      label_i18n: { en: 'Task status changed', es: 'Cambió el estado de una tarea' },
+      description_i18n: {
+        en: 'When the status of a task assigned to you changes (by someone else, or a workflow).',
+        es: 'Cuando cambia el estado de una tarea asignada a usted (por otra persona, o un flujo automático).',
       },
       default_channels: ['in_app'],
     },

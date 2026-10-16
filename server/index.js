@@ -139,7 +139,7 @@ async function logTaxEmailDelivery({ resendId, communityId, customerId, workflow
 }
 
 const {
-  sendTaxLeadEmail, sendTaxTaskAssignedEmail, sendTaxDailyDigestEmail,
+  sendTaxLeadEmail, sendTaxTaskAssignedEmail, sendTaxTaskStatusChangedEmail, sendTaxDailyDigestEmail,
   sendTaxReminderEmail, sendTaxDocumentEmail,
   sendTaxMessageEmail, sendTaxMessagePracticeEmail, sendTaxMessageEmployeeEmail,
   sendTaxWelcomeEmail, sendTaxStaffWelcomeEmail,
@@ -177,6 +177,7 @@ const taxRouter = taxModule.createRouter({
   auditLog,
   sendTaxLeadEmail,
   sendTaxTaskAssignedEmail,
+  sendTaxTaskStatusChangedEmail,
   sendTaxReminderEmail,
   sendTaxDocumentEmail,
   sendTaxMessageEmail,

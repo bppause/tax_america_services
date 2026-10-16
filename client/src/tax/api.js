@@ -509,6 +509,7 @@ export const taxApi = {
   adminFillMissingTranslations(auth)          { return request('POST',   '/admin/tasks/fill-missing-translations', {}, auth); },
   adminBulkUpdateTasks(auth, payload)         { return request('PATCH',  '/admin/tasks/bulk', payload, auth); },
   adminDeleteTask(auth, id)                   { return request('DELETE', `/admin/tasks/${encodeURIComponent(id)}`, undefined, auth); },
+  adminMarkTaskViewed(auth, id)               { return request('POST',   `/admin/tasks/${encodeURIComponent(id)}/viewed`, {}, auth); },
 
   // Review queue (Phase 4n.56) — a designated reviewer (or any admin)
   // signs off on a task sitting in pending-review state.

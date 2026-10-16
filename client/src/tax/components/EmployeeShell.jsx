@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import LocaleSwitcher from './LocaleSwitcher';
-import { useT } from '../i18n';
+import { useT, pickI18n } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import { firstNameOf, displayPersonName } from '../lib/personName';
@@ -15,7 +15,7 @@ import ImpersonationBanner from './ImpersonationBanner';
 // Admin gating: the "Configure" group only renders for role=admin
 // employees; staff see only the "Work" items relevant to them.
 export default function EmployeeShell({ community, active, children }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const { fbUser, employee, signOut, impersonation, exitImpersonation, customerAccess } = useEmployeeAuth();
   const base = community ? `/tax/${community.id}/employee` : '#';
   const isAdmin = employee?.role === 'admin';
@@ -41,6 +41,44 @@ export default function EmployeeShell({ community, active, children }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [fbUser, community]);
+
+  // Notification bell — surfaces tax_employee_notifications rows (new
+  // messages, signed requests, task status changes, …). The endpoints
+  // already existed server-side with no UI consuming them; this is that
+  // UI. Polled on a slow interval rather than real-time push.
+  const notifAuth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
+  const [notifications, setNotifications] = useState([]);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const loadNotifications = () => {
+    if (!fbUser || !community) return;
+    taxApi.getEmployeeNotifications(notifAuth)
+      .then(d => setNotifications(d.notifications || []))
+      .catch(() => {});
+  };
+  useEffect(() => {
+    loadNotifications();
+    const id = setInterval(loadNotifications, 60000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community]);
+  const unreadNotifCount = notifications.filter(n => !n.read_at).length;
+  const onOpenNotification = async (n) => {
+    if (!n.read_at) {
+      setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x));
+      taxApi.markEmployeeNotificationRead(notifAuth, n.id).catch(() => {});
+    }
+    if (n.payload?.taskId && community) {
+      window.location.href = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(n.payload.taskId)}`;
+    } else if (n.payload?.threadId && community) {
+      // Inbox has no per-thread deep link yet — land on the inbox and
+      // let the operator pick the thread from the list.
+      window.location.href = `/tax/${community.id}/employee/inbox`;
+    } else if (n.payload?.customerId && community) {
+      window.location.href = `/tax/${community.id}/employee/customers/${encodeURIComponent(n.payload.customerId)}`;
+    } else {
+      setNotifOpen(false);
+    }
+  };
 
   // Persistent "timer running" reminder so an assignee always knows a
   // task is being tracked, even on pages away from Tasks. Re-checked on
@@ -207,6 +245,60 @@ export default function EmployeeShell({ community, active, children }) {
               </a>
             )}
             <div className="tax-shell__footer-row">
+              <div style={{ position: 'relative' }}>
+                <button type="button"
+                        aria-label={t('employee.notifications.title')}
+                        onClick={() => setNotifOpen(o => !o)}
+                        style={{
+                          position: 'relative', background: 'none', border: 0, cursor: 'pointer',
+                          fontSize: 18, lineHeight: 1, padding: 6,
+                        }}>
+                  🔔
+                  {unreadNotifCount > 0 && (
+                    <span style={{
+                      position: 'absolute', top: 0, right: 0,
+                      padding: '1px 6px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                      background: 'var(--tax-brand-secondary)', color: '#fff',
+                    }}>
+                      {unreadNotifCount}
+                    </span>
+                  )}
+                </button>
+                {notifOpen && (
+                  <div style={{
+                    position: 'absolute', left: 0, bottom: '100%', zIndex: 20,
+                    width: 320, maxHeight: 400, overflowY: 'auto',
+                    background: '#fff', border: '1px solid var(--tax-border)', borderRadius: 8,
+                    boxShadow: '0 8px 24px rgba(0,0,0,.12)',
+                  }}>
+                    <div style={{ padding: '10px 14px', fontWeight: 700, fontSize: 13, borderBottom: '1px solid var(--tax-border)' }}>
+                      {t('employee.notifications.title')}
+                    </div>
+                    {notifications.length === 0 ? (
+                      <div style={{ padding: 14, fontSize: 13, color: 'var(--tax-muted)' }}>
+                        {t('employee.notifications.empty')}
+                      </div>
+                    ) : notifications.map(n => (
+                      <button key={n.id} type="button" onClick={() => onOpenNotification(n)}
+                              style={{
+                                display: 'block', width: '100%', textAlign: 'left',
+                                padding: '10px 14px', border: 0, borderBottom: '1px solid var(--tax-border)',
+                                background: n.read_at ? '#fff' : 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)',
+                                cursor: 'pointer', fontSize: 13,
+                              }}>
+                        <div style={{ fontWeight: n.read_at ? 500 : 700 }}>
+                          {pickI18n(n.title_i18n, locale).value || n.type}
+                        </div>
+                        {pickI18n(n.body_i18n, locale).value && (
+                          <div style={{ color: 'var(--tax-muted)', marginTop: 2 }}>
+                            {pickI18n(n.body_i18n, locale).value}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               <LocaleSwitcher />
               <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={signOut}>
                 {t('portal.signout')}
