@@ -98,7 +98,9 @@ export default function OwnerStaffDetail({ employeeId }) {
               never has to guess. */}
           <p style={{ color: 'var(--tax-muted)', marginTop: 0, marginBottom: 6, fontSize: 13 }}>
             {emp.role === 'admin'
-              ? t('owner.staff.access.allHint')
+              ? (emp.permissions?.view_customers === false
+                  ? t('owner.staff.access.webAdminHint')
+                  : t('owner.staff.access.allHint'))
               : t('owner.staff.access.assignedHint')}
           </p>
           <p style={{ color: 'var(--tax-muted)', marginTop: 0, fontSize: 13 }}>
@@ -143,7 +145,15 @@ export default function OwnerStaffDetail({ employeeId }) {
       <PermissionsCard emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
 
       <h3 style={{ marginTop: 32 }}>{t('owner.staffDetail.assignments')}</h3>
-      {emp.role === 'admin' ? (
+      {emp.role === 'admin' && emp.permissions?.view_customers === false ? (
+        <div className="tax-msg" style={{ background: 'color-mix(in srgb, #6b7280 8%, #fff)',
+                                          color: 'var(--tax-text)', borderLeft: '3px solid #6b7280' }}>
+          <strong>{t('owner.staffDetail.webAdminBanner')}</strong>
+          <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
+            {t('owner.staffDetail.webAdminHint')}
+          </div>
+        </div>
+      ) : emp.role === 'admin' ? (
         <div className="tax-msg" style={{ background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
                                           color: 'var(--tax-text)', borderLeft: '3px solid var(--tax-brand-primary)' }}>
           <strong>{t('employee.profile.assignments.adminBanner')}</strong>
@@ -1289,23 +1299,32 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 function DetailAccessScopePill({ emp, t }) {
   if (emp.status === 'archived') return null;
   const isAdmin = emp.role === 'admin';
+  // An admin can still have view_customers revoked — a "site admin" who
+  // configures the public site/app but never sees customer records.
+  const isWebAdmin = isAdmin && emp.permissions?.view_customers === false;
   const count = Number(emp.assigned_customer_count) || 0;
-  const label = isAdmin
-    ? t('owner.staff.access.all')
-    : (count === 0
-        ? t('owner.staff.access.none')
-        : t('owner.staff.access.assigned', { count }));
-  const tint = isAdmin
-    ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
-        fg: 'var(--tax-brand-primary)',
-        bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
-    : count === 0
-      ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
-          fg: '#7f1d1d',
-          bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
-      : { bg: 'var(--tax-bg-alt)',
-          fg: 'var(--tax-text)',
-          bd: 'var(--tax-border)' };
+  const label = isWebAdmin
+    ? t('owner.staff.access.webAdmin')
+    : isAdmin
+      ? t('owner.staff.access.all')
+      : (count === 0
+          ? t('owner.staff.access.none')
+          : t('owner.staff.access.assigned', { count }));
+  const tint = isWebAdmin
+    ? { bg: 'color-mix(in srgb, #6b7280 10%, #fff)',
+        fg: '#374151',
+        bd: 'color-mix(in srgb, #6b7280 30%, #fff)' }
+    : isAdmin
+      ? { bg: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
+          fg: 'var(--tax-brand-primary)',
+          bd: 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)' }
+      : count === 0
+        ? { bg: 'color-mix(in srgb, #b91c1c 7%, #fff)',
+            fg: '#7f1d1d',
+            bd: 'color-mix(in srgb, #b91c1c 22%, #fff)' }
+        : { bg: 'var(--tax-bg-alt)',
+            fg: 'var(--tax-text)',
+            bd: 'var(--tax-border)' };
   return (
     <span style={{
       marginLeft: 8, padding: '2px 10px', borderRadius: 999,

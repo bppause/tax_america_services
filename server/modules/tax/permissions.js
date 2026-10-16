@@ -20,6 +20,9 @@
 // themselves while still delegating day-to-day work.
 
 const PERMISSIONS = [
+  { key: 'view_customers',
+    labelKey: 'owner.permissions.view_customers.label',
+    descKey:  'owner.permissions.view_customers.desc' },
   { key: 'manage_customers',
     labelKey: 'owner.permissions.manage_customers.label',
     descKey:  'owner.permissions.manage_customers.desc' },
