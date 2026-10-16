@@ -597,6 +597,7 @@
   "owner.permissions.view_audit_logs.desc": "Read the practice-wide audit log of who changed what and when.",
   "owner.tasks.add": "Add task",
   "owner.tasks.chip.mine": "My tasks",
+  "owner.tasks.chip.hideCompleted": "Hide completed",
   "owner.tasks.chip.all": "All",
   "owner.tasks.chip.overdue": "Overdue",
   "owner.tasks.chip.today": "Today",

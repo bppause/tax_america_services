@@ -56,7 +56,12 @@ export default function PortalProfile() {
         country: a.country || 'US',
       },
     });
-  }, [customer]);
+    // Keyed on id, not the customer object itself: refreshMe() after every
+    // autosave hands back a new object reference for the same row, and
+    // re-syncing on that would blow away whatever the user is still
+    // mid-typing (e.g. a name field) with the pre-edit snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer?.id]);
 
   const doSave = useRef(null);
   doSave.current = async (overrides = {}) => {

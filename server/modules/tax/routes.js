@@ -7309,6 +7309,11 @@ ${closingHtml}
       q = q.in('customer_id', matchedIds);
     }
     if (req.query.priority) q = q.eq('priority', trim(req.query.priority, 20));
+    // Quick declutter toggle — hides anything already marked done,
+    // independent of whatever the Status filter has picked.
+    if (req.query.hideCompleted === '1' || req.query.hideCompleted === 'true') {
+      q = q.is('completed_at', null);
+    }
     // Period-rollup drill-down: caller wants every task generated
     // by a specific auto-task on a specific due-date.
     if (req.query.serviceAutoTaskId) {

@@ -129,6 +129,16 @@ export default function OwnerTasks() {
     try { localStorage.setItem('tax.tasks.sort', sortKey); } catch { /* ignore */ }
   }, [sortKey]);
   const [mine, setMine] = useState(false);
+  // Hide-completed toggle persists per browser, like view/groupBy/sort —
+  // a quick way to declutter the list without touching the Status filter.
+  const [hideCompleted, setHideCompleted] = useState(() => {
+    try { return localStorage.getItem('tax.tasks.hideCompleted') === '1'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tax.tasks.hideCompleted', hideCompleted ? '1' : '0'); }
+    catch { /* ignore */ }
+  }, [hideCompleted]);
   // Bulk selection state. Holds task IDs across re-fetches so an
   // operator can build a selection across multiple page loads (e.g.
   // after switching due-bucket chips). The bulk action bar appears
@@ -162,6 +172,7 @@ export default function OwnerTasks() {
       due: filters.due,
       q: filters.q,
       sort: sortKey,
+      hideCompleted: hideCompleted ? '1' : undefined,
     };
     // Mine-toggle overrides the assignedTo filter for the duration
     // of the toggle. Turning Mine off keeps whatever the picker
@@ -221,7 +232,7 @@ export default function OwnerTasks() {
     searchTimer.current = setTimeout(load, 200);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community, filters, mine, employee?.id, sortKey]);
+  }, [fbUser, community, filters, mine, employee?.id, sortKey, hideCompleted]);
 
   const employeeById = useMemo(() => new Map(employees.map(e => [e.id, e])), [employees]);
   const customerById = useMemo(() => new Map(customers.map(c => [c.id, c])), [customers]);
@@ -307,6 +318,7 @@ export default function OwnerTasks() {
 
       <TaskToolbar
         mine={mine} setMine={setMine}
+        hideCompleted={hideCompleted} setHideCompleted={setHideCompleted}
         filters={filters} setFilters={setFilters}
         view={view} setView={setView}
         groupBy={groupBy} setGroupBy={setGroupBy}
@@ -348,6 +360,7 @@ export default function OwnerTasks() {
                       selectMany={selectMany}
                       periodsGroup={periodsGroup}
                       mine={mine} employeeId={employee?.id}
+                      hideCompleted={hideCompleted}
                       locale={locale} t={t} />
       ) : tasks === null ? <p>{t('loading')}</p>
         : tasks.length === 0
@@ -1851,7 +1864,7 @@ function InlineCustomerCreateModal({ auth, community, relationshipTypes, locale,
 }
 
 // ─── Toolbar: My-tasks toggle + due chips + view-mode + group-by ─────────
-function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupBy, setGroupBy, sortKey, setSortKey, periodsGroup, setPeriodsGroup, simple, t }) {
+function TaskToolbar({ mine, setMine, hideCompleted, setHideCompleted, filters, setFilters, view, setView, groupBy, setGroupBy, sortKey, setSortKey, periodsGroup, setPeriodsGroup, simple, t }) {
   const DUE_CHIPS = [
     { key: '',         label: t('owner.tasks.chip.all') },
     { key: 'overdue',  label: t('owner.tasks.chip.overdue') },
@@ -1868,6 +1881,9 @@ function TaskToolbar({ mine, setMine, filters, setFilters, view, setView, groupB
     }}>
       <Pill active={mine} onClick={() => setMine(m => !m)}>
         👤 {t('owner.tasks.chip.mine')}
+      </Pill>
+      <Pill active={hideCompleted} onClick={() => setHideCompleted(h => !h)}>
+        🙈 {t('owner.tasks.chip.hideCompleted')}
       </Pill>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
         {DUE_CHIPS.map(c => (
@@ -2135,7 +2151,7 @@ function TasksPeriods({ auth, community, filters, statuses, employees, customerB
                         employeeById, productById, isAdmin, onEdit,
                         selectedIds, toggleSelect, selectMany,
                         periodsGroup = 'period',
-                        mine, employeeId, locale, t }) {
+                        mine, employeeId, hideCompleted, locale, t }) {
   const [periods, setPeriods] = useState(null);
   const [err, setErr] = useState('');
   const [expanded, setExpanded] = useState({});
@@ -2198,6 +2214,7 @@ function TasksPeriods({ auth, community, filters, statuses, employees, customerB
         assignedTo: flat(filters.assignedTo),
         customerId: flat(filters.customerId),
         priority: filters.priority,
+        hideCompleted: hideCompleted ? '1' : undefined,
         limit: 500,
       });
       setPeriodTasks(s => ({ ...s, [p.key]: d.tasks || [] }));

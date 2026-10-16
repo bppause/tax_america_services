@@ -489,7 +489,7 @@ export const taxApi = {
   },
   adminListTasks(auth, opts = {}) {
     const qs = new URLSearchParams();
-    for (const k of ['communitySlug','status','priority','assignedTo','customerId','customerType','productId','due','q','limit','sort','serviceAutoTaskId','dueDateExact']) {
+    for (const k of ['communitySlug','status','priority','assignedTo','customerId','customerType','productId','due','q','limit','sort','serviceAutoTaskId','dueDateExact','hideCompleted']) {
       if (opts[k] !== undefined && opts[k] !== '') qs.set(k, opts[k]);
     }
     return request('GET', `/admin/tasks?${qs.toString()}`, undefined, auth);
