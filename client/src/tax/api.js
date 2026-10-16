@@ -426,6 +426,7 @@ export const taxApi = {
     if (opts.assignedTo)    qs.set('assignedTo', opts.assignedTo);
     if (opts.customerId)    qs.set('customerId', opts.customerId);
     if (opts.customerType)  qs.set('customerType', opts.customerType);
+    if (opts.serviceId)     qs.set('serviceId', opts.serviceId);
     return request('GET', `/admin/progress?${qs.toString()}`, undefined, auth);
   },
   adminSetRemindersEnabled(auth, payload) {

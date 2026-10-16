@@ -24,8 +24,10 @@ import TaskHover from '../components/TaskHover';
 const PRIORITY_OPTIONS = ['urgent', 'high', 'normal', 'low'];
 // Pseudo service-id for practice-wide tasks (no product_id). Lets the
 // Service filter isolate them alongside — or instead of — real services.
-// Server-side match lives in GET /admin/tasks' productId handling.
-const NO_SERVICE_ID = '__none__';
+// Server-side match lives in GET /admin/tasks' and GET /admin/progress's
+// productId/serviceId handling. Exported so OwnerProgress.jsx's Service
+// filter uses the exact same sentinel.
+export const NO_SERVICE_ID = '__none__';
 
 function formatDuration(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds || 0));
@@ -548,7 +550,9 @@ function FilterBar({ filters, setFilters, statuses, employees, products, custome
 // "N selected" otherwise. Open: a search input plus a checkbox list
 // filtered as you type. Falls back to a no-search list when the
 // option count is small enough to scan at a glance.
-function MultiSelect({ label, options, value, onToggle, onClear, searchable, searchPlaceholder, t }) {
+// Exported — reused by OwnerProgress.jsx's Service filter so the two
+// pages share one multi-select implementation instead of two copies.
+export function MultiSelect({ label, options, value, onToggle, onClear, searchable, searchPlaceholder, t }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef(null);

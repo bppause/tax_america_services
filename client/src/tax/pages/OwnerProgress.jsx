@@ -4,6 +4,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import { displayPersonName } from '../lib/personName';
+import { MultiSelect, NO_SERVICE_ID } from './OwnerTasks';
 
 // Task-completion dashboard. Aggregates every active task by service,
 // then by customer, so the owner can scan at a glance which customers
@@ -19,10 +20,15 @@ export default function OwnerProgress() {
   const [expanded, setExpanded] = useState({});
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
   // customerType is a chip filter ('all' | 'individual' | 'business')
   // that mirrors the Customers list, Leads inbox, and Tasks page so
   // the filter language stays the same across the employee portal.
-  const [filters, setFilters] = useState({ customerType: 'all', assignedTo: '', customerId: '' });
+  // serviceId mirrors the Tasks page's Service filter — empty array
+  // means "all tasks" (the default, for consistency with Tasks), one
+  // or more real product ids narrows to those services, and the
+  // NO_SERVICE_ID pseudo-id isolates practice-wide tasks.
+  const [filters, setFilters] = useState({ customerType: 'all', assignedTo: '', customerId: '', serviceId: [] });
 
   // Reference data for the filter dropdowns. Load once per community.
   useEffect(() => {
@@ -30,9 +36,11 @@ export default function OwnerProgress() {
     Promise.all([
       taxApi.adminListEmployees(auth, community.id).catch(() => ({ employees: [] })),
       taxApi.adminListCustomers(auth, community.id).catch(() => ({ customers: [] })),
-    ]).then(([e, c]) => {
+      taxApi.adminListProducts(auth, community.id).catch(() => ({ products: [] })),
+    ]).then(([e, c, p]) => {
       setEmployees((e.employees || []).filter(em => em.status !== 'archived'));
       setCustomers(c.customers || []);
+      setProducts(p.products || []);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
@@ -45,11 +53,12 @@ export default function OwnerProgress() {
       assignedTo: filters.assignedTo,
       customerId: filters.customerId,
       customerType: filters.customerType !== 'all' ? filters.customerType : undefined,
+      serviceId: filters.serviceId.join(','),
     })
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community, filters.assignedTo, filters.customerId, filters.customerType]);
+  }, [fbUser, community, filters.assignedTo, filters.customerId, filters.customerType, filters.serviceId]);
 
   if (err) return <EmployeeShell community={community} active="progress">
     <div className="tax-msg tax-msg--error">{err}</div>
@@ -98,9 +107,9 @@ export default function OwnerProgress() {
               </button>
             );
           })}
-          {(filters.customerType !== 'all' || filters.assignedTo || filters.customerId) && (
+          {(filters.customerType !== 'all' || filters.assignedTo || filters.customerId || filters.serviceId.length > 0) && (
             <button type="button"
-                    onClick={() => setFilters({ customerType: 'all', assignedTo: '', customerId: '' })}
+                    onClick={() => setFilters({ customerType: 'all', assignedTo: '', customerId: '', serviceId: [] })}
                     style={{
                       marginLeft: 'auto', border: 0, background: 'transparent',
                       color: 'var(--tax-brand-primary)', cursor: 'pointer',
@@ -145,6 +154,30 @@ export default function OwnerProgress() {
                   </option>
                 ))}
             </select>
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.tasks.field.service')}
+            </span>
+            <MultiSelect
+              label={t('owner.tasks.filter.anyService')}
+              options={[
+                { id: NO_SERVICE_ID, label: t('owner.tasks.filter.noService') },
+                ...products.map(p => ({ id: p.id, label: pickI18n(p.name_i18n, locale).value || p.slug })),
+              ]}
+              value={filters.serviceId}
+              onToggle={id => setFilters(prev => ({
+                ...prev,
+                serviceId: prev.serviceId.includes(id)
+                  ? prev.serviceId.filter(x => x !== id)
+                  : [...prev.serviceId, id],
+              }))}
+              onClear={() => setFilters(prev => ({ ...prev, serviceId: [] }))}
+              searchable={products.length > 8}
+              searchPlaceholder={t('owner.tasks.filter.searchServices')}
+              t={t}
+            />
           </label>
         </div>
       </div>
