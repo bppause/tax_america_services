@@ -11,9 +11,12 @@ const DUE_OPTIONS = ['overdue', 'today', 'week', 'month', 'month60', 'month90'];
 
 // Overall task progress dashboard. Shows every task (across every
 // service, including practice-wide ones) with the same filter surface
-// as the Tasks page, grouped by service then by customer so the owner
-// can scan who's behind — and drill down into the actual task list,
-// deep-linking into the Tasks page's edit modal for details.
+// as the Tasks page, grouped by customer so the owner can scan who's
+// behind — and drill down into the actual task list, deep-linking
+// into the Tasks page's edit modal for details. Service isn't a
+// grouping dimension here — it's purely a filter (including a "No
+// service" option), so there's no permanent "No service" section
+// cluttering the view when the owner isn't filtering on it.
 export default function OwnerProgress() {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -21,7 +24,6 @@ export default function OwnerProgress() {
 
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
-  const [expanded, setExpanded] = useState({});
   const [expandedRows, setExpandedRows] = useState({}); // per-customer task drill-down
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -279,127 +281,78 @@ export default function OwnerProgress() {
         <Stat label={t('owner.progress.kpi.overdue')}     value={t0.overdue}     color="#991b1b" />
       </div>
 
-      {(!data.byService || data.byService.length === 0) ? (
+      {(!data.customers || data.customers.length === 0) ? (
         <p style={{ color: 'var(--tax-muted)' }}>{t('owner.progress.empty')}</p>
       ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
-          {data.byService.map(svc => {
-            const total = svc.totals.total || 0;
-            const pct = total ? Math.round((svc.totals.done / total) * 100) : 0;
-            const isOpen = !!expanded[svc.product.id];
-            return (
-              <section key={svc.product.id} style={{
-                border: '1px solid var(--tax-border)', borderRadius: 10,
-                background: 'var(--tax-bg)', overflow: 'hidden',
-              }}>
-                <header style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  gap: 12, padding: '12px 16px', cursor: 'pointer',
-                  background: isOpen ? 'var(--tax-bg-alt)' : '#fff',
-                  borderBottom: isOpen ? '1px solid var(--tax-border)' : 'none',
-                }} onClick={() => setExpanded(s => ({ ...s, [svc.product.id]: !s[svc.product.id] }))}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>
-                      {pickI18n(svc.product.name_i18n, locale).value || svc.product.slug}
-                    </div>
-                    <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                      <span><strong style={{ color: '#166534' }}>{svc.totals.done}</strong> {t('owner.progress.kpi.done').toLowerCase()}</span>
-                      <span><strong style={{ color: '#3730a3' }}>{svc.totals.in_progress}</strong> {t('owner.progress.kpi.inProgress').toLowerCase()}</span>
-                      <span><strong style={{ color: '#92400e' }}>{svc.totals.open}</strong> {t('owner.progress.kpi.open').toLowerCase()}</span>
-                      {svc.totals.overdue > 0 && (
-                        <span style={{ color: '#991b1b', fontWeight: 600 }}>
-                          ⚠ {svc.totals.overdue} {t('owner.progress.kpi.overdue').toLowerCase()}
-                        </span>
+        <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse',
+                        border: '1px solid var(--tax-border)', borderRadius: 10, overflow: 'hidden' }}>
+          <thead>
+            <tr style={{ color: 'var(--tax-muted)', fontSize: 11, textTransform: 'uppercase', textAlign: 'left',
+                         background: 'var(--tax-bg-alt)' }}>
+              <th style={{ padding: '8px 10px' }}>{t('owner.progress.col.customer')}</th>
+              <th style={{ padding: '8px 10px', textAlign: 'right' }}>{t('owner.progress.col.done')}</th>
+              <th style={{ padding: '8px 10px', textAlign: 'right' }}>{t('owner.progress.col.inProgress')}</th>
+              <th style={{ padding: '8px 10px', textAlign: 'right' }}>{t('owner.progress.col.open')}</th>
+              <th style={{ padding: '8px 10px', textAlign: 'right' }}>{t('owner.progress.col.overdue')}</th>
+              <th style={{ padding: '8px 10px', minWidth: 130 }}>{t('owner.progress.col.progress')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.customers.map(c => {
+              const cpct = c.total ? Math.round((c.done / c.total) * 100) : 0;
+              const rowOpen = !!expandedRows[c.id];
+              const customerLabel = c.id === '__none__'
+                ? t('owner.progress.noCustomerRow')
+                : (c.customer?.business_name || displayPersonName(c.customer) || c.customer?.email || c.id);
+              return (
+                <Fragment key={c.id}>
+                  <tr style={{ borderTop: '1px solid var(--tax-border)', cursor: 'pointer' }}
+                      onClick={() => setExpandedRows(s => ({ ...s, [c.id]: !s[c.id] }))}>
+                    <td style={{ padding: '8px 10px' }}>
+                      <span aria-hidden="true" style={{
+                        display: 'inline-block', width: 12, fontSize: 10, color: 'var(--tax-muted)',
+                        transform: rowOpen ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform .12s ease',
+                      }}>▸</span>
+                      {' '}
+                      {c.id === '__none__' ? (
+                        <span>{customerLabel}</span>
+                      ) : (
+                        <a href={`/tax/${community.id}/employee/customers/${encodeURIComponent(c.id)}`}
+                           onClick={e => e.stopPropagation()}
+                           style={{ color: 'inherit', textDecoration: 'none' }}>
+                          {customerLabel}
+                        </a>
                       )}
-                    </div>
-                  </div>
-                  <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--tax-brand-primary)' }}>{pct}%</div>
-                    <ProgressBar pct={pct} width={140} />
-                  </div>
-                  <span aria-hidden="true" style={{
-                    fontSize: 14, color: 'var(--tax-muted)',
-                    transform: isOpen ? 'rotate(180deg)' : 'rotate(0)',
-                    transition: 'transform .12s ease',
-                  }}>▾</span>
-                </header>
-                {isOpen && (
-                  <div style={{ padding: '8px 12px 14px' }}>
-                    {svc.customers.length === 0 ? (
-                      <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('owner.progress.noCustomers')}</p>
-                    ) : (
-                      <table style={{ width: '100%', fontSize: 13, borderCollapse: 'collapse' }}>
-                        <thead>
-                          <tr style={{ color: 'var(--tax-muted)', fontSize: 11, textTransform: 'uppercase', textAlign: 'left' }}>
-                            <th style={{ padding: '8px 6px' }}>{t('owner.progress.col.customer')}</th>
-                            <th style={{ padding: '8px 6px', textAlign: 'right' }}>{t('owner.progress.col.done')}</th>
-                            <th style={{ padding: '8px 6px', textAlign: 'right' }}>{t('owner.progress.col.inProgress')}</th>
-                            <th style={{ padding: '8px 6px', textAlign: 'right' }}>{t('owner.progress.col.open')}</th>
-                            <th style={{ padding: '8px 6px', textAlign: 'right' }}>{t('owner.progress.col.overdue')}</th>
-                            <th style={{ padding: '8px 6px', minWidth: 110 }}>{t('owner.progress.col.progress')}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {svc.customers.map(c => {
-                            const cpct = c.total ? Math.round((c.done / c.total) * 100) : 0;
-                            const rowKey = `${svc.product.id}::${c.id}`;
-                            const rowOpen = !!expandedRows[rowKey];
-                            const customerLabel = c.id === '__none__'
-                              ? t('owner.progress.noCustomerRow')
-                              : (c.customer?.business_name || displayPersonName(c.customer) || c.customer?.email || c.id);
-                            return (
-                              <Fragment key={c.id}>
-                                <tr style={{ borderTop: '1px solid var(--tax-border)', cursor: 'pointer' }}
-                                    onClick={() => setExpandedRows(s => ({ ...s, [rowKey]: !s[rowKey] }))}>
-                                  <td style={{ padding: '8px 6px' }}>
-                                    <span aria-hidden="true" style={{
-                                      display: 'inline-block', width: 12, fontSize: 10, color: 'var(--tax-muted)',
-                                      transform: rowOpen ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform .12s ease',
-                                    }}>▸</span>
-                                    {' '}
-                                    {c.id === '__none__' ? (
-                                      <span>{customerLabel}</span>
-                                    ) : (
-                                      <a href={`/tax/${community.id}/employee/customers/${encodeURIComponent(c.id)}`}
-                                         onClick={e => e.stopPropagation()}
-                                         style={{ color: 'inherit', textDecoration: 'none' }}>
-                                        {customerLabel}
-                                      </a>
-                                    )}
-                                  </td>
-                                  <td style={{ padding: '8px 6px', textAlign: 'right', color: '#166534' }}>{c.done}</td>
-                                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{c.in_progress}</td>
-                                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{c.open}</td>
-                                  <td style={{ padding: '8px 6px', textAlign: 'right',
-                                               color: c.overdue > 0 ? '#991b1b' : 'inherit',
-                                               fontWeight: c.overdue > 0 ? 700 : 400 }}>{c.overdue}</td>
-                                  <td style={{ padding: '8px 6px' }}>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                      <ProgressBar pct={cpct} width={90} />
-                                      <span style={{ minWidth: 36, color: 'var(--tax-muted)' }}>{cpct}%</span>
-                                    </div>
-                                  </td>
-                                </tr>
-                                {rowOpen && (
-                                  <tr>
-                                    <td colSpan={6} style={{ padding: '0 6px 10px 26px', borderTop: 'none' }}>
-                                      <TaskDrillDown tasks={c.tasks} community={community}
-                                                      statusLabel={statusLabel} locale={locale} t={t} />
-                                    </td>
-                                  </tr>
-                                )}
-                              </Fragment>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                )}
-              </section>
-            );
-          })}
-        </div>
+                      <span style={{ marginLeft: 8, color: 'var(--tax-muted)', fontWeight: 400 }}>
+                        · {c.total} {(c.total === 1 ? t('owner.progress.taskSingular') : t('owner.progress.taskPlural'))}
+                      </span>
+                    </td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right', color: '#166534' }}>{c.done}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{c.in_progress}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>{c.open}</td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right',
+                                 color: c.overdue > 0 ? '#991b1b' : 'inherit',
+                                 fontWeight: c.overdue > 0 ? 700 : 400 }}>{c.overdue}</td>
+                    <td style={{ padding: '8px 10px' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <ProgressBar pct={cpct} width={100} />
+                        <span style={{ minWidth: 36, color: 'var(--tax-muted)' }}>{cpct}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                  {rowOpen && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: '0 10px 12px 28px', borderTop: 'none', background: 'var(--tax-bg-alt)' }}>
+                        <TaskDrillDown tasks={c.tasks} community={community}
+                                        statusLabel={statusLabel} locale={locale} t={t} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
       )}
     </EmployeeShell>
   );
@@ -428,6 +381,9 @@ function TaskDrillDown({ tasks, community, statusLabel, locale, t }) {
                    style={{ color: 'var(--tax-brand-primary)', textDecoration: 'none', fontWeight: 600 }}>
                   {tt.title}
                 </a>
+              </td>
+              <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>
+                {tt.product ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug) : t('owner.tasks.filter.noService')}
               </td>
               <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>{statusLabel(tt.status_key)}</td>
               <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>

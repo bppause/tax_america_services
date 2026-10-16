@@ -6419,7 +6419,7 @@ ${closingHtml}
         .select('id').eq('community_id', communitySlug).eq('customer_type', ctNorm);
       typeCustomerIds = (matched || []).map(r => r.id);
       if (!typeCustomerIds.length) {
-        return res.json({ totals: { open: 0, in_progress: 0, done: 0, overdue: 0 }, byService: [] });
+        return res.json({ totals: { open: 0, in_progress: 0, done: 0, overdue: 0 }, customers: [] });
       }
     }
     let q = supabase.from('tax_tasks')
@@ -6505,17 +6505,16 @@ ${closingHtml}
       .select('key, is_terminal').eq('community_id', communitySlug);
     const terminalKeys = new Set((statusOpts || []).filter(s => s.is_terminal).map(s => s.key));
 
-    const byService = new Map();
+    // Flat customer rollup — no service-level grouping layer. Which
+    // services count is entirely up to the Service filter (narrow to
+    // one/several real services, or to "No service" for practice-wide
+    // tasks); the breakdown here is just "by customer" so the page
+    // reads as one overall dashboard instead of a list of per-service
+    // sections (one of which used to be a synthetic "No service" group
+    // shown whether or not the owner cared about it).
+    const customersMap = new Map();
     const totals = { open: 0, in_progress: 0, done: 0, overdue: 0 };
 
-    // Practice-wide tasks (no product_id) get their own synthetic
-    // "No service" bucket instead of being dropped — otherwise the
-    // totals here silently undercounted vs. the Tasks page, which does
-    // show them (see the Service filter's "No service" option).
-    const NO_SERVICE_PRODUCT = {
-      id: '__none__', slug: '__none__',
-      name_i18n: { en: 'No service (practice-wide)', es: 'Sin servicio (toda la oficina)' },
-    };
     for (const t of tasks || []) {
       if (allowedCustomers) {
         // Mirrors GET /admin/tasks' staff-visibility rule exactly: a
@@ -6533,41 +6532,23 @@ ${closingHtml}
       const isDone = !!t.completed_at || terminalKeys.has(t.status_key);
       const isOverdue = !isDone && t.due_date && t.due_date < today;
       const isInProgress = !isDone && t.status_key === 'in_progress';
-      const isOpen = !isDone && !isInProgress;
 
       if (isDone) totals.done++;
       else if (isInProgress) totals.in_progress++;
       else totals.open++;
       if (isOverdue) totals.overdue++;
 
-      const skey = t.product_id || '__none__';
-      let svc = byService.get(skey);
-      if (!svc) {
-        svc = {
-          product: t.product_id ? (t.product || { id: t.product_id, slug: t.product_id, name_i18n: {} }) : NO_SERVICE_PRODUCT,
-          totals: { open: 0, in_progress: 0, done: 0, overdue: 0, total: 0 },
-          customersMap: new Map(),
-        };
-        byService.set(skey, svc);
-      }
-      svc.totals.total++;
-      if (isDone) svc.totals.done++;
-      else if (isInProgress) svc.totals.in_progress++;
-      else svc.totals.open++;
-      if (isOverdue) svc.totals.overdue++;
-
       // Customer-less tasks (practice-wide, not tied to any customer)
-      // get their own '__none__' row so they're drillable too, instead
-      // of only counting toward the service-level totals.
+      // get their own '__none__' row so they're still drillable.
       const rkey = t.customer_id || '__none__';
-      let row = svc.customersMap.get(rkey);
+      let row = customersMap.get(rkey);
       if (!row) {
         row = {
           id: rkey, customer: t.customer_id ? (t.customer || null) : null,
           open: 0, in_progress: 0, done: 0, overdue: 0, total: 0,
           tasks: [],
         };
-        svc.customersMap.set(rkey, row);
+        customersMap.set(rkey, row);
       }
       row.total++;
       if (isDone) row.done++;
@@ -6581,21 +6562,20 @@ ${closingHtml}
         id: t.id, title: t.title, status_key: t.status_key, priority: t.priority,
         due_date: t.due_date, completed_at: t.completed_at,
         assignee: t.assignee ? { id: t.assignee.id, name: t.assignee.name, email: t.assignee.email } : null,
+        // Service grouping no longer structures the page, so each task
+        // carries its own service label for the drill-down row.
+        product: t.product ? { id: t.product.id, slug: t.product.slug, name_i18n: t.product.name_i18n } : null,
       });
     }
 
-    const byServiceOut = Array.from(byService.values()).map(svc => ({
-      product: svc.product,
-      totals: svc.totals,
-      customers: Array.from(svc.customersMap.values())
-        .map(row => ({
-          ...row,
-          tasks: row.tasks.slice().sort((a, b) => (a.due_date || '9999-12-31').localeCompare(b.due_date || '9999-12-31')),
-        }))
-        .sort((a, b) => (b.overdue - a.overdue) || (b.open - a.open)),
-    })).sort((a, b) => b.totals.total - a.totals.total);
+    const customersOut = Array.from(customersMap.values())
+      .map(row => ({
+        ...row,
+        tasks: row.tasks.slice().sort((a, b) => (a.due_date || '9999-12-31').localeCompare(b.due_date || '9999-12-31')),
+      }))
+      .sort((a, b) => (b.overdue - a.overdue) || (b.open - a.open));
 
-    res.json({ totals, byService: byServiceOut });
+    res.json({ totals, customers: customersOut });
   });
 
   // ── Upcoming reminders page ─────────────────────────────────────────────

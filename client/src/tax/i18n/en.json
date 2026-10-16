@@ -439,6 +439,8 @@
   "owner.progress.kpi.overdue": "Overdue",
   "owner.progress.kpi.ofAll": "of all tasks",
   "owner.progress.col.customer": "Customer",
+  "owner.progress.taskSingular": "task",
+  "owner.progress.taskPlural": "tasks",
   "owner.progress.col.done": "Done",
   "owner.progress.col.inProgress": "WIP",
   "owner.progress.col.open": "Open",
