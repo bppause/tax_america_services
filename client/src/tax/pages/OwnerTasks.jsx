@@ -7,7 +7,6 @@ import EmployeeShell from '../components/EmployeeShell';
 import { displayPersonName } from '../lib/personName';
 import { urgencyOf, effectiveUrgency, colorOf, priorityColorOf, resolveThresholds, URGENCY_LABEL_KEY } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
-import { formatLastSignInCompact } from '../lib/lastSignIn';
 import TaskHover from '../components/TaskHover';
 
 // Owner / staff task tracker. Replaces the spreadsheet workflow:
@@ -36,6 +35,19 @@ function formatDuration(totalSeconds) {
   if (h === 0 && m === 0) return '<1m';
   if (h === 0) return `${m}m`;
   return `${h}h ${m}m`;
+}
+
+// Date + time (not just date) for the "Last viewed" line — unlike the
+// shared formatLastSignInCompact helper (used in list rows, where a
+// bare date is enough), knowing *when today* someone opened a task
+// actually matters here.
+function formatDateTime(iso, locale) {
+  if (!iso) return '';
+  try {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'es-ES',
+      { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      .format(new Date(iso));
+  } catch (_e) { return iso; }
 }
 
 // Inline completion-note prompt. When a status change would move the
@@ -1229,7 +1241,7 @@ function TaskFormModal({
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
               {t('owner.tasks.lastViewed', {
                 name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
-                date: formatLastSignInCompact(task.last_viewed_at, locale, t),
+                date: formatDateTime(task.last_viewed_at, locale),
               })}
             </div>
           ) : (

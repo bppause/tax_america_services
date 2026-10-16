@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
@@ -6,10 +6,14 @@ import EmployeeShell from '../components/EmployeeShell';
 import { displayPersonName } from '../lib/personName';
 import { MultiSelect, NO_SERVICE_ID } from './OwnerTasks';
 
-// Task-completion dashboard. Aggregates every active task by service,
-// then by customer, so the owner can scan at a glance which customers
-// are caught up and which are behind. Staff see the same view scoped
-// to their assignments — the server enforces the filter.
+const PRIORITY_OPTIONS = ['urgent', 'high', 'normal', 'low'];
+const DUE_OPTIONS = ['overdue', 'today', 'week', 'month', 'month60', 'month90'];
+
+// Overall task progress dashboard. Shows every task (across every
+// service, including practice-wide ones) with the same filter surface
+// as the Tasks page, grouped by service then by customer so the owner
+// can scan who's behind — and drill down into the actual task list,
+// deep-linking into the Tasks page's edit modal for details.
 export default function OwnerProgress() {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -18,17 +22,23 @@ export default function OwnerProgress() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [expanded, setExpanded] = useState({});
+  const [expandedRows, setExpandedRows] = useState({}); // per-customer task drill-down
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [statuses, setStatuses] = useState([]);
   // customerType is a chip filter ('all' | 'individual' | 'business')
   // that mirrors the Customers list, Leads inbox, and Tasks page so
   // the filter language stays the same across the employee portal.
   // serviceId mirrors the Tasks page's Service filter — empty array
   // means "all tasks" (the default, for consistency with Tasks), one
   // or more real product ids narrows to those services, and the
-  // NO_SERVICE_ID pseudo-id isolates practice-wide tasks.
-  const [filters, setFilters] = useState({ customerType: 'all', assignedTo: '', customerId: '', serviceId: [] });
+  // NO_SERVICE_ID pseudo-id isolates practice-wide tasks. status/
+  // priority/due/q mirror the rest of the Tasks page's filter set.
+  const [filters, setFilters] = useState({
+    customerType: 'all', assignedTo: '', customerId: '', serviceId: [],
+    status: [], priority: '', due: '', q: '',
+  });
 
   // Reference data for the filter dropdowns. Load once per community.
   useEffect(() => {
@@ -37,28 +47,49 @@ export default function OwnerProgress() {
       taxApi.adminListEmployees(auth, community.id).catch(() => ({ employees: [] })),
       taxApi.adminListCustomers(auth, community.id).catch(() => ({ customers: [] })),
       taxApi.adminListProducts(auth, community.id).catch(() => ({ products: [] })),
-    ]).then(([e, c, p]) => {
+      taxApi.adminListTaskStatuses(auth, community.id).catch(() => ({ statuses: [] })),
+    ]).then(([e, c, p, s]) => {
       setEmployees((e.employees || []).filter(em => em.status !== 'archived'));
       setCustomers(c.customers || []);
       setProducts(p.products || []);
+      setStatuses(s.statuses || []);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
 
+  const statusById = new Map(statuses.map(s => [s.key, s]));
+  const statusLabel = (key) => {
+    const s = statusById.get(key);
+    return s ? (pickI18n(s.label_i18n, locale).value || key) : key;
+  };
+
+  // Search box debounces like the Tasks page so typing doesn't refetch
+  // on every keystroke.
+  const searchTimer = useRef(null);
   useEffect(() => {
     if (!employee || !community) return;
-    setData(null);
-    taxApi.adminTaskProgress(auth, {
-      communitySlug: community.id,
-      assignedTo: filters.assignedTo,
-      customerId: filters.customerId,
-      customerType: filters.customerType !== 'all' ? filters.customerType : undefined,
-      serviceId: filters.serviceId.join(','),
-    })
-      .then(d => setData(d))
-      .catch(e => setErr(e?.message || t('error.loadFailed')));
+    const run = () => {
+      setData(null);
+      taxApi.adminTaskProgress(auth, {
+        communitySlug: community.id,
+        assignedTo: filters.assignedTo,
+        customerId: filters.customerId,
+        customerType: filters.customerType !== 'all' ? filters.customerType : undefined,
+        serviceId: filters.serviceId.join(','),
+        status: filters.status.join(','),
+        priority: filters.priority,
+        due: filters.due,
+        q: filters.q,
+      })
+        .then(d => setData(d))
+        .catch(e => setErr(e?.message || t('error.loadFailed')));
+    };
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(run, 200);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community, filters.assignedTo, filters.customerId, filters.customerType, filters.serviceId]);
+  }, [fbUser, community, filters.assignedTo, filters.customerId, filters.customerType,
+      filters.serviceId, filters.status, filters.priority, filters.due, filters.q]);
 
   if (err) return <EmployeeShell community={community} active="progress">
     <div className="tax-msg tax-msg--error">{err}</div>
@@ -107,9 +138,14 @@ export default function OwnerProgress() {
               </button>
             );
           })}
-          {(filters.customerType !== 'all' || filters.assignedTo || filters.customerId || filters.serviceId.length > 0) && (
+          {(filters.customerType !== 'all' || filters.assignedTo || filters.customerId
+            || filters.serviceId.length > 0 || filters.status.length > 0
+            || filters.priority || filters.due || filters.q) && (
             <button type="button"
-                    onClick={() => setFilters({ customerType: 'all', assignedTo: '', customerId: '', serviceId: [] })}
+                    onClick={() => setFilters({
+                      customerType: 'all', assignedTo: '', customerId: '', serviceId: [],
+                      status: [], priority: '', due: '', q: '',
+                    })}
                     style={{
                       marginLeft: 'auto', border: 0, background: 'transparent',
                       color: 'var(--tax-brand-primary)', cursor: 'pointer',
@@ -178,6 +214,60 @@ export default function OwnerProgress() {
               searchPlaceholder={t('owner.tasks.filter.searchServices')}
               t={t}
             />
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.tasks.field.status')}
+            </span>
+            <MultiSelect
+              label={t('owner.tasks.filter.allStatuses')}
+              options={statuses.map(s => ({ id: s.key, label: pickI18n(s.label_i18n, locale).value || s.key }))}
+              value={filters.status}
+              onToggle={id => setFilters(prev => ({
+                ...prev,
+                status: prev.status.includes(id) ? prev.status.filter(x => x !== id) : [...prev.status, id],
+              }))}
+              onClear={() => setFilters(prev => ({ ...prev, status: [] }))}
+              searchable={statuses.length > 8}
+              t={t}
+            />
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.tasks.field.priority')}
+            </span>
+            <select value={filters.priority}
+                    onChange={e => setFilters(prev => ({ ...prev, priority: e.target.value }))}>
+              <option value="">{t('owner.tasks.filter.allPriorities')}</option>
+              {PRIORITY_OPTIONS.map(p => (
+                <option key={p} value={p}>{t(`owner.tasks.priority.${p}`)}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: 4 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.tasks.field.due')}
+            </span>
+            <select value={filters.due}
+                    onChange={e => setFilters(prev => ({ ...prev, due: e.target.value }))}>
+              <option value="">{t('owner.tasks.chip.all')}</option>
+              {DUE_OPTIONS.map(d => (
+                <option key={d} value={d}>{t(`owner.tasks.chip.${d === 'week' ? 'week7' : d === 'month' ? 'month30' : d}`)}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'grid', gap: 4, gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                           textTransform: 'uppercase', letterSpacing: '.04em' }}>
+              {t('owner.progress.filter.search')}
+            </span>
+            <input type="search" value={filters.q}
+                   onChange={e => setFilters(prev => ({ ...prev, q: e.target.value }))}
+                   placeholder={t('owner.tasks.searchPlaceholder')}
+                   style={{ padding: '6px 10px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
           </label>
         </div>
       </div>
@@ -252,27 +342,53 @@ export default function OwnerProgress() {
                         <tbody>
                           {svc.customers.map(c => {
                             const cpct = c.total ? Math.round((c.done / c.total) * 100) : 0;
+                            const rowKey = `${svc.product.id}::${c.id}`;
+                            const rowOpen = !!expandedRows[rowKey];
+                            const customerLabel = c.id === '__none__'
+                              ? t('owner.progress.noCustomerRow')
+                              : (c.customer?.business_name || displayPersonName(c.customer) || c.customer?.email || c.id);
                             return (
-                              <tr key={c.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
-                                <td style={{ padding: '8px 6px' }}>
-                                  <a href={`/tax/${community.id}/employee/customers/${encodeURIComponent(c.id)}`}
-                                     style={{ color: 'inherit', textDecoration: 'none' }}>
-                                    {c.customer?.business_name || displayPersonName(c.customer) || c.customer?.email || c.id}
-                                  </a>
-                                </td>
-                                <td style={{ padding: '8px 6px', textAlign: 'right', color: '#166534' }}>{c.done}</td>
-                                <td style={{ padding: '8px 6px', textAlign: 'right' }}>{c.in_progress}</td>
-                                <td style={{ padding: '8px 6px', textAlign: 'right' }}>{c.open}</td>
-                                <td style={{ padding: '8px 6px', textAlign: 'right',
-                                             color: c.overdue > 0 ? '#991b1b' : 'inherit',
-                                             fontWeight: c.overdue > 0 ? 700 : 400 }}>{c.overdue}</td>
-                                <td style={{ padding: '8px 6px' }}>
-                                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                    <ProgressBar pct={cpct} width={90} />
-                                    <span style={{ minWidth: 36, color: 'var(--tax-muted)' }}>{cpct}%</span>
-                                  </div>
-                                </td>
-                              </tr>
+                              <Fragment key={c.id}>
+                                <tr style={{ borderTop: '1px solid var(--tax-border)', cursor: 'pointer' }}
+                                    onClick={() => setExpandedRows(s => ({ ...s, [rowKey]: !s[rowKey] }))}>
+                                  <td style={{ padding: '8px 6px' }}>
+                                    <span aria-hidden="true" style={{
+                                      display: 'inline-block', width: 12, fontSize: 10, color: 'var(--tax-muted)',
+                                      transform: rowOpen ? 'rotate(90deg)' : 'rotate(0)', transition: 'transform .12s ease',
+                                    }}>▸</span>
+                                    {' '}
+                                    {c.id === '__none__' ? (
+                                      <span>{customerLabel}</span>
+                                    ) : (
+                                      <a href={`/tax/${community.id}/employee/customers/${encodeURIComponent(c.id)}`}
+                                         onClick={e => e.stopPropagation()}
+                                         style={{ color: 'inherit', textDecoration: 'none' }}>
+                                        {customerLabel}
+                                      </a>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: '8px 6px', textAlign: 'right', color: '#166534' }}>{c.done}</td>
+                                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{c.in_progress}</td>
+                                  <td style={{ padding: '8px 6px', textAlign: 'right' }}>{c.open}</td>
+                                  <td style={{ padding: '8px 6px', textAlign: 'right',
+                                               color: c.overdue > 0 ? '#991b1b' : 'inherit',
+                                               fontWeight: c.overdue > 0 ? 700 : 400 }}>{c.overdue}</td>
+                                  <td style={{ padding: '8px 6px' }}>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      <ProgressBar pct={cpct} width={90} />
+                                      <span style={{ minWidth: 36, color: 'var(--tax-muted)' }}>{cpct}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                                {rowOpen && (
+                                  <tr>
+                                    <td colSpan={6} style={{ padding: '0 6px 10px 26px', borderTop: 'none' }}>
+                                      <TaskDrillDown tasks={c.tasks} community={community}
+                                                      statusLabel={statusLabel} locale={locale} t={t} />
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
                             );
                           })}
                         </tbody>
@@ -286,6 +402,50 @@ export default function OwnerProgress() {
         </div>
       )}
     </EmployeeShell>
+  );
+}
+
+// Individual-task drill-down under a customer row. Each title links
+// straight into the Tasks page with that task's edit modal open — the
+// same ?edit= deep link the task-assigned / status-changed emails use
+// — so "drill into task details" doesn't require rebuilding the whole
+// edit modal here.
+function TaskDrillDown({ tasks, community, statusLabel, locale, t }) {
+  if (!tasks || tasks.length === 0) {
+    return <p style={{ color: 'var(--tax-muted)', fontSize: 12, margin: '4px 0' }}>{t('owner.progress.noTasks')}</p>;
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+      <tbody>
+        {tasks.map(tt => {
+          const overdue = tt.due_date && tt.due_date < today && !tt.completed_at;
+          return (
+            <tr key={tt.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
+              <td style={{ padding: '6px 6px' }}>
+                <a href={`/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(tt.id)}`}
+                   onClick={e => e.stopPropagation()}
+                   style={{ color: 'var(--tax-brand-primary)', textDecoration: 'none', fontWeight: 600 }}>
+                  {tt.title}
+                </a>
+              </td>
+              <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>{statusLabel(tt.status_key)}</td>
+              <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>
+                {tt.priority && tt.priority !== 'normal' ? t(`owner.tasks.priority.${tt.priority}`) : ''}
+              </td>
+              <td style={{ padding: '6px 6px', textAlign: 'right',
+                           color: overdue ? '#991b1b' : 'var(--tax-muted)',
+                           fontWeight: overdue ? 700 : 400 }}>
+                {tt.due_date || ''}
+              </td>
+              <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>
+                {tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : ''}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 

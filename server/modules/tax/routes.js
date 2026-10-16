@@ -6401,6 +6401,8 @@ ${closingHtml}
       if (Array.isArray(visible)) allowedCustomers = new Set(visible);
     }
 
+    const today = new Date().toISOString().slice(0, 10);
+
     // Optional filters applied at the SQL layer so the rollup recomputes
     // automatically — KPI cards reflect only what's visible.
     const filterAssignee = trim(req.query.assignedTo || '', 200);
@@ -6422,9 +6424,11 @@ ${closingHtml}
     }
     let q = supabase.from('tax_tasks')
       .select(`
-        id, customer_id, product_id, status_key, due_date, completed_at,
+        id, title, customer_id, product_id, status_key, priority, due_date, completed_at,
+        assigned_employee_id,
         customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email ),
-        product:tax_products ( id, slug, name_i18n )
+        product:tax_products ( id, slug, name_i18n ),
+        assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email )
       `)
       .eq('community_id', communitySlug)
       .is('archived_at', null)
@@ -6450,6 +6454,50 @@ ${closingHtml}
         q = q.in('product_id', realIds);
       }
     }
+    // Status / priority / due-bucket / search filters — same shapes as
+    // GET /admin/tasks, so Progress behaves like a true "all tasks"
+    // dashboard rather than a narrower rollup-only view.
+    {
+      const raw = trim(req.query.status || '', 2000);
+      const ids = raw ? raw.split(',').map(x => trim(x, 60)).filter(Boolean) : [];
+      if (ids.length === 1) q = q.eq('status_key', ids[0]);
+      else if (ids.length > 1) q = q.in('status_key', ids);
+    }
+    if (req.query.priority) q = q.eq('priority', trim(req.query.priority, 20));
+    const due = trim(req.query.due, 20);
+    if (due === 'overdue') {
+      q = q.lt('due_date', today);
+    } else if (due === 'today') {
+      q = q.eq('due_date', today);
+    } else if (due === 'week' || due === 'month' || due === 'month60' || due === 'month90') {
+      const days = due === 'month90' ? 90 : due === 'month60' ? 60 : due === 'month' ? 30 : 7;
+      const horizon = new Date(); horizon.setUTCDate(horizon.getUTCDate() + days);
+      q = q.gte('due_date', today).lte('due_date', horizon.toISOString().slice(0, 10));
+    }
+    const search = trim(req.query.q || '', 200);
+    if (search) {
+      const safe = search.replace(/[,.%_()*]/g, ' ').trim();
+      if (safe) {
+        const like = `%${safe}%`;
+        let matchedCustomerIds = [];
+        try {
+          const { data: matched } = await supabase.from('tax_customers')
+            .select('id').eq('community_id', communitySlug)
+            .or([
+              `name.ilike.${like}`, `business_name.ilike.${like}`,
+              `first_name.ilike.${like}`, `last_name.ilike.${like}`,
+              `email.ilike.${like}`,
+            ].join(','))
+            .limit(500);
+          matchedCustomerIds = (matched || []).map(r => r.id);
+        } catch (e) {
+          warn('[tax-progress-search] customer prefetch failed', e?.message || e);
+        }
+        const orClauses = [`title.ilike.${like}`];
+        if (matchedCustomerIds.length) orClauses.push(`customer_id.in.(${matchedCustomerIds.join(',')})`);
+        q = q.or(orClauses.join(','));
+      }
+    }
     const { data: tasks, error } = await q;
     if (error) return sendSupabaseError(res, error);
 
@@ -6457,7 +6505,6 @@ ${closingHtml}
       .select('key, is_terminal').eq('community_id', communitySlug);
     const terminalKeys = new Set((statusOpts || []).filter(s => s.is_terminal).map(s => s.key));
 
-    const today = new Date().toISOString().slice(0, 10);
     const byService = new Map();
     const totals = { open: 0, in_progress: 0, done: 0, overdue: 0 };
 
@@ -6470,7 +6517,18 @@ ${closingHtml}
       name_i18n: { en: 'No service (practice-wide)', es: 'Sin servicio (toda la oficina)' },
     };
     for (const t of tasks || []) {
-      if (allowedCustomers && t.customer_id && !allowedCustomers.has(t.customer_id)) continue;
+      if (allowedCustomers) {
+        // Mirrors GET /admin/tasks' staff-visibility rule exactly: a
+        // customer-linked task needs that customer in scope; a
+        // customer-less (practice-wide) task only counts if it's
+        // assigned to this staff member. Matters more now that the
+        // drill-down below exposes task titles, not just counts.
+        if (t.customer_id) {
+          if (!allowedCustomers.has(t.customer_id)) continue;
+        } else if (t.assigned_employee_id !== emp.id) {
+          continue;
+        }
+      }
 
       const isDone = !!t.completed_at || terminalKeys.has(t.status_key);
       const isOverdue = !isDone && t.due_date && t.due_date < today;
@@ -6498,27 +6556,42 @@ ${closingHtml}
       else svc.totals.open++;
       if (isOverdue) svc.totals.overdue++;
 
-      if (t.customer_id) {
-        let row = svc.customersMap.get(t.customer_id);
-        if (!row) {
-          row = {
-            id: t.customer_id, customer: t.customer || null,
-            open: 0, in_progress: 0, done: 0, overdue: 0, total: 0,
-          };
-          svc.customersMap.set(t.customer_id, row);
-        }
-        row.total++;
-        if (isDone) row.done++;
-        else if (isInProgress) row.in_progress++;
-        else row.open++;
-        if (isOverdue) row.overdue++;
+      // Customer-less tasks (practice-wide, not tied to any customer)
+      // get their own '__none__' row so they're drillable too, instead
+      // of only counting toward the service-level totals.
+      const rkey = t.customer_id || '__none__';
+      let row = svc.customersMap.get(rkey);
+      if (!row) {
+        row = {
+          id: rkey, customer: t.customer_id ? (t.customer || null) : null,
+          open: 0, in_progress: 0, done: 0, overdue: 0, total: 0,
+          tasks: [],
+        };
+        svc.customersMap.set(rkey, row);
       }
+      row.total++;
+      if (isDone) row.done++;
+      else if (isInProgress) row.in_progress++;
+      else row.open++;
+      if (isOverdue) row.overdue++;
+      // Per-task detail for the drill-down list — enough to render a
+      // row and deep-link into the Tasks page's edit modal without a
+      // second round-trip.
+      row.tasks.push({
+        id: t.id, title: t.title, status_key: t.status_key, priority: t.priority,
+        due_date: t.due_date, completed_at: t.completed_at,
+        assignee: t.assignee ? { id: t.assignee.id, name: t.assignee.name, email: t.assignee.email } : null,
+      });
     }
 
     const byServiceOut = Array.from(byService.values()).map(svc => ({
       product: svc.product,
       totals: svc.totals,
       customers: Array.from(svc.customersMap.values())
+        .map(row => ({
+          ...row,
+          tasks: row.tasks.slice().sort((a, b) => (a.due_date || '9999-12-31').localeCompare(b.due_date || '9999-12-31')),
+        }))
         .sort((a, b) => (b.overdue - a.overdue) || (b.open - a.open)),
     })).sort((a, b) => b.totals.total - a.totals.total);
 

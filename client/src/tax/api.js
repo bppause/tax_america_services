@@ -427,6 +427,10 @@ export const taxApi = {
     if (opts.customerId)    qs.set('customerId', opts.customerId);
     if (opts.customerType)  qs.set('customerType', opts.customerType);
     if (opts.serviceId)     qs.set('serviceId', opts.serviceId);
+    if (opts.status)        qs.set('status', opts.status);
+    if (opts.priority)      qs.set('priority', opts.priority);
+    if (opts.due)           qs.set('due', opts.due);
+    if (opts.q)             qs.set('q', opts.q);
     return request('GET', `/admin/progress?${qs.toString()}`, undefined, auth);
   },
   adminSetRemindersEnabled(auth, payload) {
