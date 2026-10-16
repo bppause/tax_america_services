@@ -1840,6 +1840,86 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // Notification to a task's assignee when its status changes — e.g. an
+  // admin reassigns it to a terminal/non-terminal bucket, or another
+  // teammate moves it along. Email is opt-in per employee (default
+  // channel is in_app only), so this only fires once the recipient has
+  // actually turned email on for this notification type in their
+  // profile — see EMPLOYEE_NOTIFICATION_TYPES / getEmployeeChannels.
+  const sendTaxTaskStatusChangedEmail = async ({ community, task, assignee, actor, oldStatusLabel, newStatusLabel }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(assignee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Assignee has no email.' };
+
+    const lang = (assignee && assignee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const taskUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
+    const actorLabel = (actor && (actor.name || actor.email)) || '';
+    const assigneeFirst = firstNameOf(assignee) || '';
+
+    const subjectDefault = lang === 'en'
+      ? `Task status changed: ${task.title}`
+      : `Cambió el estado de la tarea: ${task.title}`;
+    const greeting = lang === 'en'
+      ? (assigneeFirst ? `Hi ${assigneeFirst},` : 'Hi,')
+      : (assigneeFirst ? `Hola ${assigneeFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? (actorLabel
+          ? `${actorLabel} changed the status of a task assigned to you on ${community.name}.`
+          : `The status of a task assigned to you changed on ${community.name}.`)
+      : (actorLabel
+          ? `${actorLabel} cambió el estado de una tarea asignada a usted en ${community.name}.`
+          : `Cambió el estado de una tarea asignada a usted en ${community.name}.`);
+    const cta = lang === 'en' ? 'Open this task →' : 'Abrir esta tarea →';
+    const statusLabel = lang === 'en' ? 'Status' : 'Estado';
+    const fromToLabel = lang === 'en'
+      ? `${oldStatusLabel || '—'} → ${newStatusLabel || '—'}`
+      : `${oldStatusLabel || '—'} → ${newStatusLabel || '—'}`;
+
+    const textLines = [
+      greeting, '', intro, '',
+      task.title,
+      `${statusLabel}: ${fromToLabel}`,
+      '', `${cta} ${taskUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#f7f7f7;padding:14px 16px;border-radius:8px;margin:14px 0">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(task.title)}</div>
+          <div style="margin-top:4px;color:#555"><strong>${escapeHtml(statusLabel)}:</strong> ${escapeHtml(fromToLabel)}</div>
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(taskUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      assignee_name: displayNameOf(assignee) || assignee.email || '',
+      assignee_first_name: assigneeFirst,
+      actor_name: actorLabel,
+      task_title: task.title,
+      task_url: taskUrl,
+      old_status: oldStatusLabel || '',
+      new_status: newStatusLabel || '',
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'task_status_changed', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    return sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+  };
+
   // Daily digest for owners + staff. Composed by the digest cron from
   // counts + a list of priority items the employee should act on today.
   // Skipped at the caller level when there's nothing to report (no
@@ -2187,6 +2267,7 @@ module.exports = function createTaxSenders(deps) {
     sendTaxLeadEmail,
     sendTaxLeadConfirmationEmail,
     sendTaxTaskAssignedEmail,
+    sendTaxTaskStatusChangedEmail,
     sendTaxDailyDigestEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,

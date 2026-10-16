@@ -7,6 +7,7 @@ import EmployeeShell from '../components/EmployeeShell';
 import { displayPersonName } from '../lib/personName';
 import { urgencyOf, effectiveUrgency, colorOf, priorityColorOf, resolveThresholds, URGENCY_LABEL_KEY } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
+import { formatLastSignInCompact } from '../lib/lastSignIn';
 import TaskHover from '../components/TaskHover';
 
 // Owner / staff task tracker. Replaces the spreadsheet workflow:
@@ -1100,6 +1101,15 @@ function TaskFormModal({
     };
   }, [onClose]);
 
+  // Stamp "last viewed" once per open — lets the owner see whether the
+  // assignee has actually looked at the task. Fire-and-forget: a failure
+  // here shouldn't block the modal from being usable.
+  useEffect(() => {
+    if (!isEdit) return;
+    taxApi.adminMarkTaskViewed(auth, task.id).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // When the customer changes, fetch their default product and pre-fill —
   // but only if the user hasn't manually overridden it. We track which
   // customer the auto-fill came from so a later edit to the same customer
@@ -1161,6 +1171,17 @@ function TaskFormModal({
     doSave.current(overrides);
   };
 
+  // Lets TaskProgressPanel's timer-driven reminders (move to in-progress /
+  // mark complete) change status through the same path the Status select
+  // itself uses — single source of truth, same completion-notes prompt.
+  const onProgressSetStatus = (key) => {
+    const patch = ensureCompletionNotes({ statuses, task: { ...task, notes }, patch: { statusKey: key }, t });
+    if (!patch) return;
+    setStatusKey(patch.statusKey);
+    if (patch.notes !== undefined) setNotes(patch.notes);
+    saveNow(patch);
+  };
+
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
@@ -1192,6 +1213,14 @@ function TaskFormModal({
             <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
           )}
         </div>
+        {isEdit && task.last_viewed_at && (
+          <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
+            {t('owner.tasks.lastViewed', {
+              name: task.last_viewed_by?.name || task.last_viewed_by?.email || t('owner.tasks.lastViewed.someone'),
+              date: formatLastSignInCompact(task.last_viewed_at, locale, t),
+            })}
+          </div>
+        )}
         <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
@@ -1277,6 +1306,8 @@ function TaskFormModal({
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks} employees={employees}
                                 isAdmin={isAdmin} employeeId={employeeId}
+                                statuses={statuses} currentStatusKey={statusKey}
+                                onSetStatus={onProgressSetStatus}
                                 auth={auth} locale={locale} t={t} />
           )}
 
@@ -1322,7 +1353,7 @@ function TaskFormModal({
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so starting a timer or
 // approving a review never risks closing the modal.
-function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
   // ── Time tracking ──────────────────────────────────────────────────────
   const [entries, setEntries] = useState(null);
   const [totalSeconds, setTotalSeconds] = useState(0);
@@ -1352,12 +1383,44 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, auth, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myRunning?.id, othersRunning?.id]);
 
+  // Reminder nudges — a timer starting/stopping is the clearest signal
+  // that work actually happened, so it's the natural moment to prompt a
+  // status move the person may have forgotten to make by hand. Both are
+  // soft: declining just leaves the status as-is.
+  const currentStatus = (statuses || []).find(s => s.key === currentStatusKey);
+  const inProgressStatus = (statuses || []).find(s => s.key === 'in_progress');
+  const terminalStatus = (statuses || []).find(s => s.is_terminal);
+
+  const maybeNudgeInProgress = () => {
+    if (!onSetStatus || !inProgressStatus) return;
+    if (currentStatusKey === inProgressStatus.key) return;
+    if (currentStatus?.is_terminal) return;
+    const label = pickI18n(inProgressStatus.label_i18n, locale).value || inProgressStatus.key;
+    if (window.confirm(t('owner.tasks.progress.nudgeInProgress', { status: label }))) {
+      onSetStatus(inProgressStatus.key);
+    }
+  };
+  const maybeNudgeComplete = () => {
+    if (!onSetStatus || !terminalStatus) return;
+    if (currentStatus?.is_terminal) return;
+    const label = pickI18n(terminalStatus.label_i18n, locale).value || terminalStatus.key;
+    if (window.confirm(t('owner.tasks.progress.nudgeComplete', { status: label }))) {
+      onSetStatus(terminalStatus.key);
+    }
+  };
+
   const onToggleTimer = async () => {
     setTimeBusy(true); setTimeErr('');
     try {
-      if (myRunning) await taxApi.adminStopTaskTimer(auth, task.id);
-      else await taxApi.adminStartTaskTimer(auth, task.id);
-      loadTime();
+      if (myRunning) {
+        await taxApi.adminStopTaskTimer(auth, task.id);
+        loadTime();
+        maybeNudgeComplete();
+      } else {
+        await taxApi.adminStartTaskTimer(auth, task.id);
+        loadTime();
+        maybeNudgeInProgress();
+      }
     } catch (e) { setTimeErr(e?.message || ''); }
     finally { setTimeBusy(false); }
   };

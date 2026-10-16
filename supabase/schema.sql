@@ -3370,3 +3370,19 @@ create table if not exists public.tax_chat_logs (
 );
 create index if not exists idx_tax_chat_logs_community on public.tax_chat_logs(community_id, created_at desc);
 alter table public.tax_chat_logs disable row level security;
+
+-- Last-viewed tracking on tasks: stamped by POST /admin/tasks/:id/viewed
+-- whenever an employee (staff or owner) opens the task's edit modal, so
+-- the owner can tell whether the assignee has actually looked at a task
+-- without relying on status changes alone.
+alter table public.tax_tasks
+  add column if not exists last_viewed_at           timestamptz,
+  add column if not exists last_viewed_by_employee_id text
+    references public.tax_employees(id) on delete set null;
+
+-- Staff email toggle for task-status-change notifications. Mirrors the
+-- existing per-type staff-email columns above (same master-switch +
+-- STAFF_EMAIL_TYPE_COLUMNS pattern) — default ON like its siblings.
+alter table public.communities
+  add column if not exists tax_staff_email_task_status_changed_enabled
+    boolean not null default true;
