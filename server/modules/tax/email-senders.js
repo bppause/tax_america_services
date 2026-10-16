@@ -23,6 +23,7 @@
 
 const { escapeHtml } = require('../../core/utils');
 const { firstNameOf, displayNameOf } = require('./names');
+const { warn } = require('../../../logger');
 
 module.exports = function createTaxSenders(deps) {
   const { sendSpanishEmail, emailConfigured, loadTaxEmailTemplate, logTaxEmailDelivery, publicAppUrl, supabase } = deps;
@@ -159,8 +160,33 @@ module.exports = function createTaxSenders(deps) {
 
   const sendTaxLeadEmail = async ({ community, lead }) => {
     if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
-    const to = String(community?.contact_email || '').trim();
-    if (!to) return { sent: false, skipped: true, reason: 'Community has no contact_email.' };
+
+    // Recipients: the practice's shared contact_email (if set) plus every
+    // active admin employee who still has full customer visibility — an
+    // admin whose "View customers" permission has been revoked (a
+    // site-admin-only account; see server/modules/tax/permissions.js)
+    // never sees customer/lead data, so they're deliberately excluded
+    // even though role === 'admin'. This also means a lead still reaches
+    // the practice even when contact_email was never configured.
+    const recipients = new Set();
+    const contactEmail = String(community?.contact_email || '').trim().toLowerCase();
+    if (contactEmail) recipients.add(contactEmail);
+    if (supabase && community?.id) {
+      try {
+        const { data: admins } = await supabase.from('tax_employees')
+          .select('email, permissions')
+          .eq('community_id', community.id)
+          .eq('role', 'admin')
+          .eq('status', 'active');
+        for (const a of (admins || [])) {
+          if (a.permissions?.view_customers === false) continue;
+          const e = String(a.email || '').trim().toLowerCase();
+          if (e) recipients.add(e);
+        }
+      } catch (e) { warn('[tax] lead email admin lookup failed', e?.message || e); }
+    }
+    const to = Array.from(recipients);
+    if (!to.length) return { sent: false, skipped: true, reason: 'No recipients configured.' };
 
     // Phase 4n.12: render the full set of services the lead picked. Prefer
     // product_slugs[] (new) and fall back to product_slug for legacy rows.
@@ -268,11 +294,12 @@ module.exports = function createTaxSenders(deps) {
       lead_locale: lead.preferred_locale,
       lead_message: lead.message || '', lead_id: lead.id, lead_submitted: lead.created_at,
     };
-    // Recipient is the practice's contact_email, not the lead. Pick
-    // the owner's own preferred language (community.default_locale)
-    // so the subject + body arrive in the language the practice
-    // reads — the lead's own language stays visible in the body as
-    // metadata so the owner knows what language to reply in.
+    // Recipients are the practice's contact_email + full-visibility admin
+    // employees (built above), never the lead. Pick the owner's own
+    // preferred language (community.default_locale) so the subject + body
+    // arrive in the language the practice reads — the lead's own language
+    // stays visible in the body as metadata so the owner knows what
+    // language to reply in.
     const recipientLang = community?.default_locale === 'en' ? 'en' : 'es';
     const finalCopy = await applyOverride({
       communityId: community.id, key: 'lead',
