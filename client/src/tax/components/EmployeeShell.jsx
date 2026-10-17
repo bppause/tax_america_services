@@ -86,6 +86,23 @@ export default function EmployeeShell({ community, active, children }) {
     return () => { cancelled = true; };
   }, [fbUser, community]);
 
+  // Owner-only badge on the Tasks link — tasks sitting in the review
+  // queue aren't visible anywhere outside Tasks/Dashboard otherwise,
+  // so this makes "something needs you" visible from any page in the
+  // portal, not just after navigating to one of those two.
+  const [awaitingReview, setAwaitingReview] = useState(0);
+  useEffect(() => {
+    if (!fbUser || !community || !employee?.is_owner) { setAwaitingReview(0); return; }
+    let cancelled = false;
+    const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
+    const load = () => taxApi.adminTasksAwaitingReview(auth)
+      .then(d => { if (!cancelled) setAwaitingReview((d.tasks || []).length); })
+      .catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [fbUser, community, employee?.is_owner]);
+
   // Notification bell — surfaces tax_employee_notifications rows (new
   // messages, signed requests, task status changes, …). The endpoints
   // already existed server-side with no UI consuming them; this is that
@@ -211,7 +228,7 @@ export default function EmployeeShell({ community, active, children }) {
                     by switching back to Detailed. */}
                 {employee && perm('view_customers') && (
                   <NavGroup groupKey="business" label={t('employee.nav.groupBusiness')}>
-                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
+                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
@@ -239,7 +256,7 @@ export default function EmployeeShell({ community, active, children }) {
                     "site admin" account that never touches customer data. */}
                 {employee && perm('view_customers') && (
                   <NavGroup groupKey="operations" label={t('employee.nav.groupOperations')}>
-                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
+                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
                     {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
