@@ -8325,8 +8325,10 @@ ${closingHtml}
       update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
     }
 
-    // Auto-stamp completed_at when moving into a terminal status. Two
-    // gates run first:
+    // Every status change requires a note — not just completion — so
+    // the task's history explains itself without cross-referencing the
+    // collaborative notes log separately. Two more gates run only for
+    // a move into a terminal status:
     //   1) Blocker must be completed — refusing the transition surfaces
     //      a clear "Finish X before completing this" error.
     //   2) When requires_review is on, park the task on a visible
@@ -8338,18 +8340,18 @@ ${closingHtml}
     //      requested, so approval can restore it.
     let enteredPendingReview = false;
     if (update.status_key && update.status_key !== cur.status_key) {
+      const effectiveNotes = (body.notes !== undefined
+        ? String(body.notes || '')
+        : String(cur.notes || ''));
+      if (!effectiveNotes.trim()) {
+        return res.status(400).json({
+          error: 'notes_required_on_status_change',
+          message: 'Add a note describing this status change before saving it.',
+        });
+      }
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
       if (opt?.is_terminal) {
-        const effectiveNotes = (body.notes !== undefined
-          ? String(body.notes || '')
-          : String(cur.notes || ''));
-        if (!effectiveNotes.trim()) {
-          return res.status(400).json({
-            error: 'notes_required_on_complete',
-            message: 'Add a note describing what was done before completing this task.',
-          });
-        }
         if (cur.blocked_by_task_id) {
           const { data: blocker } = await supabase.from('tax_tasks')
             .select('id, title, completed_at').eq('id', cur.blocked_by_task_id).maybeSingle();
