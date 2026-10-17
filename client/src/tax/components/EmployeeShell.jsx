@@ -6,6 +6,33 @@ import { taxApi } from '../api';
 import { firstNameOf, displayPersonName } from '../lib/personName';
 import ImpersonationBanner from './ImpersonationBanner';
 
+// Collapsible sidebar section — remembers whether the user last left it
+// open or closed, per browser (localStorage), so returning to the app
+// keeps the menu exactly as they arranged it. Defaults to open.
+function NavGroup({ groupKey, label, children }) {
+  const storageKey = `tax.employeeNav.${groupKey}.collapsed`;
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(storageKey) === '1'; } catch { return false; }
+  });
+  const toggle = () => {
+    setCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem(storageKey, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
+  return (
+    <div className="tax-shell__group">
+      <button type="button" className="tax-shell__group-label tax-shell__group-toggle"
+              onClick={toggle} aria-expanded={!collapsed}>
+        <span>{label}</span>
+        <span className="tax-shell__group-caret" aria-hidden="true">{collapsed ? '▸' : '▾'}</span>
+      </button>
+      {!collapsed && children}
+    </div>
+  );
+}
+
 // Phase 4l: sidebar shell. Replaces the 13-item horizontal nav with a
 // left-rail sidebar split into two groups (Work / Configure) plus a
 // footer (Profile, Help, Locale, dual-role switch, sign-out). On
@@ -159,17 +186,15 @@ export default function EmployeeShell({ community, active, children }) {
                     template, Email templates, Audit) is reachable again
                     by switching back to Detailed. */}
                 {employee && perm('view_customers') && (
-                  <div className="tax-shell__group">
-                    <div className="tax-shell__group-label">{t('employee.nav.groupBusiness')}</div>
+                  <NavGroup groupKey="business" label={t('employee.nav.groupBusiness')}>
                     {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
-                  </div>
+                  </NavGroup>
                 )}
                 {isAdmin && (
-                  <div className="tax-shell__group">
-                    <div className="tax-shell__group-label">{t('employee.nav.groupWebsite')}</div>
+                  <NavGroup groupKey="website" label={t('employee.nav.groupWebsite')}>
                     {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                     {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                     {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
@@ -179,7 +204,7 @@ export default function EmployeeShell({ community, active, children }) {
                       navLink('staff',    `${base}/staff`,    t('employee.nav.staff'))}
                     {perm('view_customers') && perm('manage_settings') &&
                       navLink('settings', `${base}/settings`, t('employee.nav.settings'))}
-                  </div>
+                  </NavGroup>
                 )}
               </>
             ) : (
@@ -189,14 +214,13 @@ export default function EmployeeShell({ community, active, children }) {
                     entirely for an admin with view_customers revoked — a
                     "site admin" account that never touches customer data. */}
                 {employee && perm('view_customers') && (
-                  <div className="tax-shell__group">
-                    <div className="tax-shell__group-label">{t('employee.nav.groupOperations')}</div>
+                  <NavGroup groupKey="operations" label={t('employee.nav.groupOperations')}>
                     {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'))}
                     {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
-                  </div>
+                  </NavGroup>
                 )}
 
                 {/* Public homepage — anything you edit here changes the
@@ -204,15 +228,14 @@ export default function EmployeeShell({ community, active, children }) {
                     "Meet the team" section is curated per-employee from
                     Practice setup → Staff → Public profile card. */}
                 {isAdmin && (
-                  <div className="tax-shell__group">
-                    <div className="tax-shell__group-label">{t('employee.nav.groupPublicHomepage')}</div>
+                  <NavGroup groupKey="public-homepage" label={t('employee.nav.groupPublicHomepage')}>
                     {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                     {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                     {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
                     {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
                     {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
                     {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
-                  </div>
+                  </NavGroup>
                 )}
 
                 {/* Practice setup — rarely touched. Templates, staff,
@@ -222,23 +245,21 @@ export default function EmployeeShell({ community, active, children }) {
                     homepage only" scope a view_customers-revoked admin
                     account is meant to have. */}
                 {isAdmin && perm('view_customers') && (
-                  <div className="tax-shell__group">
-                    <div className="tax-shell__group-label">{t('employee.nav.groupPracticeSetup')}</div>
+                  <NavGroup groupKey="practice-setup" label={t('employee.nav.groupPracticeSetup')}>
                     {perm('manage_employees')       && navLink('staff',          `${base}/staff`,           t('employee.nav.staff'))}
                     {perm('manage_email_templates') && navLink('email-templates', `${base}/email-templates`, t('employee.nav.emailTemplates'))}
                     {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
                     {perm('view_audit_logs')        && navLink('audit',          `${base}/audit`,            t('employee.nav.audit'))}
-                  </div>
+                  </NavGroup>
                 )}
               </>
             )}
 
             {/* You group — personal / non-admin tools. */}
-            <div className="tax-shell__group">
-              <div className="tax-shell__group-label">{t('employee.nav.groupYou')}</div>
+            <NavGroup groupKey="you" label={t('employee.nav.groupYou')}>
               {navLink('profile', `${base}/profile`, t('employee.nav.profile'))}
               {navLink('help',    `${base}/help`,    t('employee.nav.help'))}
-            </div>
+            </NavGroup>
           </nav>
 
           <div className="tax-shell__footer">

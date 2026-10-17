@@ -373,6 +373,13 @@
   text-transform: uppercase; letter-spacing: .6px;
   padding: 4px 12px 6px;
 }
+.tax-shell__group-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%; background: transparent; border: 0; cursor: pointer;
+  font-family: inherit;
+}
+.tax-shell__group-toggle:hover { color: var(--tax-text); }
+.tax-shell__group-caret { font-size: 10px; color: var(--tax-muted); }
 .tax-shell__nav a, .tax-shell__nav button.tax-shell__nav-link {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px; border-radius: 8px;
