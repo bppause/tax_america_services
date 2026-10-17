@@ -353,7 +353,12 @@ export default function EmployeeShell({ community, active, children }) {
             <button type="button" className="tax-shell__menu-btn"
                     aria-label={t('employee.nav.openMenu')}
                     onClick={() => setMobileOpen(o => !o)}>☰</button>
-            <span style={{ fontWeight: 700 }}>{community?.name || ''}</span>
+            <span style={{ fontWeight: 700, flex: 1 }}>{community?.name || ''}</span>
+            {/* Mirrors the sidebar footer's switcher — the sidebar sits
+                off-screen behind the hamburger below 900px, so without
+                this the language toggle is invisible on a phone until
+                you open the drawer. */}
+            <LocaleSwitcher />
           </div>
           <main className="tax-shell__content">
             {employee && (
