@@ -1291,22 +1291,24 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // to a "Restore" affordance.
 // Mirror of AccessScopePill (on the list page) for the detail header.
 // Inline since it's tiny and the two pages don't otherwise share code.
-// Customer-facing powers a Site admin shouldn't have — revoked as a
-// group rather than just view_customers, so e.g. manage_leads can't
-// leave a stray customer-facing nav item visible.
-const SITE_ADMIN_CUSTOMER_KEYS = ['view_customers', 'manage_customers', 'manage_leads'];
-// Website/app powers a Site admin needs. The Public homepage / Practice
-// setup nav groups are gated on role==='admin' alone (not on these
-// permissions), so they still *render* even if one of these got
-// revoked by an earlier, unrelated permission tweak — but the specific
-// link stays hidden, which from the sidebar looks identical to "that
-// whole group is missing." Explicitly re-granting all of these when
-// picking Site admin guarantees a full, working website/app admin
-// regardless of whatever permissions this employee had before.
-const SITE_ADMIN_GRANTED_KEYS = [
-  'manage_services', 'manage_workflows', 'manage_email_templates',
-  'manage_settings', 'manage_employees', 'send_reminders', 'view_audit_logs',
+// A Site admin's scope is "Public homepage only" — every permission
+// gets revoked except manage_services (needed for the Services
+// catalog + WhatsApp template, both part of the public homepage).
+// Customer powers (view_customers, manage_customers, manage_leads) AND
+// practice-operations powers (manage_employees, manage_settings,
+// manage_email_templates, view_audit_logs, manage_workflows,
+// send_reminders) are both out of scope — the sidebar's Operations and
+// Practice setup groups are gated on view_customers precisely so a
+// site admin never sees either, regardless of these individual keys.
+const SITE_ADMIN_REVOKED_KEYS = [
+  'view_customers', 'manage_customers', 'manage_leads',
+  'manage_workflows', 'manage_email_templates', 'manage_settings',
+  'manage_employees', 'send_reminders', 'view_audit_logs',
 ];
+// Granted explicitly (not just "not revoked") so a one-off earlier
+// permission tweak can't quietly leave Services/WhatsApp missing from
+// a site admin's Public homepage group.
+const SITE_ADMIN_GRANTED_KEYS = ['manage_services'];
 
 // Editable role control — was a read-only badge until role had no
 // update path at all (set once at creation, no way to promote a staff
@@ -1330,7 +1332,7 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
   // admin" (so a plain re-pick wouldn't fire onChange at all).
   const applySiteAdminProfile = async () => {
     const nextPermissions = { ...(emp.permissions || {}) };
-    for (const k of SITE_ADMIN_CUSTOMER_KEYS) nextPermissions[k] = false;
+    for (const k of SITE_ADMIN_REVOKED_KEYS) nextPermissions[k] = false;
     for (const k of SITE_ADMIN_GRANTED_KEYS) delete nextPermissions[k];
     await taxApi.adminSetEmployeePermissions(auth, emp.id, nextPermissions);
   };
@@ -1345,12 +1347,13 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
       }
       if (next === 'site_admin') {
         await applySiteAdminProfile();
-      } else if (next === 'admin' && SITE_ADMIN_CUSTOMER_KEYS.some(k => emp.permissions?.[k] === false)) {
-        // Promoting to full admin restores every customer-facing power
-        // — otherwise picking "Admin" here would silently do nothing
-        // for a former site admin (they'd still be web-only underneath).
+      } else if (next === 'admin' && SITE_ADMIN_REVOKED_KEYS.some(k => emp.permissions?.[k] === false)) {
+        // Promoting to full admin restores every power Site admin
+        // revoked — otherwise picking "Admin" here would silently do
+        // nothing for a former site admin (they'd still be scoped to
+        // Public homepage underneath).
         const nextPermissions = { ...(emp.permissions || {}) };
-        for (const k of SITE_ADMIN_CUSTOMER_KEYS) delete nextPermissions[k];
+        for (const k of SITE_ADMIN_REVOKED_KEYS) delete nextPermissions[k];
         await taxApi.adminSetEmployeePermissions(auth, emp.id, nextPermissions);
       }
       onSaved();

@@ -173,8 +173,12 @@ export default function EmployeeShell({ community, active, children }) {
                     {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                     {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                     {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
-                    {perm('manage_employees')       && navLink('staff',    `${base}/staff`,            t('employee.nav.staff'))}
-                    {perm('manage_settings')        && navLink('settings', `${base}/settings`,         t('employee.nav.settings'))}
+                    {/* Staff/Settings are practice-operations powers — kept out
+                        of a site admin's scope even in Simple mode. */}
+                    {perm('view_customers') && perm('manage_employees') &&
+                      navLink('staff',    `${base}/staff`,    t('employee.nav.staff'))}
+                    {perm('view_customers') && perm('manage_settings') &&
+                      navLink('settings', `${base}/settings`, t('employee.nav.settings'))}
                   </div>
                 )}
               </>
@@ -212,8 +216,12 @@ export default function EmployeeShell({ community, active, children }) {
                 )}
 
                 {/* Practice setup — rarely touched. Templates, staff,
-                    community-wide toggles, audit trail. */}
-                {isAdmin && (
+                    community-wide toggles, audit trail. Hidden entirely
+                    (not just emptied out) for a site admin — these are
+                    practice-operations powers, outside the "public
+                    homepage only" scope a view_customers-revoked admin
+                    account is meant to have. */}
+                {isAdmin && perm('view_customers') && (
                   <div className="tax-shell__group">
                     <div className="tax-shell__group-label">{t('employee.nav.groupPracticeSetup')}</div>
                     {perm('manage_employees')       && navLink('staff',          `${base}/staff`,           t('employee.nav.staff'))}
