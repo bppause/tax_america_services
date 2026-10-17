@@ -6,6 +6,17 @@ import { taxApi } from '../api';
 import { firstNameOf, displayPersonName } from '../lib/personName';
 import ImpersonationBanner from './ImpersonationBanner';
 
+// One icon per nav key, shared by every group a link can appear in
+// (several keys — tasks, customers, staff, settings, service-catalog,
+// faqs — are reused across Simple/Detailed mode and the two "setup"
+// groups, so this stays a flat lookup rather than per-group literals).
+const NAV_ICON = {
+  dashboard: '🏠', tasks: '✅', progress: '📈', customers: '👥', leads: '📥',
+  'service-catalog': '🏷️', articles: '📰', faqs: '❓', staff: '🧑‍💼',
+  'email-templates': '✉️', settings: '⚙️', audit: '🗂️', news: '📣',
+  testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔',
+};
+
 // Collapsible sidebar section — remembers whether the user last left it
 // open or closed, per browser (localStorage), so returning to the app
 // keeps the menu exactly as they arranged it. `defaultCollapsed` only
@@ -143,9 +154,16 @@ export default function EmployeeShell({ community, active, children }) {
     .split(/\s+/).map(w => w[0] || '').join('').slice(0, 3).toUpperCase();
 
   const closeMobile = () => setMobileOpen(false);
+  // One glance ("what is this link for") + one hover ("what does it do")
+  // — icons make the sidebar scannable, the title attribute (native
+  // browser tooltip) spells out the action for anyone unsure.
   const navLink = (key, href, label, badge) => (
-    <a key={key} href={href} className={active === key ? 'active' : ''} onClick={closeMobile}>
-      <span>{label}</span>
+    <a key={key} href={href} className={active === key ? 'active' : ''} onClick={closeMobile}
+       title={t(`employee.nav.hint.${key}`)}>
+      <span className="tax-shell__nav-label">
+        <span aria-hidden="true" className="tax-shell__nav-icon">{NAV_ICON[key] || ''}</span>
+        <span>{label}</span>
+      </span>
       {badge != null && badge > 0 && <span className="tax-shell__badge">{badge}</span>}
     </a>
   );
