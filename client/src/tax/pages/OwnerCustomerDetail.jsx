@@ -2258,7 +2258,10 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
     // Completing requires a closing note — prompt up-front so the
     // round-trip never has to fail with notes_required_on_complete.
     const target = (tasks || []).find(t0 => t0.id === id);
-    const finalPatch = ensureCompletionNotes({ statuses, task: target || {}, patch, t });
+    const finalPatch = ensureCompletionNotes({
+      statuses, task: target || {}, patch, t,
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
+    });
     if (!finalPatch) return;
     try { await taxApi.adminUpdateTask(auth, id, finalPatch); load(); }
     catch (e) { setErr(e?.message || ''); }

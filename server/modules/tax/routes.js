@@ -8008,6 +8008,67 @@ ${closingHtml}
     res.json({ ok: true });
   });
 
+  // ── Collaborative task notes (Phase 4n.6x) ──────────────────────────────
+  //
+  // tax_tasks.notes stays a single legacy field (still gates completion —
+  // see notes_required_on_complete above) but the real notes UI is now a
+  // multi-author, append-only log here, mirroring /admin/customers/:id/notes.
+  // Any employee who can already edit the task (same scope rule as PATCH
+  // above: admin, the assignee, or staff visible on the task's customer)
+  // can read and add to it. No edit/delete in v1 — it's an audit trail.
+  async function requireTaskScope(req, res, taskId) {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return null;
+    const { data: cur } = await supabase.from('tax_tasks')
+      .select('id, community_id, customer_id, assigned_employee_id')
+      .eq('id', taskId).maybeSingle();
+    if (!cur) { res.status(404).json({ error: 'Task not found.' }); return null; }
+    if (cur.community_id !== emp.community_id) { res.status(403).json({ error: 'Wrong community.' }); return null; }
+    if (!isFullCustomerAdmin(emp)) {
+      const isMine = cur.assigned_employee_id === emp.id;
+      const inScope = cur.customer_id && (await canEmployeeSeeCustomer(emp, cur.customer_id));
+      if (!isMine && !inScope) { res.status(403).json({ error: 'Not authorized to view this task.' }); return null; }
+    }
+    return { emp, task: cur };
+  }
+
+  router.get('/admin/tasks/:id/notes', async (req, res) => {
+    const taskId = trim(req.params.id, 200);
+    const scope = await requireTaskScope(req, res, taskId); if (!scope) return;
+    const { data, error } = await supabase.from('tax_task_notes')
+      .select('id, body, author_email, author_name, author_role, created_at')
+      .eq('task_id', taskId)
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ notes: data || [] });
+  });
+
+  router.post('/admin/tasks/:id/notes', async (req, res) => {
+    const taskId = trim(req.params.id, 200);
+    const scope = await requireTaskScope(req, res, taskId); if (!scope) return;
+    const { emp, task } = scope;
+    const body = trim(req.body?.body || '', MAX_TEXT_LEN);
+    if (!body) return res.status(400).json({ error: 'Note body is required.' });
+
+    const noteId = 'tnote_' + uuidv4().slice(0, 12);
+    const row = {
+      id: noteId, community_id: task.community_id, task_id: taskId,
+      body,
+      author_email: emp.email || '',
+      author_name:  emp.name || emp.email || '',
+      author_role:  emp.role === 'admin' ? 'admin' : 'staff',
+    };
+    const { error } = await supabase.from('tax_task_notes').insert(row);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.task_note', entityId: noteId, action: 'create',
+        actorEmail: emp.email || '', actorName: emp.name || '',
+        after: { taskId, length: body.length },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, note: row });
+  });
+
   // POST /admin/tasks/:id/review
   // Body: { decision: 'approve'|'reject', note?: string }
   // The designated reviewer (or any admin) signs off on a task sitting
