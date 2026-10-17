@@ -2190,9 +2190,16 @@ ${closingHtml}
   }
 
   // Trim auto-generated recurring tasks whose due_date now falls
-  // outside the lookahead window. Only touches open
-  // (source='relationship_schedule', not completed, not archived)
-  // rows — completed history and manual one-offs are always preserved.
+  // outside the lookahead window. Only touches open (generator-created,
+  // not completed, not archived) rows — completed history and manual
+  // one-offs are always preserved. Matched by `period_key IS NOT NULL`
+  // rather than `source = 'relationship_schedule'`: the `source` column
+  // was added via an `ALTER TABLE ... DEFAULT 'manual'`, so any task row
+  // that existed before that migration — including true generator
+  // output from before the column existed — got silently stamped
+  // 'manual' and would never match a source-based filter. `period_key`
+  // is set ONLY by the generator (never by manual task creation), so it
+  // survives that history cleanly.
   async function pruneTasksBeyondLookahead({ communityId, lookaheadMonths }) {
     if (!isSupabaseConfigured || !communityId) return { deleted: 0 };
     const cutoff = new Date();
@@ -2201,7 +2208,7 @@ ${closingHtml}
     const { data: rows } = await supabase.from('tax_tasks')
       .select('id')
       .eq('community_id', communityId)
-      .eq('source', 'relationship_schedule')
+      .not('period_key', 'is', null)
       .is('archived_at', null)
       .is('completed_at', null)
       .gt('due_date', cutoffIso)
@@ -2240,11 +2247,14 @@ ${closingHtml}
   // leaves orphans on the board.
   async function removeTasksForRelationship({ customerId, relationshipTypeId, actorEmail = '', skipAudit = false }) {
     if (!customerId || !relationshipTypeId) return { deleted: 0 };
+    // Matched by period_key (generator-exclusive — see the comment on
+    // pruneTasksBeyondLookahead above) rather than source, which can be
+    // stale 'manual' on tasks that predate that column.
     const { data: cur } = await supabase.from('tax_tasks')
       .select('id')
       .eq('customer_id', customerId)
       .eq('relationship_type_id', relationshipTypeId)
-      .eq('source', 'relationship_schedule')
+      .not('period_key', 'is', null)
       .is('archived_at', null)
       .is('completed_at', null);
     const dropIds = (cur || []).map(t => t.id);
@@ -2399,11 +2409,17 @@ ${closingHtml}
 
   async function removeTasksForService({ customerId, productId, actorEmail = '' }) {
     if (!customerId || !productId) return { deleted: 0 };
+    // Matched by period_key (generator-exclusive — see the comment on
+    // pruneTasksBeyondLookahead above) rather than source, which can be
+    // stale 'manual' on tasks that predate that column. product_id
+    // alone isn't safe here — a manual task can also be tagged to a
+    // product, so period_key is what actually distinguishes generator
+    // output from a human-created task on the same customer+service.
     const { data: cur } = await supabase.from('tax_tasks')
       .select('id')
       .eq('customer_id', customerId)
       .eq('product_id', productId)
-      .eq('source', 'relationship_schedule')
+      .not('period_key', 'is', null)
       .is('archived_at', null)
       .is('completed_at', null);
     const dropIds = (cur || []).map(t => t.id);
