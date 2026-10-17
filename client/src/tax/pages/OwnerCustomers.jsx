@@ -212,16 +212,29 @@ export default function OwnerCustomers() {
   // current sort key — sort by last name → group by first letter of
   // last name; sort by first name → group by first letter of first
   // name. Search dissolves the grouping (flat results scan faster).
-  const [collapsedLetters, setCollapsedLetters] = useState(() => new Set());
-  const toggleLetter = (letter) => setCollapsedLetters(prev => {
+  //
+  // Letter sections default to collapsed (a long roster otherwise
+  // dumps every customer on screen at once). We track the opposite —
+  // which letters are explicitly expanded — and persist that set, so
+  // a letter the owner opened stays open on their next visit while any
+  // letter they've never touched (including a brand-new one once a
+  // customer lands in it) still starts collapsed.
+  const [expandedLetters, setExpandedLetters] = useState(() => {
+    try {
+      const raw = localStorage.getItem('tax.customers.expandedLetters');
+      if (raw) return new Set(JSON.parse(raw));
+    } catch { /* ignore */ }
+    return new Set();
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tax.customers.expandedLetters', JSON.stringify(Array.from(expandedLetters))); }
+    catch { /* ignore */ }
+  }, [expandedLetters]);
+  const toggleLetter = (letter) => setExpandedLetters(prev => {
     const next = new Set(prev);
     if (next.has(letter)) next.delete(letter); else next.add(letter);
     return next;
   });
-  // Reset collapse state when the sort key flips so a customer who was
-  // hiding under "Z" by last name doesn't end up hidden under a stale
-  // letter when they switch to first-name sort.
-  useEffect(() => { setCollapsedLetters(new Set()); }, [sortBy]);
 
   // The string we sort + bucket by, per customer. Falls through to
   // whichever name part is populated, and finally to the email so
@@ -697,16 +710,16 @@ export default function OwnerCustomers() {
               <CustomerSortBar sortBy={sortBy} setSortBy={setSortBy}
                                sortDir={sortDir} setSortDir={setSortDir}
                                grouping={grouping} t={t}
-                               onCollapseAll={() =>
+                               onCollapseAll={() => setExpandedLetters(new Set())}
+                               onExpandAll={() =>
                                  grouping.mode === 'grouped' &&
-                                 setCollapsedLetters(new Set(grouping.sections.map(s => s.letter)))}
-                               onExpandAll={() => setCollapsedLetters(new Set())} />
+                                 setExpandedLetters(new Set(grouping.sections.map(s => s.letter)))} />
               <div style={{ display: 'grid', gap: 14, opacity: loading ? 0.6 : 1 }}>
                 {grouping.mode === 'flat'
                   ? grouping.rows.map(c =>
                       <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t} />)
                   : grouping.sections.map(({ letter, rows }) => {
-                      const collapsed = collapsedLetters.has(letter);
+                      const collapsed = !expandedLetters.has(letter);
                       return (
                         <div key={letter} style={{ display: 'grid', gap: 6 }}>
                           <button type="button"
