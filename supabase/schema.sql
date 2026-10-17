@@ -3495,3 +3495,51 @@ update public.tax_help_articles set display_order = 170 where id = 'help.admin.a
 update public.tax_help_articles set display_order = 180 where id = 'help.admin.video_channels';
 update public.tax_help_articles set display_order = 190 where id = 'help.admin.articles_vs_news';
 update public.tax_help_articles set display_order = 200 where id = 'help.admin.audit';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Review required by default
+--
+-- requires_review (added above, Phase 4n.56) defaulted to false — owner
+-- review of a completed task was opt-in per task. Flipping the default
+-- to true so every task is held in pending-review state when it's
+-- marked complete, until the owner (or the task's designated reviewer,
+-- if one is set) approves it via POST /admin/tasks/:id/review. The
+-- per-task "Requires review" checkbox (Task detail → Progress) still
+-- lets anyone turn it off for a specific task that doesn't need it.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_tasks alter column requires_review set default true;
+
+-- Backfill tasks still in flight so the policy takes effect immediately
+-- instead of only on tasks created from here on. Already-completed
+-- tasks are left alone — there's nothing left to review there.
+update public.tax_tasks
+  set requires_review = true
+  where completed_at is null
+    and archived_at is null
+    and requires_review = false;
+
+-- Keep the help article in sync with the new default.
+update public.tax_help_articles set
+  body_i18n = '{"en":"Tasks is the daily work surface. Add task opens a modal with a customer typeahead (with inline ''+ New customer'' for admins), a service field that auto-fills from the customer''s first relationship, owner, priority, due date, and a notes box. Edit reopens the same modal in edit mode. Status changes inline via the chip dropdown.\n\nAuto-generated tasks come from relationship cadences and show the service name + period label. They behave the same as manual tasks; the owner assigns them, the team works them.\n\nHovering any task — Calendar, Kanban, the Tasks list, Today''s urgent list, Progress, or a customer''s own Tasks section — opens a summary card: customer, service, priority, due date, who it''s assigned to, whether they''ve viewed it, and the latest note. From that card you can email or WhatsApp the customer directly (pre-filled with a message referencing the task) and delete the task — admins, or whoever assigned it, after a confirmation. The same Delete and quick-contact buttons are also in the task''s edit modal.\n\nNotes on a task are collaborative: every entry keeps its author and timestamp instead of overwriting the last one. The edit modal shows the latest note first with a ''Show N earlier'' link and a count next to the Notes label. A closing note your status options require when completing a task is logged into that same history.\n\nCompleting a task doesn''t finish it outright — by default every task requires sign-off from an admin (or a specific reviewer you''ve assigned) before it counts as done. Moving a task to a terminal status holds it in a yellow ''Pending review'' state; the reviewer approves or sends it back with a note from the task''s Progress panel. Turn off ''Requires review'' there for a specific task that doesn''t need the extra step.\n\nProgress is the cross-service rollup at /employee/progress. KPI cards on top (Done / In progress / Open / Overdue), then per-customer rows that expand into each task — with the same hover summary and quick-contact available there too. Two filters at the top: Task owner and Customer; filters apply at the SQL layer so the KPIs and rollups recompute against the filtered set automatically.","es":"Tareas es la pantalla operativa diaria. Agregar tarea abre un modal con un selector de cliente (con ''+ Nuevo cliente'' inline para administradores), un servicio que se prellena desde la primera relación del cliente, responsable, prioridad, fecha de vencimiento y notas. Editar reabre el mismo modal en modo edición. El estado se cambia inline con el menú de chip.\n\nLas tareas generadas automáticamente provienen de las cadencias de las relaciones y muestran el nombre del servicio y la etiqueta del período. Se comportan igual que las tareas manuales; el dueño las asigna, el equipo las trabaja.\n\nAl pasar el cursor sobre cualquier tarea — Calendario, Kanban, la lista de Tareas, la lista urgente de Hoy, Progreso, o la sección de Tareas de un cliente — se abre una tarjeta resumen: cliente, servicio, prioridad, fecha de vencimiento, a quién está asignada, si ya la vio, y la última nota. Desde esa misma tarjeta puede enviar un correo o WhatsApp al cliente directamente (con un mensaje prellenado sobre la tarea) y eliminar la tarea — administradores, o quien la asignó, tras una confirmación. Los mismos botones de Eliminar y contacto rápido también están en el modal de edición de la tarea.\n\nLas notas en una tarea son colaborativas: cada entrada conserva su autor y fecha/hora en vez de sobrescribir la anterior. El modal de edición muestra la última nota primero con un enlace ''Mostrar N anteriores'' y un contador junto a la etiqueta Notas. Una nota de cierre que sus opciones de estado exijan al completar una tarea queda registrada en ese mismo historial.\n\nCompletar una tarea no la termina de inmediato — por defecto, toda tarea requiere la aprobación de un administrador (o de la persona específica que haya asignado como revisor) antes de contar como lista. Mover una tarea a un estado terminal la deja en un estado amarillo ''Pendiente de revisión''; el revisor la aprueba o la regresa con una nota desde el panel de Progreso de la tarea. Desactive ''Requiere revisión'' ahí para una tarea específica que no necesite este paso extra.\n\nProgreso es el panel cruzado por servicio en /employee/progress. Tarjetas KPI arriba (Listas / En curso / Sin iniciar / Vencidas), luego filas por cliente que se expanden a cada tarea — con la misma tarjeta resumen y contacto rápido disponibles ahí también. Dos filtros arriba: Responsable y Cliente; se aplican en SQL, así que los KPIs y resúmenes se recalculan automáticamente."}'::jsonb
+  where id = 'help.admin.tasks_progress';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Owner tier above admin
+--
+-- Any admin with the manage_employees permission (the default — it's
+-- granted unless explicitly revoked) could promote a staff member to
+-- admin, or create a brand-new admin outright, including through the
+-- "promote customer to staff" endpoint, which was gated on the weaker
+-- view_customers permission and could set role='admin' too. Narrow
+-- fix, not a new role tier: role stays 'staff' | 'admin' everywhere
+-- (no change to the many existing role === 'admin' checks across the
+-- app), and a new is_owner flag gates specifically "who can flag
+-- someone as admin" — set only on the practice owner.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_employees
+  add column if not exists is_owner boolean not null default false;
+
+update public.tax_employees
+  set is_owner = true
+  where community_id = 'tax-america-services'
+    and email = 'taxamericaservices@gmail.com';
