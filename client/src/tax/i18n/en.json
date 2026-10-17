@@ -1136,6 +1136,8 @@
   "owner.staff.fieldLocale": "Default language",
   "owner.staff.role.staff": "Staff (sees only assigned customers)",
   "owner.staff.role.admin": "Admin (sees every customer in the practice)",
+  "owner.staff.role.siteAdmin": "Site admin (manages the website & app only)",
+  "owner.staff.role.siteAdminHint": "Creates an admin with the \"View customers\" permission revoked — they can manage the public website and app settings (Services, Articles, FAQs, Staff, Settings) but never see customer or lead records. You can change this later from their Permissions tab.",
   "owner.staff.createBtn": "Create staff member",
   "owner.staff.sendWelcomeEmail": "Send welcome email with sign-in link",
   "owner.staff.sendWelcomeEmailHint": "Sent in their selected language. Includes a link to the staff portal and instructions to sign in with Google or create a password.",

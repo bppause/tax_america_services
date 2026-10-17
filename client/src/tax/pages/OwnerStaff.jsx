@@ -33,13 +33,20 @@ export default function OwnerStaff() {
     if (!form.email.trim()) { setMsg({ kind: 'error', text: t('owner.customers.errEmailRequired') }); return; }
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
+      // "Site admin" is role=admin with the view_customers permission
+      // pre-revoked — a one-step shortcut for the person who should
+      // manage the public website/app but never see customer data,
+      // instead of creating a regular admin and then finding that
+      // toggle in the permissions editor afterward.
+      const isSiteAdmin = form.role === 'site_admin';
       const result = await taxApi.adminCreateEmployee(auth, {
         communitySlug: community.id,
         email: form.email.trim().toLowerCase(),
         firstName: form.firstName.trim(),
         middleName: form.middleName.trim(),
         lastName: form.lastName.trim(),
-        role: form.role,
+        role: isSiteAdmin ? 'admin' : form.role,
+        permissions: isSiteAdmin ? { view_customers: false } : undefined,
         locale: form.locale,
         sendWelcomeEmail: form.sendWelcomeEmail,
       });
@@ -136,6 +143,7 @@ export default function OwnerStaff() {
                       onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
                 <option value="staff">{t('owner.staff.role.staff')}</option>
                 <option value="admin">{t('owner.staff.role.admin')}</option>
+                <option value="site_admin">{t('owner.staff.role.siteAdmin')}</option>
               </select>
             </div>
             <div>
@@ -147,6 +155,14 @@ export default function OwnerStaff() {
               </select>
             </div>
           </div>
+          {form.role === 'site_admin' && (
+            <p style={{
+              color: 'var(--tax-muted)', fontSize: 13, margin: '0 0 8px',
+              padding: '8px 10px', background: 'var(--tax-bg-alt)', borderRadius: 6,
+            }}>
+              {t('owner.staff.role.siteAdminHint')}
+            </p>
+          )}
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0', cursor: 'pointer' }}>
             <input type="checkbox" checked={form.sendWelcomeEmail}
                    onChange={e => setForm(p => ({ ...p, sendWelcomeEmail: e.target.checked }))} />

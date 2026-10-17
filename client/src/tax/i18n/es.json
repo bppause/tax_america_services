@@ -1135,6 +1135,8 @@
   "owner.staff.fieldLocale": "Idioma predeterminado",
   "owner.staff.role.staff": "Personal (ve solo los clientes asignados)",
   "owner.staff.role.admin": "Administrador (ve a todos los clientes de la oficina)",
+  "owner.staff.role.siteAdmin": "Administrador del sitio (solo gestiona el sitio web y la app)",
+  "owner.staff.role.siteAdminHint": "Crea un administrador con el permiso \"Ver clientes\" revocado — puede gestionar el sitio web público y la configuración de la app (Servicios, Artículos, FAQs, Personal, Configuración) pero nunca ve registros de clientes ni de prospectos. Puede cambiarlo después desde su pestaña de Permisos.",
   "owner.staff.createBtn": "Crear miembro del personal",
   "owner.staff.sendWelcomeEmail": "Enviar correo de bienvenida con enlace de acceso",
   "owner.staff.sendWelcomeEmailHint": "Se envía en su idioma seleccionado. Incluye un enlace al portal del personal e instrucciones para iniciar sesión con Google o crear una contraseña.",
