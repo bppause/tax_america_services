@@ -1107,8 +1107,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
   };
   useEffect(load, [taskId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onSubmit = async (e) => {
-    e.preventDefault();
+  const onSubmit = async () => {
     const body = draft.trim();
     if (!body) return;
     setBusy(true); setErr('');
@@ -1124,17 +1123,24 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
   return (
     <div>
       <label>{t('owner.tasks.field.notes')}</label>
-      <form onSubmit={onSubmit} style={{ marginTop: 4, marginBottom: 10 }}>
+      {/* Plain div, not <form> — this renders inside TaskFormModal's own
+          outer <form>, and a nested <form> is invalid HTML; clicking this
+          submit button was triggering the outer form's handler instead
+          (a no-op in edit mode), so the note never actually posted. */}
+      <div style={{ marginTop: 4, marginBottom: 10 }}>
         <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(); }
+                  }}
                   rows={2} maxLength={4000}
                   placeholder={t('owner.tasks.notes.placeholder')} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
-          <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm"
-                  disabled={busy || !draft.trim()}>
+          <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                  onClick={onSubmit} disabled={busy || !draft.trim()}>
             {busy ? t('lead.submitting') : t('owner.tasks.notes.addBtn')}
           </button>
         </div>
-      </form>
+      </div>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
@@ -1600,8 +1606,7 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, status
     finally { setTimeBusy(false); }
   };
 
-  const onLogManual = async (e) => {
-    e.preventDefault();
+  const onLogManual = async () => {
     if (!manualStart || !manualEnd) return;
     setTimeBusy(true); setTimeErr('');
     try {
@@ -1812,7 +1817,10 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, status
           </div>
         )}
         {showLogForm && (
-          <form onSubmit={onLogManual} style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+          // Plain div, not <form> — this renders inside TaskFormModal's
+          // own outer <form>, and nested <form> elements are invalid
+          // HTML (same bug class fixed in TaskNotesSection above).
+          <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
             <div className="tax-form__row2">
               <div>
                 <label style={{ fontSize: 11 }}>{t('owner.tasks.progress.start')}</label>
@@ -1825,10 +1833,11 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, status
             </div>
             <input type="text" placeholder={t('owner.tasks.progress.notePlaceholder')}
                    value={manualNote} onChange={e => setManualNote(e.target.value)} maxLength={4000} />
-            <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm" disabled={timeBusy}>
+            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm" disabled={timeBusy}
+                    onClick={onLogManual}>
               {t('owner.tasks.progress.addEntry')}
             </button>
-          </form>
+          </div>
         )}
         {timeErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{timeErr}</div>}
         {entries && entries.length > 0 && (
