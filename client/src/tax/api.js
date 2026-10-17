@@ -265,6 +265,9 @@ export const taxApi = {
   adminSetEmployeePermissions(auth, id, permissions) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/permissions`, { permissions }, auth, { admin: true });
   },
+  adminSetEmployeeRole(auth, id, role) {
+    return request('PUT', `/admin/employees/${encodeURIComponent(id)}/role`, { role }, auth, { admin: true });
+  },
   adminSetEmployeePublicProfile(auth, id, payload) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/public-profile`, payload, auth, { admin: true });
   },

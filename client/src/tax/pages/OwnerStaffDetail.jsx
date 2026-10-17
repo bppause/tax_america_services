@@ -82,15 +82,9 @@ export default function OwnerStaffDetail({ employeeId }) {
       <a href={back} style={{ fontSize: 14, color: 'var(--tax-muted)' }}>← {t('owner.staff.back')}</a>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginTop: 8 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h2 style={{ margin: 0, marginBottom: 4 }}>
-            {displayPersonName(emp) || emp.email}
-            <span style={{
-              marginLeft: 12, padding: '2px 10px', borderRadius: 999,
-              background: emp.role === 'admin' ? 'var(--tax-brand-primary)' : 'var(--tax-bg-alt)',
-              color: emp.role === 'admin' ? '#fff' : 'var(--tax-muted)',
-              fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
-              verticalAlign: 'middle',
-            }}>{emp.role}</span>
+          <h2 style={{ margin: 0, marginBottom: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <span>{displayPersonName(emp) || emp.email}</span>
+            <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
           </h2>
           {/* One-sentence summary of what this person can see, right under
@@ -1296,6 +1290,64 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // to a "Restore" affordance.
 // Mirror of AccessScopePill (on the list page) for the detail header.
 // Inline since it's tiny and the two pages don't otherwise share code.
+// Editable role control — was a read-only badge until role had no
+// update path at all (set once at creation, no way to promote a staff
+// member to admin afterward). "Site admin" bundles role=admin with
+// view_customers revoked in one pick, same as the Add Staff form's
+// three-way picker, instead of requiring two separate trips (change
+// role here, then find the toggle in Permissions below).
+function RoleSwitcher({ emp, me, auth, onSaved, t }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSelf = emp.id === me?.id;
+  const value = emp.role !== 'admin' ? 'staff'
+    : (emp.permissions?.view_customers === false ? 'site_admin' : 'admin');
+
+  const onChange = async (next) => {
+    if (next === value) return;
+    setBusy(true); setErr('');
+    try {
+      const nextRole = next === 'staff' ? 'staff' : 'admin';
+      if (nextRole !== emp.role) {
+        await taxApi.adminSetEmployeeRole(auth, emp.id, nextRole);
+      }
+      if (next === 'site_admin' && emp.permissions?.view_customers !== false) {
+        await taxApi.adminSetEmployeePermissions(auth, emp.id,
+          { ...(emp.permissions || {}), view_customers: false });
+      } else if (next === 'admin' && emp.permissions?.view_customers === false) {
+        // Promoting a former site admin to full admin restores customer
+        // visibility — otherwise picking "Admin" here would silently do
+        // nothing (they'd still be a web-only admin underneath).
+        const { view_customers, ...rest } = emp.permissions || {};
+        await taxApi.adminSetEmployeePermissions(auth, emp.id, rest);
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <select value={value} disabled={busy || isSelf}
+              onChange={e => onChange(e.target.value)}
+              title={isSelf ? t('owner.staffDetail.role.selfHint') : undefined}
+              style={{
+                padding: '2px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+                textTransform: 'uppercase', cursor: isSelf ? 'not-allowed' : 'pointer',
+                border: '1px solid var(--tax-border)',
+                background: value === 'staff' ? 'var(--tax-bg-alt)' : 'var(--tax-brand-primary)',
+                color: value === 'staff' ? 'var(--tax-muted)' : '#fff',
+              }}>
+        <option value="staff">{t('owner.staffDetail.role.staff')}</option>
+        <option value="admin">{t('owner.staffDetail.role.admin')}</option>
+        <option value="site_admin">{t('owner.staffDetail.role.siteAdmin')}</option>
+      </select>
+      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
+    </span>
+  );
+}
+
 function DetailAccessScopePill({ emp, t }) {
   if (emp.status === 'archived') return null;
   const isAdmin = emp.role === 'admin';
