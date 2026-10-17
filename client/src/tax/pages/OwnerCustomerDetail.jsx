@@ -396,21 +396,21 @@ export default function OwnerCustomerDetail({ customerId }) {
                          onChanged={() => setTasksRefreshKey(k => k + 1)} />
       </SectionCard>
 
-      {/* Open by default — this is the merged "what's happened with this
-          customer" feed (notes, signatures, filings, messages, email
-          opens, service/relationship changes). It used to live at the
-          bottom of the page labeled "Recent threads", which made it
-          read like a messages-only section and buried the one place
-          that actually answers "what's the history here?". */}
-      <SectionCard title={t('owner.customer.section.activity')} icon="🧭" storageKey="activity" defaultOpen>
-        <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
-      </SectionCard>
-
       <SectionCard title={t('owner.customer.section.tasks')} icon="✅" storageKey="tasks">
         <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
                       isAdmin={employee?.role === 'admin'} locale={locale} t={t}
                       refreshKey={tasksRefreshKey}
                       onOpenReportDrawer={(opts) => setReportDrawer(opts)} />
+      </SectionCard>
+
+      {/* This is the merged "what's happened with this customer" feed
+          (notes, signatures, filings, messages, email opens,
+          service/relationship changes). It used to live at the bottom
+          of the page labeled "Recent threads", which made it read like
+          a messages-only section and buried the one place that
+          actually answers "what's the history here?". */}
+      <SectionCard title={t('owner.customer.section.activity')} icon="🧭" storageKey="activity">
+        <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
       </SectionCard>
 
       <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊" storageKey="bookkeeping"
