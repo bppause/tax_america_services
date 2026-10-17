@@ -76,10 +76,18 @@ export default function OwnerSettings() {
       // on some older rows), so surface exactly what the server saw
       // this time instead of guessing a third filter blind.
       if (r?.pruneDebug) parts.push(`debug: ${JSON.stringify(r.pruneDebug)}`);
-      setMsg({ kind: 'success', text: parts.join(' · ') });
+      const text = parts.join(' · ');
+      setMsg({ kind: 'success', text });
       load();
+      // Also returned to the caller — LookaheadEditor shows this inline,
+      // right next to the field, since the shared `msg` banner above
+      // renders at the very top of a long page and is easy to scroll
+      // past without noticing, which is exactly what happened last time.
+      return { kind: 'success', text };
     } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+      const text = e?.message || t('respond.error.generic');
+      setMsg({ kind: 'error', text });
+      return { kind: 'error', text };
     } finally { setBusy(false); }
   };
   const onSaveThresholds = async (vals) => {
@@ -106,10 +114,13 @@ export default function OwnerSettings() {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
       const r = await taxApi.adminRefreshTasks(auth);
-      setMsg({ kind: 'success',
-        text: t('owner.settings.lookahead.refreshed', { scanned: r.scanned || 0, created: r.created || 0 }) });
+      const text = t('owner.settings.lookahead.refreshed', { scanned: r.scanned || 0, created: r.created || 0 });
+      setMsg({ kind: 'success', text });
+      return { kind: 'success', text };
     } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+      const text = e?.message || t('respond.error.generic');
+      setMsg({ kind: 'error', text });
+      return { kind: 'error', text };
     } finally { setBusy(false); }
   };
 
@@ -1774,6 +1785,10 @@ function Field({ id, label, type, value, onChange, placeholder, hint }) {
 function LookaheadEditor({ initial, busy, onSave, onRefresh, t }) {
   const [draft, setDraft] = useState(String(initial));
   useEffect(() => { setDraft(String(initial)); }, [initial]);
+  // Shown right here, not just in the page-top banner — that banner is
+  // easy to scroll past on a long settings page (confirmed: it was
+  // firing correctly, just invisible above the fold).
+  const [localMsg, setLocalMsg] = useState(null); // { kind, text } | null
 
   // Auto-save 1.2s after the owner stops typing a valid value — no
   // explicit Save button. "Refresh tasks now" below stays a deliberate
@@ -1781,10 +1796,18 @@ function LookaheadEditor({ initial, busy, onSave, onRefresh, t }) {
   useEffect(() => {
     const n = Number(draft);
     if (!Number.isFinite(n) || n < 1 || n > 24 || n === Number(initial)) return;
-    const id = setTimeout(() => { onSave(Math.max(1, Math.min(24, Math.round(n)))); }, 1200);
+    const id = setTimeout(async () => {
+      const result = await onSave(Math.max(1, Math.min(24, Math.round(n))));
+      if (result) setLocalMsg(result);
+    }, 1200);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
+
+  const onRefreshClick = async () => {
+    const result = await onRefresh();
+    if (result) setLocalMsg(result);
+  };
 
   return (
     <div style={{ display: 'grid', gap: 10, maxWidth: 560 }}>
@@ -1793,10 +1816,17 @@ function LookaheadEditor({ initial, busy, onSave, onRefresh, t }) {
         <input type="number" min="1" max="24" value={draft}
                onChange={e => setDraft(e.target.value)} disabled={busy}
                style={{ width: 80, padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+        {busy && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>{t('lead.submitting')}</span>}
       </label>
+      {localMsg && (
+        <div className={`tax-msg tax-msg--${localMsg.kind === 'error' ? 'error' : 'success'}`}
+             style={{ fontSize: 12, wordBreak: 'break-word' }}>
+          {localMsg.text}
+        </div>
+      )}
       <div>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                disabled={busy} onClick={onRefresh}
+                disabled={busy} onClick={onRefreshClick}
                 style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
           {t('owner.settings.lookahead.refreshNow')}
         </button>
