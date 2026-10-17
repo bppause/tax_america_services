@@ -1112,6 +1112,19 @@ function TaskFormModal({
   const [suggestions, setSuggestions] = useState([]);
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [defaultProductHint, setDefaultProductHint] = useState(null);
+  // Only close on a genuine backdrop click — i.e. the mousedown AND the
+  // click both landed directly on the backdrop, not inside the panel. A
+  // plain onClick==onClose on the backdrop also fires when a drag that
+  // *starts* inside the panel (selecting text in Notes, dragging a date
+  // picker, etc.) happens to release past the panel's edge, since the
+  // browser's synthesized click target becomes the shared ancestor —
+  // the backdrop itself. That's what made the modal feel like it closed
+  // on an ordinary click.
+  const backdropMouseDownRef = useRef(false);
+  const onBackdropMouseDown = (e) => { backdropMouseDownRef.current = e.target === e.currentTarget; };
+  const onBackdropClick = (e) => {
+    if (backdropMouseDownRef.current && e.target === e.currentTarget) onClose();
+  };
 
   useEffect(() => {
     const product = products.find(p => p.id === productId);
@@ -1230,7 +1243,8 @@ function TaskFormModal({
   };
 
   return (
-    <div className="tax-modal" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="tax-modal" role="dialog" aria-modal="true"
+         onMouseDown={onBackdropMouseDown} onClick={onBackdropClick}>
       <div className="tax-modal__panel" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
         <button type="button" className="tax-modal__close"
                 onClick={onClose} aria-label={t('preview.close')}>×</button>
