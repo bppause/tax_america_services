@@ -22,7 +22,7 @@ const CATEGORY_KEY = {
 // or closed, per browser (localStorage), keyed by `storageKey` so each
 // of this page's many sections tracks its own state independently.
 // Collapsed by default on a first visit (no stored preference yet).
-function SectionCard({ title, icon, children, action, storageKey }) {
+function SectionCard({ title, icon, children, action, storageKey, defaultOpen = false }) {
   const lsKey = `tax.customerDetail.${storageKey}.open`;
   const [open, setOpen] = useState(() => {
     try {
@@ -30,7 +30,7 @@ function SectionCard({ title, icon, children, action, storageKey }) {
       if (saved === '1') return true;
       if (saved === '0') return false;
     } catch { /* ignore */ }
-    return false;
+    return defaultOpen;
   });
   useEffect(() => {
     try { localStorage.setItem(lsKey, open ? '1' : '0'); } catch { /* ignore */ }
@@ -383,7 +383,29 @@ export default function OwnerCustomerDetail({ customerId }) {
       {/* Modern header card */}
       <CustomerHeaderCard c={c} auth={auth} community={community} load={load} t={t} />
 
-      {/* Flat section cards — task-first order */}
+      {/* Flat section cards — ordered by how most often a staff member
+          needs them while actually managing the relationship: who the
+          customer is, what we do for them, the full history of that
+          relationship, then the day-to-day/operational sections. */}
+      <SectionCard title={t('owner.customer.section.profile')} icon="👤" storageKey="profile">
+        <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
+      </SectionCard>
+
+      <SectionCard title={t('owner.customer.section.services')} icon="🏷️" storageKey="services">
+        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t}
+                         onChanged={() => setTasksRefreshKey(k => k + 1)} />
+      </SectionCard>
+
+      {/* Open by default — this is the merged "what's happened with this
+          customer" feed (notes, signatures, filings, messages, email
+          opens, service/relationship changes). It used to live at the
+          bottom of the page labeled "Recent threads", which made it
+          read like a messages-only section and buried the one place
+          that actually answers "what's the history here?". */}
+      <SectionCard title={t('owner.customer.section.activity')} icon="🧭" storageKey="activity" defaultOpen>
+        <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
+      </SectionCard>
+
       <SectionCard title={t('owner.customer.section.tasks')} icon="✅" storageKey="tasks">
         <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
                       isAdmin={employee?.role === 'admin'} locale={locale} t={t}
@@ -401,11 +423,6 @@ export default function OwnerCustomerDetail({ customerId }) {
         <BookkeepingReportsSummary auth={auth} customerId={customerId} refreshKey={summaryRefreshKey}
           scrollToId={scrollToReportId} onScrolled={() => setScrollToReportId(null)}
           onOpen={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })} />
-      </SectionCard>
-
-      <SectionCard title={t('owner.customer.section.services')} icon="🏷️" storageKey="services">
-        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t}
-                         onChanged={() => setTasksRefreshKey(k => k + 1)} />
       </SectionCard>
 
       <SectionCard title={t('owner.customer.inquiry.heading')} icon="📤" storageKey="inquiry">
@@ -428,14 +445,6 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <SectionCard title={t('owner.customer.section.assignments')} icon="👥" storageKey="assignments">
         <AssignmentsSection data={data} t={t} />
-      </SectionCard>
-
-      <SectionCard title={t('owner.customer.section.threads')} icon="🕐" storageKey="threads">
-        <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
-      </SectionCard>
-
-      <SectionCard title={t('owner.customer.section.profile')} icon="👤" storageKey="profile">
-        <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
       </SectionCard>
 
       <ReportEditorDrawer
