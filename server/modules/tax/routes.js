@@ -11946,11 +11946,16 @@ ${closingHtml}
     // manual resend); the client gets it via the create response.
     const isExistingUser = await hasExistingAccountForEmail(email, communitySlug);
 
+    // Optional at creation — lets the Add Staff form offer a one-step
+    // "Site admin (manage website only)" option instead of requiring a
+    // second trip to the permissions editor to revoke view_customers.
+    const permissions = sanitizePermissions(body.permissions);
+
     const id = 'emp_' + uuidv4().slice(0, 12);
     const { error } = await supabase.from('tax_employees').insert({
       id, community_id: communitySlug, email,
       name: np.name, first_name: np.first, middle_name: np.middle, last_name: np.last,
-      role, locale,
+      role, locale, permissions,
     });
     if (error) return sendSupabaseError(res, error);
 
