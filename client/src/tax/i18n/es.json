@@ -749,7 +749,7 @@
   "owner.tasks.progress.reviewPending": "Pendiente de revisión",
   "owner.tasks.progress.reviewChangesRequested": "Cambios solicitados",
   "owner.tasks.progress.requiresReview": "Requiere revisión antes de contar como hecha",
-  "owner.tasks.progress.reviewerAny": "Cualquier administrador",
+  "owner.tasks.progress.reviewerAny": "El propietario",
   "owner.tasks.progress.reviewerIs": "Revisor: {name}",
   "owner.tasks.progress.reviewNotePlaceholder": "Agrega una nota (opcional para aprobar, útil al solicitar cambios)",
   "owner.tasks.progress.approve": "Aprobar",

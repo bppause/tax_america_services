@@ -78,6 +78,7 @@ export default function OwnerTasks() {
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
   const isAdmin = employee?.role === 'admin';
+  const isOwner = !!employee?.is_owner;
   // Settings → Admin/staff view. Simple mode locks this page to a plain
   // list: no Kanban/Calendar/Periods, no bulk actions, no blocked-by/
   // review/time-tracking panel in the edit modal.
@@ -340,7 +341,7 @@ export default function OwnerTasks() {
       {editingTask && (
         <TaskFormModal
           mode="edit" task={editingTask}
-          auth={auth} community={community} isAdmin={isAdmin}
+          auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner}
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
           tasks={tasks} employeeId={employee?.id || ''}
@@ -1216,7 +1217,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 // service from the customer's first active relationship (best-effort —
 // stays blank if no workflow rule chains to a product).
 function TaskFormModal({
-  mode, task, auth, community, isAdmin,
+  mode, task, auth, community, isAdmin, isOwner,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
@@ -1568,7 +1569,7 @@ function TaskFormModal({
 
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks} employees={employees}
-                                isAdmin={isAdmin} employeeId={employeeId}
+                                isAdmin={isAdmin} isOwner={isOwner} employeeId={employeeId}
                                 statuses={statuses} currentStatusKey={statusKey}
                                 onSetStatus={onProgressSetStatus}
                                 auth={auth} locale={locale} t={t} />
@@ -1616,7 +1617,7 @@ function TaskFormModal({
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so starting a timer or
 // approving a review never risks closing the modal.
-function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
   // ── Time tracking ──────────────────────────────────────────────────────
   const [entries, setEntries] = useState(null);
   const [totalSeconds, setTotalSeconds] = useState(0);
@@ -1727,7 +1728,10 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, employeeId, status
   const approved = reviewDecision === 'approve' || !!task.reviewed_at;
   const changesRequested = reviewDecision === 'reject';
   const pendingReview = !approved && !changesRequested && !!task.pending_review_at && !task.reviewed_at;
-  const isReviewer = isAdmin || (task.reviewer_employee_id && task.reviewer_employee_id === employeeId);
+  // The owner can always review; any other admin only if they're the
+  // specific reviewer this task was delegated to — matches the server
+  // gate on POST /admin/tasks/:id/review.
+  const isReviewer = isOwner || (task.reviewer_employee_id && task.reviewer_employee_id === employeeId);
   const reviewerEmp = employees.find(e => e.id === reviewerEmployeeId);
 
   const onSetRequiresReview = async (val) => {

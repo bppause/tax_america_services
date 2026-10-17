@@ -750,7 +750,7 @@
   "owner.tasks.progress.reviewPending": "Pending review",
   "owner.tasks.progress.reviewChangesRequested": "Changes requested",
   "owner.tasks.progress.requiresReview": "Requires review before it counts as done",
-  "owner.tasks.progress.reviewerAny": "Any admin",
+  "owner.tasks.progress.reviewerAny": "The owner",
   "owner.tasks.progress.reviewerIs": "Reviewer: {name}",
   "owner.tasks.progress.reviewNotePlaceholder": "Add a note (optional for approve, helpful when requesting changes)",
   "owner.tasks.progress.approve": "Approve",

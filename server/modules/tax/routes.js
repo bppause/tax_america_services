@@ -339,7 +339,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.get('x-tax-community') || '', 200);
     if (uid && email && communitySlug) {
       const { data: emp } = await supabase.from('tax_employees')
-        .select('id, community_id, email, role, status, firebase_uid, permissions')
+        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner')
         .eq('email', email).eq('community_id', communitySlug).maybeSingle();
       if (emp && emp.status === 'active' && emp.role === 'admin' &&
           (!emp.firebase_uid || emp.firebase_uid === uid)) {
@@ -355,6 +355,13 @@ module.exports = function createTaxRouter(deps) {
     }
     res.status(403).json({ error: 'Admin authentication required.' });
     return null;
+  }
+
+  // A global admin (env- or DB-level, not tied to a specific community
+  // employee row) outranks any community owner, so they always pass.
+  // Otherwise only the employee row flagged is_owner does.
+  function actorIsOwner(actor) {
+    return actor?.source === 'global' || !!actor?.employee?.is_owner;
   }
 
   // ── GET /community/:slug ────────────────────────────────────────────────────
@@ -2653,10 +2660,21 @@ ${closingHtml}
   // /employee/me) lights up automatically. Sends the welcome email by
   // default — owner can suppress with sendWelcomeEmail: false.
   router.post('/admin/customers/:id/promote-to-staff', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
+    // manage_employees, not view_customers — this creates an employee
+    // row (with a role), so it needs the same gate the dedicated
+    // employee-creation endpoint uses, not the weaker "can see
+    // customers" permission that let any admin bypass it.
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    if (!actor) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const role = body.role === 'admin' ? 'admin' : 'staff';
+    if (role === 'admin' && !actorIsOwner(actor)) {
+      return res.status(403).json({
+        error: 'owner_required',
+        message: 'Only the practice owner can create an admin account.',
+      });
+    }
     const overrideName = trim(body.name || '', MAX_NAME_LEN);
     const sendWelcome = body.sendWelcomeEmail === false ? false : true;
 
@@ -2688,7 +2706,7 @@ ${closingHtml}
     try {
       await auditLog({
         entity: 'tax.employee', entityId: empId, action: 'promote_from_customer',
-        actorEmail: '',
+        actorEmail: actor.email || '',
         after: { customerId, role, email: cust.email, community: cust.community_id },
       });
     } catch (_e) {}
@@ -8258,12 +8276,14 @@ ${closingHtml}
       .eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    // Reviewer or admin can sign off. Staff who happen to be assigned
-    // to the task but aren't the designated reviewer can't approve
-    // their own work — separation of duties is the point of the queue.
+    // The owner signs off by default — not just any admin — unless the
+    // task was delegated to a specific reviewer, who can sign off
+    // regardless of owner status. Staff who happen to be assigned to
+    // the task but aren't the designated reviewer can't approve their
+    // own work — separation of duties is the point of the queue.
     const isReviewer = cur.reviewer_employee_id && cur.reviewer_employee_id === emp.id;
-    if (emp.role !== 'admin' && !isReviewer) {
-      return res.status(403).json({ error: 'Only the designated reviewer (or an admin) can review this task.' });
+    if (!emp.is_owner && !isReviewer) {
+      return res.status(403).json({ error: 'Only the owner (or this task\'s designated reviewer) can review this task.' });
     }
     if (!cur.pending_review_at || cur.reviewed_at) {
       return res.status(409).json({ error: 'This task is not awaiting review.' });
@@ -8308,7 +8328,10 @@ ${closingHtml}
       .is('archived_at', null)
       .order('pending_review_at', { ascending: true })
       .limit(50);
-    if (!isFullCustomerAdmin(emp)) q = q.eq('reviewer_employee_id', emp.id);
+    // The owner sees every task awaiting review; anyone else only sees
+    // the ones specifically delegated to them — matches who can
+    // actually act on POST /admin/tasks/:id/review.
+    if (!emp.is_owner) q = q.eq('reviewer_employee_id', emp.id);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
     const tasks = (data || []).filter(t0 => t0.customer?.status !== 'archived');
@@ -11274,7 +11297,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -11290,7 +11313,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -11327,6 +11350,7 @@ ${closingHtml}
       address: e.address || {},
       preferredCommunicationEmail: e.preferred_communication_email || '',
       locale: e.locale, role: e.role, status: e.status,
+      is_owner: !!e.is_owner,
       notificationChannels: Array.isArray(e.notification_channels) ? e.notification_channels : ['in_app'],
       notificationPrefs: (e.notification_prefs && typeof e.notification_prefs === 'object') ? e.notification_prefs : {},
       // Effective permissions map. Only revoked keys are stored
@@ -12184,12 +12208,19 @@ ${closingHtml}
   });
 
   router.post('/admin/employees', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res, 'manage_employees'))) return;
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    if (!actor) return;
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
     const email = trim(body.email, 200).toLowerCase();
     const np = resolveNamePayload(body);
     const role = (body.role === 'admin') ? 'admin' : 'staff';
+    if (role === 'admin' && !actorIsOwner(actor)) {
+      return res.status(403).json({
+        error: 'owner_required',
+        message: 'Only the practice owner can create an admin account.',
+      });
+    }
     const locale = (body.locale === 'es') ? 'es' : 'en';
     // Default ON — mirrors the customer add flow. Owner can uncheck to add
     // a staff row without notifying them (e.g., seeding before go-live).
@@ -12299,6 +12330,16 @@ ${closingHtml}
     const { data: existing } = await supabase.from('tax_employees')
       .select('id, email, community_id, role').eq('id', empId).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+
+    // Only the owner can promote someone to admin. Demoting an existing
+    // admin back to staff stays open to any admin with manage_employees —
+    // that direction isn't the risky one.
+    if (role === 'admin' && existing.role !== 'admin' && !actorIsOwner(actor)) {
+      return res.status(403).json({
+        error: 'owner_required',
+        message: 'Only the practice owner can promote someone to admin.',
+      });
+    }
 
     // Block an owner-admin from demoting themselves — only path back
     // would be direct DB access.
