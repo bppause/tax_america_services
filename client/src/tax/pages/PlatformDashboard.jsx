@@ -11,7 +11,7 @@ import LocaleSwitcher from '../components/LocaleSwitcher';
 // flow from within that community's UI).
 export default function PlatformDashboard() {
   const { t } = useT();
-  const { email, signOut } = useTaxPlatformAuth();
+  const { email, signOut, switchAccount } = useTaxPlatformAuth();
   const auth = { uid: '', email };
 
   const [communities, setCommunities] = useState(null);
@@ -40,6 +40,10 @@ export default function PlatformDashboard() {
           <nav className="tax-nav">
             <LocaleSwitcher />
             <span style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{email}</span>
+            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={switchAccount}
+                    title={t('employee.switchAccount.hint')}>
+              {t('employee.switchAccount')}
+            </button>
             <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={signOut}>
               {t('portal.signout')}
             </button>

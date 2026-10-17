@@ -168,6 +168,8 @@
   "portal.switchToStaff": "→ Switch to staff view",
   "portal.switchToOwner": "→ Switch to owner view",
   "employee.switchToCustomer": "→ Switch to customer view",
+  "employee.switchAccount": "Switch account",
+  "employee.switchAccount.hint": "Sign out and sign in as a different user",
   "portal.greeting": "Welcome, {name}",
   "portal.login.title": "Sign in to your portal",
   "portal.login.subtitle": "Access your filings, send the information we need, and update your contact preferences.",

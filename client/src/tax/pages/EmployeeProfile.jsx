@@ -3,6 +3,7 @@ import { hasSavedLocale, pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { parsePersonName } from '../lib/personName';
 
 const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
 function normalizeWhatsappForCheck(raw) {
@@ -38,10 +39,15 @@ export default function EmployeeProfile() {
     if (!employee) return;
     const a = employee.address || {};
     const ch = Array.isArray(employee.notificationChannels) ? employee.notificationChannels : ['in_app'];
+    // Legacy rows store only `name` until the server-side backfill splits it
+    // into first/middle/last — without this fallback the fields render blank
+    // even though the greeting elsewhere (firstNameOf) already shows a name.
+    const hasStructuredName = !!(employee.first_name || employee.middle_name || employee.last_name);
+    const parsedName = hasStructuredName ? null : parsePersonName(employee.name);
     setForm({
-      firstName: employee.first_name || '',
-      middleName: employee.middle_name || '',
-      lastName: employee.last_name || '',
+      firstName: employee.first_name || parsedName?.first || '',
+      middleName: employee.middle_name || parsedName?.middle || '',
+      lastName: employee.last_name || parsedName?.last || '',
       phone: employee.phone || '',
       whatsapp: employee.whatsapp || '',
       preferredEmail: employee.preferredCommunicationEmail || '',

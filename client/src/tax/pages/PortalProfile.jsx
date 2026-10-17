@@ -3,6 +3,7 @@ import { hasSavedLocale, pickI18n, useT } from '../i18n';
 import { useTaxAuth } from '../auth/AuthProvider';
 import { taxApi } from '../api';
 import PortalShell from '../components/PortalShell';
+import { parsePersonName } from '../lib/personName';
 
 const CATEGORY_KEY = {
   business: 'portal.profile.category.business',
@@ -41,10 +42,15 @@ export default function PortalProfile() {
   useEffect(() => {
     if (!customer) return;
     const a = customer.address || {};
+    // Legacy rows store only `name` until the server-side backfill splits it
+    // into first/middle/last — without this fallback the fields render blank
+    // even though other displays (which already fall back to `name`) show one.
+    const hasStructuredName = !!(customer.first_name || customer.middle_name || customer.last_name);
+    const parsedName = hasStructuredName ? null : parsePersonName(customer.name);
     setForm({
-      firstName: customer.first_name || '',
-      middleName: customer.middle_name || '',
-      lastName: customer.last_name || '',
+      firstName: customer.first_name || parsedName?.first || '',
+      middleName: customer.middle_name || parsedName?.middle || '',
+      lastName: customer.last_name || parsedName?.last || '',
       phone: customer.phone || '',
       whatsapp: customer.whatsapp || '',
       preferredEmail: customer.preferredCommunicationEmail || '',

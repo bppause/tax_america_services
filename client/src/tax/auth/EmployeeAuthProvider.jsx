@@ -10,7 +10,7 @@
 // using the impersonation token.
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { onTaxAuthChanged, signOutTax, firebaseReady } from './firebase';
+import { onTaxAuthChanged, signOutTax, signInWithGoogle, firebaseReady } from './firebase';
 import { taxApi, getImpersonation, clearImpersonation } from '../api';
 
 const EmpAuthCtx = createContext({
@@ -18,6 +18,7 @@ const EmpAuthCtx = createContext({
   status: 'loading', error: '',
   impersonation: null,
   signOut: () => {},
+  switchAccount: () => {},
   refreshMe: () => {},
   exitImpersonation: () => {},
 });
@@ -115,6 +116,18 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
     setFbUser(null); setMe(null); setStatus('unauthenticated');
   }, [impersonation]);
 
+  // One-click "log out and log in as another user": signs out of the
+  // current Firebase session, then immediately reopens the Google account
+  // picker (prompt=select_account, set in firebase.js) instead of leaving
+  // the operator to sign out and separately click "Sign in" again. Not
+  // offered during impersonation — that has its own exit flow above.
+  const switchAccount = useCallback(async () => {
+    if (impersonation) return;
+    try { await signOutTax(); } catch (_e) {}
+    setFbUser(null); setMe(null); setStatus('unauthenticated');
+    try { await signInWithGoogle(); } catch (_e) { /* picker closed/cancelled — stay signed out */ }
+  }, [impersonation]);
+
   const exitImpersonation = useCallback(async () => {
     if (!impersonation) return;
     const { token, communitySlug: cs, realAdminEmail, realAdminUid } = impersonation;
@@ -141,7 +154,7 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
     customerAccess: me?.customerAccess || { hasCustomerRow: false },
     impersonation,
     status, error, redirectTo,
-    signOut, refreshMe, exitImpersonation,
+    signOut, switchAccount, refreshMe, exitImpersonation,
   };
   return <EmpAuthCtx.Provider value={value}>{children}</EmpAuthCtx.Provider>;
 }

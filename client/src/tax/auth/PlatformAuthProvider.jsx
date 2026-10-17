@@ -12,6 +12,7 @@ import { onTaxAuthChanged, signInWithGoogle, signOutTax, firebaseReady } from '.
 import { taxApi } from '../api';
 
 const PlatformAuthCtx = createContext({
+  switchAccount: () => {},
   fbUser: null,
   email: '',
   status: 'loading',
@@ -65,11 +66,22 @@ export function TaxPlatformAuthProvider({ children }) {
     setFbUser(null); setStatus('unauthenticated');
   }, []);
 
+  // One-click "log out and log in as another user" — signs out, then
+  // immediately reopens the Google account picker (prompt=select_account,
+  // set in firebase.js) rather than leaving the admin to sign out and
+  // separately click "Sign in" again.
+  const switchAccount = useCallback(async () => {
+    try { await signOutTax(); } catch (_e) {}
+    setFbUser(null); setStatus('unauthenticated');
+    try { await signInWithGoogle(); }
+    catch (e) { setError(e?.message || 'Sign-in failed.'); setStatus('error'); }
+  }, []);
+
   const value = {
     fbUser,
     email: fbUser?.email || '',
     status, error,
-    signIn, signOut,
+    signIn, signOut, switchAccount,
   };
   return <PlatformAuthCtx.Provider value={value}>{children}</PlatformAuthCtx.Provider>;
 }

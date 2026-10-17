@@ -168,6 +168,8 @@
   "portal.switchToStaff": "→ Cambiar a vista del personal",
   "portal.switchToOwner": "→ Cambiar a vista del dueño",
   "employee.switchToCustomer": "→ Cambiar a vista de cliente",
+  "employee.switchAccount": "Cambiar de cuenta",
+  "employee.switchAccount.hint": "Cerrar sesión e iniciar sesión como otro usuario",
   "portal.greeting": "Bienvenido/a, {name}",
   "portal.login.title": "Inicie sesión en su portal",
   "portal.login.subtitle": "Acceda a sus declaraciones, envíe la información que necesitamos y actualice sus preferencias de contacto.",
