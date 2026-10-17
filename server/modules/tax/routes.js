@@ -11065,7 +11065,9 @@ ${closingHtml}
 
   function pickEmployee(e) {
     return {
-      id: e.id, email: e.email, name: e.name, phone: e.phone,
+      id: e.id, email: e.email, name: e.name,
+      first_name: e.first_name || '', middle_name: e.middle_name || '', last_name: e.last_name || '',
+      phone: e.phone,
       whatsapp: e.whatsapp || '',
       address: e.address || {},
       preferredCommunicationEmail: e.preferred_communication_email || '',
@@ -12756,6 +12758,7 @@ ${closingHtml}
   function pickCustomer(c) {
     return {
       id: c.id, email: c.email, name: c.name,
+      first_name: c.first_name || '', middle_name: c.middle_name || '', last_name: c.last_name || '',
       phone: c.phone, whatsapp: c.whatsapp || '',
       address: c.address || {},
       preferredCommunicationEmail: c.preferred_communication_email || '',
