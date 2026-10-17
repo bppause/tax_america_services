@@ -700,7 +700,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
     const freshRows = serverRows.filter(r => !knownIds.has(r.id));
     let fi = 0;
     return list.map(row => {
-      if (row.id || (!row.titleEn.trim() && !row.titleEs.trim())) return row;
+      if (row.id || !row.titleEn.trim()) return row;
       const match = freshRows[fi];
       if (match) { fi += 1; return { ...row, id: match.id }; }
       return row;
@@ -712,7 +712,10 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
     try {
       const d = await taxApi.adminReplaceAutoTasks(auth, p.id, list.map((at, i) => ({
         id: at.id || undefined,
-        titleI18n: { en: at.titleEn.trim(), es: at.titleEs.trim() },
+        // Auto-tasks are internal/staff-facing only — a single English
+        // name, mirrored into both locale slots so Spanish-locale
+        // displays (which fall back to `en` anyway) stay consistent.
+        titleI18n: { en: at.titleEn.trim(), es: at.titleEn.trim() },
         descriptionI18n: { en: at.descriptionEn.trim(), es: at.descriptionEs.trim() },
         cadenceKind: at.cadenceKind,
         anchorRule: buildAnchorRuleFromForm(at),
@@ -742,7 +745,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
 
   const addAutoTask = () => setAutoTasks(prev => [...prev, {
     id: null, localKey: nextAutoTaskLocalKey(),
-    titleEn: '', titleEs: '', descriptionEn: '', descriptionEs: '',
+    titleEn: '', descriptionEn: '', descriptionEs: '',
     cadenceKind: 'monthly', day: '15', weekday: '1', month: '1',
     defaultPriority: 'normal', defaultAssigneeEmployeeId: '',
   }]);
@@ -750,13 +753,13 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
     const next = autoTasks.map((at, i) => i === idx ? { ...at, ...patch } : at);
     setAutoTasks(next);
     const row = next[idx];
-    // Blanking out both title fields on an already-saved row would
-    // otherwise get silently deleted server-side on the next save (the
-    // server drops title-less rows from its bulk-replace) — including
-    // its open generated customer tasks. Require the explicit Remove
+    // Blanking out the name on an already-saved row would otherwise
+    // get silently deleted server-side on the next save (the server
+    // drops title-less rows from its bulk-replace) — including its
+    // open generated customer tasks. Require the explicit Remove
     // button (with its confirm) for that instead of an accidental
     // auto-save doing it.
-    if (row.id && !row.titleEn.trim() && !row.titleEs.trim()) return;
+    if (row.id && !row.titleEn.trim()) return;
     scheduleAutoTasksSave(next);
   };
   // Removing a row that's already on the server deletes it (and its
@@ -986,8 +989,9 @@ function normalizeAutoTaskForEdit(row) {
     // on `id` directly would remount AutoTaskEditor at that moment,
     // collapsing the row the owner is still mid-edit on.
     localKey: row.id || nextAutoTaskLocalKey(),
-    titleEn: row.title_i18n?.en || '',
-    titleEs: row.title_i18n?.es || '',
+    // Prefer `en`; fall back to a legacy row's `es` (from before this
+    // was English-only) so an older auto-task's name doesn't appear blank.
+    titleEn: row.title_i18n?.en || row.title_i18n?.es || '',
     descriptionEn: row.description_i18n?.en || '',
     descriptionEs: row.description_i18n?.es || '',
     cadenceKind: row.cadence_kind || 'monthly',
@@ -1025,7 +1029,7 @@ function AutoTaskEditor({ value: at, index, serviceName, employees = [], onChang
     catch { return []; }
   }, [at.cadenceKind, at.day, at.weekday, at.month]);
 
-  const titleLive = at.titleEn || at.titleEs || `${t('owner.services.autoTasks.untitled')} #${index + 1}`;
+  const titleLive = at.titleEn || `${t('owner.services.autoTasks.untitled')} #${index + 1}`;
 
   // Single-line cadence summary for the collapsed header — e.g.
   // "Monthly · day 15", "Annual · Jan 15", "Weekly · Monday".
@@ -1095,25 +1099,14 @@ function AutoTaskEditor({ value: at, index, serviceName, employees = [], onChang
       {expanded && (
       <>
 
-      <div className="tax-form__row2">
-        <div>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
-            {t('owner.services.autoTasks.titleEn')}
-          </label>
-          <input type="text" value={at.titleEn} maxLength={200}
-                 onChange={e => onChange({ titleEn: e.target.value })}
-                 placeholder="e.g. Monthly reconciliation"
-                 style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-        </div>
-        <div>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
-            {t('owner.services.autoTasks.titleEs')}
-          </label>
-          <input type="text" value={at.titleEs} maxLength={200}
-                 onChange={e => onChange({ titleEs: e.target.value })}
-                 placeholder="p. ej. Conciliación mensual"
-                 style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-        </div>
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {t('owner.services.autoTasks.titleEn')}
+        </label>
+        <input type="text" value={at.titleEn} maxLength={200}
+               onChange={e => onChange({ titleEn: e.target.value })}
+               placeholder="e.g. Monthly reconciliation"
+               style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
       </div>
 
       <div className="tax-form__row2">
