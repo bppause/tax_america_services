@@ -86,6 +86,7 @@ export default function OwnerStaffDetail({ employeeId }) {
           <h2 style={{ margin: 0, marginBottom: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
             <span>{displayPersonName(emp) || emp.email}</span>
             <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
+            <OwnerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
           </h2>
           {/* One-sentence summary of what this person can see, right under
@@ -1402,6 +1403,58 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
           {t('owner.staffDetail.role.repair')}
         </button>
       )}
+      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
+    </span>
+  );
+}
+
+// "Owner" sits above admin — only an owner can create or promote
+// another admin, and only an owner can sign off a task someone else
+// completed (no delegation to a non-owner admin). Self-service hand-off
+// so granting it doesn't require another database migration: the
+// current owner grants it here, the same way RoleSwitcher promotes
+// staff to admin. Anyone who isn't an owner just sees a read-only
+// badge when the row they're viewing has it.
+function OwnerToggle({ emp, me, auth, onSaved, t }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSelf = emp.id === me?.id;
+
+  if (!me?.is_owner) {
+    return emp.is_owner ? (
+      <span style={{
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', background: '#fef3c7', color: '#92400e',
+      }}>{t('owner.staffDetail.owner.badge')}</span>
+    ) : null;
+  }
+  if (emp.role !== 'admin') return null; // only an admin can be made owner
+
+  const onChange = async (next) => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminSetEmployeeOwner(auth, emp.id, next);
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <label style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', cursor: (busy || (isSelf && emp.is_owner)) ? 'not-allowed' : 'pointer',
+        background: emp.is_owner ? '#fef3c7' : 'var(--tax-bg-alt)',
+        color: emp.is_owner ? '#92400e' : 'var(--tax-muted)',
+      }} title={isSelf && emp.is_owner ? t('owner.staffDetail.owner.selfHint') : undefined}>
+        <input type="checkbox" checked={!!emp.is_owner}
+               disabled={busy || (isSelf && emp.is_owner)}
+               onChange={e => onChange(e.target.checked)}
+               style={{ margin: 0 }} />
+        {t('owner.staffDetail.owner.badge')}
+      </label>
       {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
     </span>
   );

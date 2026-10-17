@@ -3543,3 +3543,44 @@ update public.tax_employees
   set is_owner = true
   where community_id = 'tax-america-services'
     and email = 'taxamericaservices@gmail.com';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Pending review as a visible status, not a hidden hold
+--
+-- Previously: completing a task under review moved status_key straight
+-- to the terminal status the preparer picked (e.g. "Completed"), with
+-- only pending_review_at (invisible outside the task's own edit modal)
+-- holding completed_at back. Kanban/list/calendar all read status_key,
+-- so a task sitting in review looked identical to one that was actually
+-- done. Now the task parks on a real "Pending review" status instead —
+-- review_target_status_key remembers what the preparer actually asked
+-- for, restored when the reviewer approves.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_tasks
+  add column if not exists review_target_status_key text;
+
+insert into public.tax_task_status_options (id, community_id, key, label_i18n, color, display_order, is_terminal)
+select 'tstat_' || c.id || '_pending_review', c.id, 'pending_review',
+  '{"en":"Pending review","es":"Pendiente de revisión"}'::jsonb, '#f59e0b', 9999, false
+from public.communities c
+where c.business_type = 'tax'
+  and not exists (
+    select 1 from public.tax_task_status_options o
+    where o.community_id = c.id and o.key = 'pending_review'
+  );
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Owner-controlled review-override switch
+--
+-- "All tasks require owner review" is the fixed rule — requires_review
+-- already defaults to true on every task. What's new here is a single
+-- per-community master switch, owner-only to flip, that decides whether
+-- anyone is even ALLOWED to turn requires_review off on an individual
+-- task. Off (the default) means review is mandatory with no exceptions —
+-- the per-task checkbox is locked. On means the owner has opted into
+-- letting admins exempt specific tasks, same as before this switch
+-- existed. Defaults to false so no existing community silently gains an
+-- escape hatch it didn't ask for.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.communities
+  add column if not exists tax_task_review_override_enabled boolean not null default false;

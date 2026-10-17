@@ -3897,6 +3897,51 @@ ${closingHtml}
     res.json({ ok: true, enabled });
   });
 
+  // Owner-only master switch for the per-task review-override checkbox.
+  // Off (default): requires_review is locked true on every task — the
+  // PATCH /admin/tasks/:id handler below refuses any attempt to flip it
+  // off, regardless of who asks. On: admins regain the ability to
+  // exempt an individual task from review, as before this switch
+  // existed. Gated stricter than manage_settings — any admin with that
+  // permission can reach every other community-settings toggle, but
+  // this one is reserved for the owner, matching the rest of the
+  // owner-tier gating (admin creation/promotion, task-review approval).
+  router.put('/admin/community-settings/task-review-override-enabled', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_settings');
+    if (!actor) return;
+    if (!actorIsOwner(actor)) {
+      return res.status(403).json({ error: 'owner_required', message: 'Only the owner can change this setting.' });
+    }
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const enabled = Boolean(req.body?.enabled);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { error } = await supabase.from('communities')
+      .update({ tax_task_review_override_enabled: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: enabled ? 'task_review_override_enable' : 'task_review_override_disable',
+        actorEmail: actor.email || '',
+      });
+    } catch (_e) {}
+    res.json({ ok: true, enabled });
+  });
+
+  // Helper: read the review-override master switch for a community.
+  // Used by PATCH /admin/tasks/:id to decide whether a requiresReview:
+  // false request is even allowed.
+  async function communityTaskReviewOverrideEnabled(communityId) {
+    if (!communityId) return false;
+    try {
+      const { data } = await supabase.from('communities')
+        .select('tax_task_review_override_enabled')
+        .eq('id', communityId).maybeSingle();
+      return data?.tax_task_review_override_enabled === true;
+    } catch { return false; }
+  }
+
   // ── Phase 4b admin endpoints ───────────────────────────────────────────────
 
   // GET /admin/community-settings?communitySlug=  — companion read for the
@@ -3923,6 +3968,7 @@ ${closingHtml}
         tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
         tax_news_refresh_interval_days, tax_ai_features_enabled, tax_ui_mode,
+        tax_task_review_override_enabled,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
@@ -8065,6 +8111,26 @@ ${closingHtml}
     res.json({ ok: true, id, task: row });
   });
 
+  // Makes sure a community has a "Pending review" status row to park a
+  // task on while it awaits review, creating one on first use if the
+  // schema migration hasn't run for this community yet (e.g. a
+  // community created after it). Key is always 'pending_review'.
+  async function ensurePendingReviewStatus(communityId) {
+    const { data: existing } = await supabase.from('tax_task_status_options')
+      .select('key').eq('community_id', communityId).eq('key', 'pending_review').maybeSingle();
+    if (existing) return 'pending_review';
+    const { data: maxRow } = await supabase.from('tax_task_status_options')
+      .select('display_order').eq('community_id', communityId)
+      .order('display_order', { ascending: false }).limit(1).maybeSingle();
+    await supabase.from('tax_task_status_options').insert({
+      id: 'tstat_' + uuidv4().slice(0, 12),
+      community_id: communityId, key: 'pending_review',
+      label_i18n: { en: 'Pending review', es: 'Pendiente de revisión' },
+      color: '#f59e0b', display_order: (maxRow?.display_order ?? 0) + 10, is_terminal: false,
+    });
+    return 'pending_review';
+  }
+
   // PATCH /admin/tasks/:id — partial update.
   router.patch('/admin/tasks/:id', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
@@ -8110,7 +8176,20 @@ ${closingHtml}
       if (v === taskId) return res.status(400).json({ error: 'A task cannot block itself.' });
       update.blocked_by_task_id = v || null;
     }
-    if (body.requiresReview !== undefined) update.requires_review = !!body.requiresReview;
+    if (body.requiresReview !== undefined) {
+      const wantsOff = !body.requiresReview;
+      // Review is mandatory by default; only the community's own
+      // owner-controlled override switch can unlock turning it off for
+      // a given task. Turning it back on is always allowed — tightening
+      // never needs permission.
+      if (wantsOff && !(await communityTaskReviewOverrideEnabled(cur.community_id))) {
+        return res.status(403).json({
+          error: 'review_override_disabled',
+          message: 'Owner review is mandatory for every task — ask the owner to enable the override in Settings first.',
+        });
+      }
+      update.requires_review = !!body.requiresReview;
+    }
     if (body.reviewerEmployeeId !== undefined) {
       update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
     }
@@ -8119,10 +8198,13 @@ ${closingHtml}
     // gates run first:
     //   1) Blocker must be completed — refusing the transition surfaces
     //      a clear "Finish X before completing this" error.
-    //   2) When requires_review is on, hold the task in pending-review
-    //      state instead of completing. The status_key still moves
-    //      (so the board reflects the preparer's call), but completed_at
-    //      stays null until the reviewer approves via /admin/tasks/:id/review.
+    //   2) When requires_review is on, park the task on a visible
+    //      "Pending review" status instead of the terminal one the
+    //      preparer picked — Kanban/list/calendar all read status_key,
+    //      so leaving it on the terminal status made a task awaiting
+    //      review look identical to one that was actually done.
+    //      review_target_status_key remembers what was actually
+    //      requested, so approval can restore it.
     if (update.status_key && update.status_key !== cur.status_key) {
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
@@ -8151,6 +8233,8 @@ ${closingHtml}
           ? update.requires_review : cur.requires_review)
           && !cur.reviewed_at;
         if (stillRequiresReview) {
+          update.review_target_status_key = update.status_key;
+          update.status_key = await ensurePendingReviewStatus(cur.community_id);
           update.pending_review_at = new Date().toISOString();
           // completed_at stays null until the reviewer approves.
         } else {
@@ -8158,6 +8242,7 @@ ${closingHtml}
         }
       } else {
         update.completed_at = null;
+        update.review_target_status_key = null;
         // Re-opening a previously pending task clears the in-flight
         // review state — reviewer has to re-approve once it's done again.
         if (cur.pending_review_at && !cur.reviewed_at) {
@@ -8259,10 +8344,10 @@ ${closingHtml}
 
   // POST /admin/tasks/:id/review
   // Body: { decision: 'approve'|'reject', note?: string }
-  // The designated reviewer (or any admin) signs off on a task sitting
-  // in pending-review state. Approve completes the task; reject clears
-  // pending_review_at + stores the rejection note so the preparer can
-  // pick it back up.
+  // Only the owner signs off on a task sitting in pending-review state —
+  // no delegation to another admin. Approve completes the task; reject
+  // clears pending_review_at + stores the rejection note so the
+  // preparer can pick it back up.
   router.post('/admin/tasks/:id/review', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const taskId = trim(req.params.id, 200);
@@ -8272,30 +8357,42 @@ ${closingHtml}
       return res.status(400).json({ error: 'decision must be approve or reject.' });
     }
     const { data: cur } = await supabase.from('tax_tasks')
-      .select('id, community_id, reviewer_employee_id, pending_review_at, reviewed_at, status_key, notes')
+      .select('id, community_id, pending_review_at, reviewed_at, status_key, notes, review_target_status_key')
       .eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    // The owner signs off by default — not just any admin — unless the
-    // task was delegated to a specific reviewer, who can sign off
-    // regardless of owner status. Staff who happen to be assigned to
-    // the task but aren't the designated reviewer can't approve their
-    // own work — separation of duties is the point of the queue.
-    const isReviewer = cur.reviewer_employee_id && cur.reviewer_employee_id === emp.id;
-    if (!emp.is_owner && !isReviewer) {
-      return res.status(403).json({ error: 'Only the owner (or this task\'s designated reviewer) can review this task.' });
+    // Only the owner can sign off — no delegation to another admin,
+    // regardless of who's assigned to the task. Separation of duties
+    // is the point of the queue: the person doing the work, even an
+    // admin, never approves their own (or anyone else's) completion.
+    if (!emp.is_owner) {
+      return res.status(403).json({ error: 'Only the owner can review this task.' });
     }
     if (!cur.pending_review_at || cur.reviewed_at) {
       return res.status(409).json({ error: 'This task is not awaiting review.' });
     }
     const nowIso = new Date().toISOString();
-    const update = { updated_at: nowIso, review_note: note };
+    const update = { updated_at: nowIso, review_note: note, review_target_status_key: null };
     if (decision === 'approve') {
       update.reviewed_at = nowIso;
       update.reviewed_by_employee_id = emp.id;
       update.completed_at = nowIso;
+      // Restore the terminal status the preparer actually asked for —
+      // status_key was parked on "Pending review" while this was in
+      // flight.
+      update.status_key = cur.review_target_status_key || cur.status_key;
     } else {
       update.pending_review_at = null; // back to in-flight; preparer fixes and re-completes
+      // Move off "Pending review" back to a working status so the
+      // board doesn't show a stuck task with nothing actionable left
+      // to do about it.
+      const { data: statusOpts } = await supabase.from('tax_task_status_options')
+        .select('key, display_order, is_terminal')
+        .eq('community_id', cur.community_id)
+        .order('display_order', { ascending: true });
+      const reopenStatus = (statusOpts || [])
+        .find(s => !s.is_terminal && s.key !== 'pending_review')?.key;
+      if (reopenStatus) update.status_key = reopenStatus;
     }
     const { error } = await supabase.from('tax_tasks').update(update).eq('id', taskId);
     if (error) return sendSupabaseError(res, error);
@@ -8315,6 +8412,10 @@ ${closingHtml}
   // Admins see every task awaiting review in their community.
   router.get('/admin/tasks/awaiting-review', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    // Only the owner can act on a review, so only the owner gets a
+    // list — showing anyone else a queue they can't touch is just
+    // confusing.
+    if (!emp.is_owner) return res.json({ tasks: [] });
     let q = supabase.from('tax_tasks')
       .select(`
         id, title, due_date, priority, status_key, customer_id, product_id, pending_review_at,
@@ -8328,10 +8429,6 @@ ${closingHtml}
       .is('archived_at', null)
       .order('pending_review_at', { ascending: true })
       .limit(50);
-    // The owner sees every task awaiting review; anyone else only sees
-    // the ones specifically delegated to them — matches who can
-    // actually act on POST /admin/tasks/:id/review.
-    if (!emp.is_owner) q = q.eq('reviewer_employee_id', emp.id);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
     const tasks = (data || []).filter(t0 => t0.customer?.status !== 'archived');
@@ -12181,7 +12278,7 @@ ${closingHtml}
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -12365,6 +12462,57 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, role });
+  });
+
+  // PUT /admin/employees/:id/owner — grant or revoke owner status.
+  // Self-service version of the one-off SQL seed: lets the current
+  // owner hand the role to someone else (or add a second owner)
+  // without needing a schema migration every time. Only an existing
+  // owner (or a global admin) can call this.
+  router.put('/admin/employees/:id/owner', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    if (!actor) return;
+    if (!actorIsOwner(actor)) {
+      return res.status(403).json({
+        error: 'owner_required',
+        message: 'Only the owner can grant or revoke owner status.',
+      });
+    }
+    const empId = trim(req.params.id, 200);
+    const nextIsOwner = !!req.body?.isOwner;
+
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, email, community_id, role, is_owner').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+
+    if (nextIsOwner && existing.role !== 'admin') {
+      return res.status(400).json({ error: 'must_be_admin', message: 'Only an admin can be made owner.' });
+    }
+    // Block revoking your own owner status — same lockout guard as role
+    // and manage_employees. If you want to hand it off, grant it to
+    // someone else first, then revoke your own from their account.
+    if (actor.source === 'employee' && actor.employee?.id === empId && !nextIsOwner) {
+      return res.status(409).json({
+        error: 'cannot_revoke_self',
+        message: 'You can\'t revoke your own owner status — grant it to someone else first.',
+      });
+    }
+
+    if (nextIsOwner === existing.is_owner) return res.json({ ok: true, is_owner: nextIsOwner });
+
+    const { error } = await supabase.from('tax_employees')
+      .update({ is_owner: nextIsOwner, updated_at: new Date().toISOString() })
+      .eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'set_owner',
+        actorEmail: actor.email || '',
+        before: { is_owner: existing.is_owner }, after: { is_owner: nextIsOwner },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, is_owner: nextIsOwner });
   });
 
   // PUT /admin/employees/:id/public-profile — owner sets the homepage

@@ -85,6 +85,11 @@ export default function OwnerTasks() {
   const isSimple = community?.tax_ui_mode === 'simple';
 
   const [statuses, setStatuses] = useState([]);
+  // Owner-controlled master switch — whether the "Requires review"
+  // checkbox on a task is even allowed to be turned off. Admin-only
+  // data (community-settings is admin-gated), fetched alongside the
+  // other reference lists below.
+  const [reviewOverrideEnabled, setReviewOverrideEnabled] = useState(false);
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -251,12 +256,16 @@ export default function OwnerTasks() {
       isAdmin
         ? taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id }).catch(() => ({ types: [] }))
         : Promise.resolve({ types: [] }),
-    ]).then(([s, e, c, p, rt]) => {
+      isAdmin
+        ? taxApi.adminGetCommunitySettings(auth, community.id).catch(() => ({ settings: {} }))
+        : Promise.resolve({ settings: {} }),
+    ]).then(([s, e, c, p, rt, cs]) => {
       setStatuses(s.statuses || []);
       setEmployees((e.employees || []).filter(em => em.status !== 'archived'));
       setCustomers(c.customers || []);
       setProducts(p.products || []);
       setRelationshipTypes((rt.types || []).filter(r => r.active !== false));
+      setReviewOverrideEnabled(!!cs.settings?.tax_task_review_override_enabled);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
@@ -342,6 +351,7 @@ export default function OwnerTasks() {
         <TaskFormModal
           mode="edit" task={editingTask}
           auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner}
+          reviewOverrideEnabled={reviewOverrideEnabled}
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
           tasks={tasks} employeeId={employee?.id || ''}
@@ -1217,7 +1227,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 // service from the customer's first active relationship (best-effort —
 // stays blank if no workflow rule chains to a product).
 function TaskFormModal({
-  mode, task, auth, community, isAdmin, isOwner,
+  mode, task, auth, community, isAdmin, isOwner, reviewOverrideEnabled,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
@@ -1568,8 +1578,9 @@ function TaskFormModal({
           )}
 
           {isEdit && !isSimple && (
-            <TaskProgressPanel task={task} tasks={tasks} employees={employees}
+            <TaskProgressPanel task={task} tasks={tasks}
                                 isAdmin={isAdmin} isOwner={isOwner} employeeId={employeeId}
+                                reviewOverrideEnabled={reviewOverrideEnabled}
                                 statuses={statuses} currentStatusKey={statusKey}
                                 onSetStatus={onProgressSetStatus}
                                 auth={auth} locale={locale} t={t} />
@@ -1617,7 +1628,7 @@ function TaskFormModal({
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so starting a timer or
 // approving a review never risks closing the modal.
-function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOverrideEnabled, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
   // ── Time tracking ──────────────────────────────────────────────────────
   const [entries, setEntries] = useState(null);
   const [totalSeconds, setTotalSeconds] = useState(0);
@@ -1717,7 +1728,6 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeI
 
   // ── Review ──────────────────────────────────────────────────────────────
   const [requiresReview, setRequiresReview] = useState(!!task.requires_review);
-  const [reviewerEmployeeId, setReviewerEmployeeId] = useState(task.reviewer_employee_id || '');
   const [reviewConfigBusy, setReviewConfigBusy] = useState(false);
   const [reviewConfigErr, setReviewConfigErr] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
@@ -1728,23 +1738,14 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeI
   const approved = reviewDecision === 'approve' || !!task.reviewed_at;
   const changesRequested = reviewDecision === 'reject';
   const pendingReview = !approved && !changesRequested && !!task.pending_review_at && !task.reviewed_at;
-  // The owner can always review; any other admin only if they're the
-  // specific reviewer this task was delegated to — matches the server
-  // gate on POST /admin/tasks/:id/review.
-  const isReviewer = isOwner || (task.reviewer_employee_id && task.reviewer_employee_id === employeeId);
-  const reviewerEmp = employees.find(e => e.id === reviewerEmployeeId);
+  // Only the owner can review — no delegation to another admin, matches
+  // the server gate on POST /admin/tasks/:id/review.
+  const isReviewer = isOwner;
 
   const onSetRequiresReview = async (val) => {
     setRequiresReview(val);
     setReviewConfigBusy(true); setReviewConfigErr('');
     try { await taxApi.adminUpdateTask(auth, task.id, { requiresReview: val }); }
-    catch (e) { setReviewConfigErr(e?.message || ''); }
-    finally { setReviewConfigBusy(false); }
-  };
-  const onSetReviewer = async (val) => {
-    setReviewerEmployeeId(val);
-    setReviewConfigBusy(true); setReviewConfigErr('');
-    try { await taxApi.adminUpdateTask(auth, task.id, { reviewerEmployeeId: val }); }
     catch (e) { setReviewConfigErr(e?.message || ''); }
     finally { setReviewConfigBusy(false); }
   };
@@ -1825,27 +1826,25 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeI
 
         {isAdmin && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-              <input type="checkbox" checked={requiresReview} disabled={reviewConfigBusy}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                   title={!reviewOverrideEnabled ? t('owner.tasks.progress.requiresReviewLocked') : undefined}>
+              <input type="checkbox" checked={requiresReview}
+                     disabled={reviewConfigBusy || !reviewOverrideEnabled}
                      onChange={e => onSetRequiresReview(e.target.checked)} />
               {t('owner.tasks.progress.requiresReview')}
             </label>
-            {requiresReview && (
-              <select value={reviewerEmployeeId} disabled={reviewConfigBusy}
-                      onChange={e => onSetReviewer(e.target.value)}>
-                <option value="">{t('owner.tasks.progress.reviewerAny')}</option>
-                {employees.filter(e => e.role === 'admin' && e.permissions?.view_customers !== false).map(e => (
-                  <option key={e.id} value={e.id}>{displayPersonName(e) || e.email}</option>
-                ))}
-              </select>
+            {!reviewOverrideEnabled && (
+              <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>
+                {t('owner.tasks.progress.requiresReviewLocked')}
+              </span>
             )}
           </div>
         )}
+        {/* No reviewer picker — review always goes to the owner, never a
+            delegated admin, so there's nothing to assign. */}
         {!isAdmin && requiresReview && (
           <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-            {reviewerEmp
-              ? t('owner.tasks.progress.reviewerIs', { name: displayPersonName(reviewerEmp) || reviewerEmp.email })
-              : t('owner.tasks.progress.reviewerAny')}
+            {t('owner.tasks.progress.reviewerAny')}
           </div>
         )}
         {reviewConfigErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{reviewConfigErr}</div>}
