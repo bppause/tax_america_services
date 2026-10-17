@@ -1238,6 +1238,18 @@ function TaskFormModal({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [saveStatus, setSaveStatus] = useState('idle');
+  const [delBusy, setDelBusy] = useState(false);
+  // Admins can always delete; a non-admin may also delete a task they
+  // themselves assigned (created), mirroring the server-side check in
+  // DELETE /admin/tasks/:id.
+  const canDelete = isEdit && (isAdmin || (!!employeeId && task.created_by_employee_id === employeeId));
+  const onDeleteTask = async () => {
+    if (delBusy) return;
+    if (!window.confirm(t('owner.tasks.deleteConfirm'))) return;
+    setDelBusy(true);
+    try { await taxApi.adminDeleteTask(auth, task.id); onSaved(); }
+    catch (e) { setErr(e?.message || ''); setDelBusy(false); }
+  };
   const debounceRef = useRef(null);
   const savedTimerRef = useRef(null);
   useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
@@ -1411,6 +1423,18 @@ function TaskFormModal({
             <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
           )}
         </div>
+        {canDelete && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+            <button type="button" onClick={onDeleteTask} disabled={delBusy}
+                    style={{
+                      border: 0, background: 'transparent',
+                      cursor: delBusy ? 'default' : 'pointer',
+                      color: 'var(--tax-error)', fontSize: 12, fontWeight: 600,
+                    }}>
+              {delBusy ? t('owner.tasks.deleting') : t('owner.tasks.delete')}
+            </button>
+          </div>
+        )}
         {isEdit && (
           task.last_viewed_at ? (
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
