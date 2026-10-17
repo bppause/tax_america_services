@@ -3568,3 +3568,19 @@ where c.business_type = 'tax'
     select 1 from public.tax_task_status_options o
     where o.community_id = c.id and o.key = 'pending_review'
   );
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Owner-controlled review-override switch
+--
+-- "All tasks require owner review" is the fixed rule — requires_review
+-- already defaults to true on every task. What's new here is a single
+-- per-community master switch, owner-only to flip, that decides whether
+-- anyone is even ALLOWED to turn requires_review off on an individual
+-- task. Off (the default) means review is mandatory with no exceptions —
+-- the per-task checkbox is locked. On means the owner has opted into
+-- letting admins exempt specific tasks, same as before this switch
+-- existed. Defaults to false so no existing community silently gains an
+-- escape hatch it didn't ask for.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.communities
+  add column if not exists tax_task_review_override_enabled boolean not null default false;

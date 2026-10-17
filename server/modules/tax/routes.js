@@ -3897,6 +3897,51 @@ ${closingHtml}
     res.json({ ok: true, enabled });
   });
 
+  // Owner-only master switch for the per-task review-override checkbox.
+  // Off (default): requires_review is locked true on every task — the
+  // PATCH /admin/tasks/:id handler below refuses any attempt to flip it
+  // off, regardless of who asks. On: admins regain the ability to
+  // exempt an individual task from review, as before this switch
+  // existed. Gated stricter than manage_settings — any admin with that
+  // permission can reach every other community-settings toggle, but
+  // this one is reserved for the owner, matching the rest of the
+  // owner-tier gating (admin creation/promotion, task-review approval).
+  router.put('/admin/community-settings/task-review-override-enabled', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_settings');
+    if (!actor) return;
+    if (!actorIsOwner(actor)) {
+      return res.status(403).json({ error: 'owner_required', message: 'Only the owner can change this setting.' });
+    }
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    const enabled = Boolean(req.body?.enabled);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { error } = await supabase.from('communities')
+      .update({ tax_task_review_override_enabled: enabled, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: enabled ? 'task_review_override_enable' : 'task_review_override_disable',
+        actorEmail: actor.email || '',
+      });
+    } catch (_e) {}
+    res.json({ ok: true, enabled });
+  });
+
+  // Helper: read the review-override master switch for a community.
+  // Used by PATCH /admin/tasks/:id to decide whether a requiresReview:
+  // false request is even allowed.
+  async function communityTaskReviewOverrideEnabled(communityId) {
+    if (!communityId) return false;
+    try {
+      const { data } = await supabase.from('communities')
+        .select('tax_task_review_override_enabled')
+        .eq('id', communityId).maybeSingle();
+      return data?.tax_task_review_override_enabled === true;
+    } catch { return false; }
+  }
+
   // ── Phase 4b admin endpoints ───────────────────────────────────────────────
 
   // GET /admin/community-settings?communitySlug=  — companion read for the
@@ -3923,6 +3968,7 @@ ${closingHtml}
         tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
         tax_news_refresh_interval_days, tax_ai_features_enabled, tax_ui_mode,
+        tax_task_review_override_enabled,
         tax_email_from_name, tax_email_from_name_en,
         tax_email_from_address, tax_email_from_address_en,
         contact_email, phone, whatsapp,
@@ -8130,7 +8176,20 @@ ${closingHtml}
       if (v === taskId) return res.status(400).json({ error: 'A task cannot block itself.' });
       update.blocked_by_task_id = v || null;
     }
-    if (body.requiresReview !== undefined) update.requires_review = !!body.requiresReview;
+    if (body.requiresReview !== undefined) {
+      const wantsOff = !body.requiresReview;
+      // Review is mandatory by default; only the community's own
+      // owner-controlled override switch can unlock turning it off for
+      // a given task. Turning it back on is always allowed — tightening
+      // never needs permission.
+      if (wantsOff && !(await communityTaskReviewOverrideEnabled(cur.community_id))) {
+        return res.status(403).json({
+          error: 'review_override_disabled',
+          message: 'Owner review is mandatory for every task — ask the owner to enable the override in Settings first.',
+        });
+      }
+      update.requires_review = !!body.requiresReview;
+    }
     if (body.reviewerEmployeeId !== undefined) {
       update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
     }

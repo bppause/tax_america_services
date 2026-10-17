@@ -85,6 +85,11 @@ export default function OwnerTasks() {
   const isSimple = community?.tax_ui_mode === 'simple';
 
   const [statuses, setStatuses] = useState([]);
+  // Owner-controlled master switch — whether the "Requires review"
+  // checkbox on a task is even allowed to be turned off. Admin-only
+  // data (community-settings is admin-gated), fetched alongside the
+  // other reference lists below.
+  const [reviewOverrideEnabled, setReviewOverrideEnabled] = useState(false);
   const [employees, setEmployees] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -251,12 +256,16 @@ export default function OwnerTasks() {
       isAdmin
         ? taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id }).catch(() => ({ types: [] }))
         : Promise.resolve({ types: [] }),
-    ]).then(([s, e, c, p, rt]) => {
+      isAdmin
+        ? taxApi.adminGetCommunitySettings(auth, community.id).catch(() => ({ settings: {} }))
+        : Promise.resolve({ settings: {} }),
+    ]).then(([s, e, c, p, rt, cs]) => {
       setStatuses(s.statuses || []);
       setEmployees((e.employees || []).filter(em => em.status !== 'archived'));
       setCustomers(c.customers || []);
       setProducts(p.products || []);
       setRelationshipTypes((rt.types || []).filter(r => r.active !== false));
+      setReviewOverrideEnabled(!!cs.settings?.tax_task_review_override_enabled);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
@@ -342,6 +351,7 @@ export default function OwnerTasks() {
         <TaskFormModal
           mode="edit" task={editingTask}
           auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner}
+          reviewOverrideEnabled={reviewOverrideEnabled}
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
           tasks={tasks} employeeId={employee?.id || ''}
@@ -1217,7 +1227,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 // service from the customer's first active relationship (best-effort —
 // stays blank if no workflow rule chains to a product).
 function TaskFormModal({
-  mode, task, auth, community, isAdmin, isOwner,
+  mode, task, auth, community, isAdmin, isOwner, reviewOverrideEnabled,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
@@ -1570,6 +1580,7 @@ function TaskFormModal({
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks}
                                 isAdmin={isAdmin} isOwner={isOwner} employeeId={employeeId}
+                                reviewOverrideEnabled={reviewOverrideEnabled}
                                 statuses={statuses} currentStatusKey={statusKey}
                                 onSetStatus={onProgressSetStatus}
                                 auth={auth} locale={locale} t={t} />
@@ -1617,7 +1628,7 @@ function TaskFormModal({
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so starting a timer or
 // approving a review never risks closing the modal.
-function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOverrideEnabled, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
   // ── Time tracking ──────────────────────────────────────────────────────
   const [entries, setEntries] = useState(null);
   const [totalSeconds, setTotalSeconds] = useState(0);
@@ -1815,11 +1826,18 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, statuses
 
         {isAdmin && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-              <input type="checkbox" checked={requiresReview} disabled={reviewConfigBusy}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                   title={!reviewOverrideEnabled ? t('owner.tasks.progress.requiresReviewLocked') : undefined}>
+              <input type="checkbox" checked={requiresReview}
+                     disabled={reviewConfigBusy || !reviewOverrideEnabled}
                      onChange={e => onSetRequiresReview(e.target.checked)} />
               {t('owner.tasks.progress.requiresReview')}
             </label>
+            {!reviewOverrideEnabled && (
+              <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>
+                {t('owner.tasks.progress.requiresReviewLocked')}
+              </span>
+            )}
           </div>
         )}
         {/* No reviewer picker — review always goes to the owner, never a

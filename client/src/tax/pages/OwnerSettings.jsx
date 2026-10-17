@@ -197,6 +197,17 @@ export default function OwnerSettings() {
     }
   };
 
+  const onToggleReviewOverride = async (enabled) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetTaskReviewOverrideEnabled(auth, { communitySlug: community.id, enabled });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
+
   const onToggleAiFeaturesEnabled = async (enabled) => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
@@ -231,6 +242,7 @@ export default function OwnerSettings() {
   const portalEnabled = Boolean(settings.tax_customer_portal_enabled);
   const remindersEnabled = Boolean(settings.tax_customer_reminders_enabled);
   const aiFeaturesEnabled = Boolean(settings.tax_ai_features_enabled);
+  const reviewOverrideEnabled = Boolean(settings.tax_task_review_override_enabled);
   const uiMode = settings.tax_ui_mode === 'simple' ? 'simple' : 'detailed';
   const lookaheadMonths = Number(settings.tax_task_lookahead_months) || 6;
   const thresholds = {
@@ -559,6 +571,48 @@ export default function OwnerSettings() {
       </CollapsibleSection>
 
       <TaskStatusesSection auth={auth} community={community} t={t} />
+
+      {/* Owner-only master switch — all tasks require owner review by
+          default, no exceptions. This just decides whether the
+          per-task "Requires review" checkbox (on each task's edit
+          modal) is even allowed to be turned off. Admins who aren't
+          the owner see this read-only, matching the rest of the
+          owner-tier gating. */}
+      <CollapsibleSection
+        storageKey="reviewOverride"
+        defaultOpen={false}
+        title={t('owner.settings.reviewOverride.title')}
+        subtitle={t('owner.settings.reviewOverride.subtitle')}
+        statusLabel={reviewOverrideEnabled ? t('owner.settings.statusOn') : t('owner.settings.statusOff')}
+        enabled={reviewOverrideEnabled}>
+        <div style={{ display: 'grid', gap: 8, maxWidth: 640 }}>
+          <p style={{ margin: 0, color: 'var(--tax-muted)', fontSize: 13 }}>
+            {t('owner.settings.reviewOverride.lede')}
+          </p>
+          <label style={{
+            display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
+            cursor: (busy || !employee?.is_owner) ? 'not-allowed' : 'pointer',
+            background: reviewOverrideEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
+            opacity: employee?.is_owner ? 1 : 0.6,
+          }}>
+            <input type="checkbox" disabled={busy || !employee?.is_owner}
+                   checked={reviewOverrideEnabled}
+                   onChange={e => onToggleReviewOverride(e.target.checked)}
+                   style={{ marginTop: 2 }} />
+            <div>
+              <div style={{ fontWeight: 600 }}>{t('owner.settings.reviewOverride.label')}</div>
+              <div style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 4 }}>
+                {t('owner.settings.reviewOverride.hint')}
+              </div>
+            </div>
+          </label>
+          {!employee?.is_owner && (
+            <p style={{ margin: 0, fontSize: 12, color: 'var(--tax-muted)' }}>
+              {t('owner.settings.reviewOverride.ownerOnly')}
+            </p>
+          )}
+        </div>
+      </CollapsibleSection>
 
       {/* Group 4 — Public site. Contact info + the editable copy that
           drives the public landing page (Hero, Services / Team / FAQs
