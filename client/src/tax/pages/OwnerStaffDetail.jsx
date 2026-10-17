@@ -7,6 +7,7 @@ import { CERT_LIBRARY } from '../lib/certLibrary';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
+import { CollapsibleSection } from './OwnerSettings';
 
 // Category display order mirrors OwnerCustomers so the chip groups feel
 // consistent between the customer browser and the assignment manager.
@@ -138,30 +139,32 @@ export default function OwnerStaffDetail({ employeeId }) {
       <PublicProfileCard emp={emp} auth={auth} community={community} onSaved={loadEmployee} t={t} />
       <PermissionsCard emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
 
-      <h3 style={{ marginTop: 32 }}>{t('owner.staffDetail.assignments')}</h3>
-      {emp.role === 'admin' && emp.permissions?.view_customers === false ? (
-        <div className="tax-msg" style={{ background: 'color-mix(in srgb, #6b7280 8%, #fff)',
-                                          color: 'var(--tax-text)', borderLeft: '3px solid #6b7280' }}>
-          <strong>{t('owner.staffDetail.webAdminBanner')}</strong>
-          <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
-            {t('owner.staffDetail.webAdminHint')}
+      <CollapsibleSection storageKey="staffDetail.assignments" defaultOpen={true}
+                           title={t('owner.staffDetail.assignments')}>
+        {emp.role === 'admin' && emp.permissions?.view_customers === false ? (
+          <div className="tax-msg" style={{ background: 'color-mix(in srgb, #6b7280 8%, #fff)',
+                                            color: 'var(--tax-text)', borderLeft: '3px solid #6b7280' }}>
+            <strong>{t('owner.staffDetail.webAdminBanner')}</strong>
+            <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
+              {t('owner.staffDetail.webAdminHint')}
+            </div>
           </div>
-        </div>
-      ) : emp.role === 'admin' ? (
-        <div className="tax-msg" style={{ background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
-                                          color: 'var(--tax-text)', borderLeft: '3px solid var(--tax-brand-primary)' }}>
-          <strong>{t('employee.profile.assignments.adminBanner')}</strong>
-          <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
-            {t('owner.staffDetail.adminHint')}
+        ) : emp.role === 'admin' ? (
+          <div className="tax-msg" style={{ background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
+                                            color: 'var(--tax-text)', borderLeft: '3px solid var(--tax-brand-primary)' }}>
+            <strong>{t('employee.profile.assignments.adminBanner')}</strong>
+            <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
+              {t('owner.staffDetail.adminHint')}
+            </div>
           </div>
-        </div>
-      ) : (
-        <AssignmentManager
-          assignments={assignments} customers={customers}
-          empId={employeeId} auth={auth}
-          onChange={loadAssignments} t={t}
-          locale={locale} community={community} />
-      )}
+        ) : (
+          <AssignmentManager
+            assignments={assignments} customers={customers}
+            empId={employeeId} auth={auth}
+            onChange={loadAssignments} t={t}
+            locale={locale} community={community} />
+        )}
+      </CollapsibleSection>
     </EmployeeShell>
   );
 }
@@ -834,18 +837,18 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
   };
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0 }}>{t('owner.publicProfile.heading')}</h3>
-        {saveStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
-        {saveStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
-        {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
-          <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
-        )}
-      </div>
-      <p className="tax-section__lede" style={{ marginTop: 4, marginBottom: 12 }}>
-        {t('owner.publicProfile.sub')}
-      </p>
+    <CollapsibleSection storageKey="staffDetail.publicProfile" defaultOpen={true}
+                         title={
+                           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10 }}>
+                             {t('owner.publicProfile.heading')}
+                             {saveStatus === 'saving' && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-muted)' }}>Saving…</span>}
+                             {saveStatus === 'saved'  && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+                             {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+                               <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-error)' }}>{saveStatus}</span>
+                             )}
+                           </span>
+                         }
+                         subtitle={t('owner.publicProfile.sub')}>
 
       <div style={{
         display: 'grid', gap: 12, maxWidth: 720,
@@ -1045,7 +1048,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
         </label>
 
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1166,11 +1169,9 @@ function PermissionsCard({ emp, me, auth, onSaved, t }) {
   const isSelf = me?.id === emp.id;
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <h3 style={{ margin: 0 }}>{t('owner.permissions.heading')}</h3>
-      <p className="tax-section__lede" style={{ marginTop: 4, marginBottom: 12 }}>
-        {t('owner.permissions.sub', { defaultText: '' })}
-      </p>
+    <CollapsibleSection storageKey="staffDetail.permissions" defaultOpen={true}
+                         title={t('owner.permissions.heading')}
+                         subtitle={t('owner.permissions.sub', { defaultText: '' })}>
       {isSelf && (
         <div className="tax-msg" style={{
           background: 'color-mix(in srgb, #92400e 8%, #fff)',
@@ -1235,7 +1236,7 @@ function PermissionsCard({ emp, me, auth, onSaved, t }) {
           </span>
         )}
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
