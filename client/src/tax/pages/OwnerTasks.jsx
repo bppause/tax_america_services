@@ -97,8 +97,8 @@ export default function OwnerTasks() {
   // My-tasks toggle. View + group-by persist per browser via
   // localStorage so the operator's preference sticks across sessions.
   const [view, setView] = useState(() => {
-    try { return localStorage.getItem('tax.tasks.view') || 'list'; }
-    catch { return 'list'; }
+    try { return localStorage.getItem('tax.tasks.view') || 'kanban'; }
+    catch { return 'kanban'; }
   });
   useEffect(() => {
     try { localStorage.setItem('tax.tasks.view', view); } catch { /* ignore */ }
