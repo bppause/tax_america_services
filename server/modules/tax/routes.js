@@ -2696,6 +2696,26 @@ ${closingHtml}
           });
         } catch (e) { warn('[tax-customer-archive] task delete failed', e?.message || e); }
       }
+      // Same cleanup for service-tagged (product auto-task) work — a
+      // customer tagged via "Services this customer uses" generates
+      // tasks keyed by product_id, a separate path from relationships,
+      // so without this they kept showing on the Tasks page after
+      // archiving (e.g. recurring Sales Tax Report rows for a customer
+      // who no longer exists in the active roster). The nightly cron
+      // regenerates recurring tasks purely off active tax_customer_services
+      // rows now (it no longer reads relationships at all), so these also
+      // have to be deactivated here — otherwise the very next cron run
+      // would just recreate the tasks just removed.
+      const { data: svcs } = await supabase.from('tax_customer_services')
+        .select('product_id').eq('customer_id', customerId).eq('active', true);
+      await supabase.from('tax_customer_services')
+        .update({ active: false, updated_at: new Date().toISOString() })
+        .eq('customer_id', customerId).eq('active', true);
+      for (const s of (svcs || [])) {
+        try {
+          await removeTasksForService({ customerId, productId: s.product_id, actorEmail });
+        } catch (e) { warn('[tax-customer-archive] service task delete failed', e?.message || e); }
+      }
     }
 
     try {
