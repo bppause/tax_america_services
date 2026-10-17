@@ -87,12 +87,24 @@ export default function OwnerTasks() {
   // Multi-value filters live as arrays of IDs; serialized to
   // comma-separated strings at the API boundary so the server can
   // accept either form. Priority + due stay scalar — small fixed
-  // pickers.
-  const [filters, setFilters] = useState({
+  // pickers. Persisted per browser, like view/groupBy/sort below, so
+  // the filter set an operator last left the page in comes right back.
+  const DEFAULT_FILTERS = {
     status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '',
     customerType: 'all',   // 'all' | 'individual' | 'business'
     q: '',
+  };
+  const [filters, setFilters] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('tax.tasks.filters'));
+      if (saved && typeof saved === 'object') return { ...DEFAULT_FILTERS, ...saved };
+    } catch { /* ignore */ }
+    return DEFAULT_FILTERS;
   });
+  useEffect(() => {
+    try { localStorage.setItem('tax.tasks.filters', JSON.stringify(filters)); }
+    catch { /* ignore */ }
+  }, [filters]);
   // Phase 4n.45: view mode (list/calendar/kanban), group-by, and the
   // My-tasks toggle. View + group-by persist per browser via
   // localStorage so the operator's preference sticks across sessions.
@@ -135,7 +147,15 @@ export default function OwnerTasks() {
   useEffect(() => {
     try { localStorage.setItem('tax.tasks.sort', sortKey); } catch { /* ignore */ }
   }, [sortKey]);
-  const [mine, setMine] = useState(false);
+  // "My tasks" toggle persists per browser too.
+  const [mine, setMine] = useState(() => {
+    try { return localStorage.getItem('tax.tasks.mine') === '1'; }
+    catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('tax.tasks.mine', mine ? '1' : '0'); }
+    catch { /* ignore */ }
+  }, [mine]);
   // Hide-completed toggle persists per browser, like view/groupBy/sort —
   // a quick way to declutter the list without touching the Status filter.
   const [hideCompleted, setHideCompleted] = useState(() => {
@@ -264,7 +284,7 @@ export default function OwnerTasks() {
     }
   }, [tasks]);
 
-  const onClearFilters = () => setFilters({ status: [], priority: '', assignedTo: [], productId: [], customerId: [], due: '', customerType: 'all', q: '' });
+  const onClearFilters = () => setFilters(DEFAULT_FILTERS);
   // customerType always carries a string ('all' / 'individual' /
   // 'business') so we only count it as "active" when it differs from
   // the default. Other scalar filters fall back to truthy because
