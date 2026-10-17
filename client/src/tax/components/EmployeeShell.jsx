@@ -229,21 +229,6 @@ export default function EmployeeShell({ community, active, children }) {
                   </NavGroup>
                 )}
 
-                {/* Public homepage — anything you edit here changes the
-                    public landing page (Services / Articles / FAQs). The
-                    "Meet the team" section is curated per-employee from
-                    Practice setup → Staff → Public profile card. */}
-                {isAdmin && (
-                  <NavGroup groupKey="public-homepage" label={t('employee.nav.groupPublicHomepage')} defaultCollapsed>
-                    {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
-                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
-                    {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
-                    {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
-                    {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
-                    {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
-                  </NavGroup>
-                )}
-
                 {/* Practice setup — rarely touched. Templates, staff,
                     community-wide toggles, audit trail. Hidden entirely
                     (not just emptied out) for a site admin — these are
@@ -256,6 +241,21 @@ export default function EmployeeShell({ community, active, children }) {
                     {perm('manage_email_templates') && navLink('email-templates', `${base}/email-templates`, t('employee.nav.emailTemplates'))}
                     {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
                     {perm('view_audit_logs')        && navLink('audit',          `${base}/audit`,            t('employee.nav.audit'))}
+                  </NavGroup>
+                )}
+
+                {/* Public homepage — anything you edit here changes the
+                    public landing page (Services / Articles / FAQs). The
+                    "Meet the team" section is curated per-employee from
+                    Practice setup → Staff → Public profile card. */}
+                {isAdmin && (
+                  <NavGroup groupKey="public-homepage" label={t('employee.nav.groupPublicHomepage')} defaultCollapsed>
+                    {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
+                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
+                    {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
+                    {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
+                    {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
+                    {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
                   </NavGroup>
                 )}
               </>
