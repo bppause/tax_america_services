@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import TaskHover from '../components/TaskHover';
 import { displayPersonName } from '../lib/personName';
 import { MultiSelect, NO_SERVICE_ID } from './OwnerTasks';
 
@@ -67,27 +68,32 @@ export default function OwnerProgress() {
 
   // Search box debounces like the Tasks page so typing doesn't refetch
   // on every keystroke.
+  // Pulled out of the debounced effect below so a task delete (from the
+  // drill-down's hover card) can also trigger an immediate refetch,
+  // without waiting for the 200ms filter-change debounce.
+  const reload = () => {
+    if (!employee || !community) return;
+    setData(null);
+    taxApi.adminTaskProgress(auth, {
+      communitySlug: community.id,
+      assignedTo: filters.assignedTo,
+      customerId: filters.customerId,
+      customerType: filters.customerType !== 'all' ? filters.customerType : undefined,
+      serviceId: filters.serviceId.join(','),
+      status: filters.status.join(','),
+      priority: filters.priority,
+      due: filters.due,
+      q: filters.q,
+    })
+      .then(d => setData(d))
+      .catch(e => setErr(e?.message || t('error.loadFailed')));
+  };
+
   const searchTimer = useRef(null);
   useEffect(() => {
     if (!employee || !community) return;
-    const run = () => {
-      setData(null);
-      taxApi.adminTaskProgress(auth, {
-        communitySlug: community.id,
-        assignedTo: filters.assignedTo,
-        customerId: filters.customerId,
-        customerType: filters.customerType !== 'all' ? filters.customerType : undefined,
-        serviceId: filters.serviceId.join(','),
-        status: filters.status.join(','),
-        priority: filters.priority,
-        due: filters.due,
-        q: filters.q,
-      })
-        .then(d => setData(d))
-        .catch(e => setErr(e?.message || t('error.loadFailed')));
-    };
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(run, 200);
+    searchTimer.current = setTimeout(reload, 200);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, filters.assignedTo, filters.customerId, filters.customerType,
@@ -343,8 +349,8 @@ export default function OwnerProgress() {
                   {rowOpen && (
                     <tr>
                       <td colSpan={6} style={{ padding: '0 10px 12px 28px', borderTop: 'none', background: 'var(--tax-bg-alt)' }}>
-                        <TaskDrillDown tasks={c.tasks} community={community}
-                                        statusLabel={statusLabel} locale={locale} t={t} />
+                        <TaskDrillDown tasks={c.tasks} community={community} statuses={statuses}
+                                        statusLabel={statusLabel} onDeleted={reload} locale={locale} t={t} />
                       </td>
                     </tr>
                   )}
@@ -363,7 +369,7 @@ export default function OwnerProgress() {
 // same ?edit= deep link the task-assigned / status-changed emails use
 // — so "drill into task details" doesn't require rebuilding the whole
 // edit modal here.
-function TaskDrillDown({ tasks, community, statusLabel, locale, t }) {
+function TaskDrillDown({ tasks, community, statuses, statusLabel, onDeleted, locale, t }) {
   if (!tasks || tasks.length === 0) {
     return <p style={{ color: 'var(--tax-muted)', fontSize: 12, margin: '4px 0' }}>{t('owner.progress.noTasks')}</p>;
   }
@@ -376,11 +382,14 @@ function TaskDrillDown({ tasks, community, statusLabel, locale, t }) {
           return (
             <tr key={tt.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
               <td style={{ padding: '6px 6px' }}>
-                <a href={`/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(tt.id)}`}
-                   onClick={e => e.stopPropagation()}
-                   style={{ color: 'var(--tax-brand-primary)', textDecoration: 'none', fontWeight: 600 }}>
-                  {tt.title}
-                </a>
+                <TaskHover task={tt} statuses={statuses} community={community}
+                           onDeleted={onDeleted} locale={locale} t={t}>
+                  <a href={`/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(tt.id)}`}
+                     onClick={e => e.stopPropagation()}
+                     style={{ color: 'var(--tax-brand-primary)', textDecoration: 'none', fontWeight: 600 }}>
+                    {tt.title}
+                  </a>
+                </TaskHover>
               </td>
               <td style={{ padding: '6px 6px', color: 'var(--tax-muted)' }}>
                 {tt.product ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug) : t('owner.tasks.filter.noService')}
