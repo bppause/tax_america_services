@@ -114,7 +114,13 @@ export default function OwnerSettings() {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
       const r = await taxApi.adminRefreshTasks(auth);
-      const text = t('owner.settings.lookahead.refreshed', { scanned: r.scanned || 0, created: r.created || 0 });
+      let text = t('owner.settings.lookahead.refreshed', { scanned: r.scanned || 0, created: r.created || 0 });
+      // Temporary diagnostic — "scanned" reads from a query whose error
+      // was never checked, so a real failure there looked identical to
+      // "nothing active." Surface both the error (if any) and the raw
+      // active-row count (independent of that query) to tell them apart.
+      if (r.svcQueryError) text += ` · query error: ${r.svcQueryError}`;
+      if (r.activeServiceRowCount !== undefined) text += ` · active service rows in DB: ${r.activeServiceRowCount}`;
       setMsg({ kind: 'success', text });
       return { kind: 'success', text };
     } catch (e) {
