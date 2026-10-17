@@ -667,8 +667,14 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
     saveNow({ reqs: next });
   };
 
-  // Auto-tasks section — still uses an explicit save button since it's
-  // a bulk-replace operation with its own server call.
+  // Auto-tasks section — auto-saves like the rest of this editor.
+  // The server call is a full bulk-replace (it deletes any row not in
+  // the payload, cascading to open customer tasks from that row, and
+  // fans out live task-generation to every customer tagged with this
+  // service) — debounced so rapid edits settle before any of that
+  // runs, and a row only persists once it has a title, matching the
+  // server's own "drop blank-titled rows" rule (so adding a row and
+  // abandoning it before typing a title never touches the server).
   const [autoTasks, setAutoTasks] = useState([]);
   const [autoTasksLoaded, setAutoTasksLoaded] = useState(false);
   useEffect(() => {
@@ -680,24 +686,31 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.id]);
 
-  const [taskBusy, setTaskBusy] = useState(false);
-  const [taskErr, setTaskErr] = useState('');
-  const [taskSaved, setTaskSaved] = useState(false);
+  const [autoTasksSaveStatus, setAutoTasksSaveStatus] = useState('idle');
+  const autoTasksDebounceRef = React.useRef(null);
+  const autoTasksSavedTimerRef = React.useRef(null);
+  useEffect(() => () => { clearTimeout(autoTasksDebounceRef.current); clearTimeout(autoTasksSavedTimerRef.current); }, []);
 
-  const addAutoTask = () => setAutoTasks(prev => [...prev, {
-    id: null, titleEn: '', titleEs: '', descriptionEn: '', descriptionEs: '',
-    cadenceKind: 'monthly', day: '15', weekday: '1', month: '1',
-    defaultPriority: 'normal', defaultAssigneeEmployeeId: '',
-  }]);
-  const updateAutoTask = (idx, patch) =>
-    setAutoTasks(prev => prev.map((at, i) => i === idx ? { ...at, ...patch } : at));
-  const removeAutoTask = (idx) =>
-    setAutoTasks(prev => prev.filter((_, i) => i !== idx));
+  // Assigns the server's real ids back onto rows we just created,
+  // matched by order among this save's still-id-less rows. Only ever
+  // touches `id` — never clobbers text the owner may still be typing
+  // in another row while this save's response lands.
+  const syncAutoTaskIds = (list, serverRows) => {
+    const knownIds = new Set(list.filter(r => r.id).map(r => r.id));
+    const freshRows = serverRows.filter(r => !knownIds.has(r.id));
+    let fi = 0;
+    return list.map(row => {
+      if (row.id || (!row.titleEn.trim() && !row.titleEs.trim())) return row;
+      const match = freshRows[fi];
+      if (match) { fi += 1; return { ...row, id: match.id }; }
+      return row;
+    });
+  };
 
-  const saveAutoTasks = async () => {
-    setTaskBusy(true); setTaskErr(''); setTaskSaved(false);
+  const persistAutoTasks = async (list) => {
+    setAutoTasksSaveStatus('saving');
     try {
-      await taxApi.adminReplaceAutoTasks(auth, p.id, autoTasks.map((at, i) => ({
+      const d = await taxApi.adminReplaceAutoTasks(auth, p.id, list.map((at, i) => ({
         id: at.id || undefined,
         titleI18n: { en: at.titleEn.trim(), es: at.titleEs.trim() },
         descriptionI18n: { en: at.descriptionEn.trim(), es: at.descriptionEs.trim() },
@@ -708,11 +721,54 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
         displayOrder: (i + 1) * 10,
         active: true,
       })));
-      setTaskSaved(true);
+      setAutoTasks(prev => syncAutoTaskIds(prev, d.autoTasks || []));
+      setAutoTasksSaveStatus('saved');
       onSaved?.();
-      setTimeout(() => setTaskSaved(false), 2500);
-    } catch (e) { setTaskErr(e?.message || ''); }
-    finally { setTaskBusy(false); }
+      autoTasksSavedTimerRef.current = setTimeout(() => setAutoTasksSaveStatus('idle'), 2500);
+    } catch (e) {
+      setAutoTasksSaveStatus(e?.message || 'Save failed');
+    }
+  };
+  const scheduleAutoTasksSave = (list) => {
+    clearTimeout(autoTasksDebounceRef.current);
+    clearTimeout(autoTasksSavedTimerRef.current);
+    autoTasksDebounceRef.current = setTimeout(() => persistAutoTasks(list), 1200);
+  };
+  const saveAutoTasksNow = (list) => {
+    clearTimeout(autoTasksDebounceRef.current);
+    clearTimeout(autoTasksSavedTimerRef.current);
+    persistAutoTasks(list);
+  };
+
+  const addAutoTask = () => setAutoTasks(prev => [...prev, {
+    id: null, localKey: nextAutoTaskLocalKey(),
+    titleEn: '', titleEs: '', descriptionEn: '', descriptionEs: '',
+    cadenceKind: 'monthly', day: '15', weekday: '1', month: '1',
+    defaultPriority: 'normal', defaultAssigneeEmployeeId: '',
+  }]);
+  const updateAutoTask = (idx, patch) => {
+    const next = autoTasks.map((at, i) => i === idx ? { ...at, ...patch } : at);
+    setAutoTasks(next);
+    const row = next[idx];
+    // Blanking out both title fields on an already-saved row would
+    // otherwise get silently deleted server-side on the next save (the
+    // server drops title-less rows from its bulk-replace) — including
+    // its open generated customer tasks. Require the explicit Remove
+    // button (with its confirm) for that instead of an accidental
+    // auto-save doing it.
+    if (row.id && !row.titleEn.trim() && !row.titleEs.trim()) return;
+    scheduleAutoTasksSave(next);
+  };
+  // Removing a row that's already on the server deletes it (and its
+  // open generated customer tasks) the moment the debounce fires —
+  // there's no longer an explicit Save to catch a change of mind, so
+  // confirm first. An unsaved new row (never had an id) just vanishes.
+  const removeAutoTask = (idx) => {
+    const row = autoTasks[idx];
+    if (row.id && !window.confirm(t('owner.services.autoTasks.removeConfirm'))) return;
+    const next = autoTasks.filter((_, i) => i !== idx);
+    setAutoTasks(next);
+    if (row.id) saveAutoTasksNow(next);
   };
 
   return (
@@ -840,7 +896,10 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{t('owner.services.autoTasks.heading')}</div>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>
+              {t('owner.services.autoTasks.heading')}
+              <SaveStatus status={autoTasksSaveStatus} />
+            </div>
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
               {t('owner.services.autoTasks.subheading')}
             </div>
@@ -856,7 +915,7 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
             ? <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('owner.services.autoTasks.empty')}</p>
             : <div style={{ display: 'grid', gap: 10 }}>
                 {autoTasks.map((at, i) => (
-                  <AutoTaskEditor key={at.id || `new-${i}`} value={at} index={i}
+                  <AutoTaskEditor key={at.localKey} value={at} index={i}
                                   serviceName={nameEn || nameEs || p.slug}
                                   employees={employees}
                                   onChange={patch => updateAutoTask(i, patch)}
@@ -864,18 +923,6 @@ function ProductEditor({ product: p, auth, community, relTypes = [], employees =
                                   t={t} />
                 ))}
               </div>}
-      </div>
-
-      {taskErr && <div className="tax-msg tax-msg--error">{taskErr}</div>}
-
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                onClick={saveAutoTasks} disabled={taskBusy}>
-          {taskBusy ? t('lead.submitting') : t('owner.services.autoTasks.save')}
-        </button>
-        {taskSaved && (
-          <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>
-        )}
       </div>
     </div>
   );
@@ -927,10 +974,18 @@ function SectionHeader({ emoji, label, hint, tone = 'homepage', extra }) {
 
 // Map a server auto-task row to the editor's working shape (separate
 // fields for cadence inputs that conditional renders read from).
+let autoTaskLocalKeySeq = 0;
+function nextAutoTaskLocalKey() { return `new-${Date.now()}-${autoTaskLocalKeySeq++}`; }
+
 function normalizeAutoTaskForEdit(row) {
   const a = row.anchor_rule && typeof row.anchor_rule === 'object' ? row.anchor_rule : {};
   return {
     id: row.id || null,
+    // Stable React key independent of `id` — a new row's `id` arrives
+    // asynchronously once auto-save assigns it server-side, and keying
+    // on `id` directly would remount AutoTaskEditor at that moment,
+    // collapsing the row the owner is still mid-edit on.
+    localKey: row.id || nextAutoTaskLocalKey(),
     titleEn: row.title_i18n?.en || '',
     titleEs: row.title_i18n?.es || '',
     descriptionEn: row.description_i18n?.en || '',

@@ -387,6 +387,7 @@
   "owner.services.autoTasks.add": "Add auto-task",
   "owner.services.autoTasks.save": "Save auto-tasks",
   "owner.services.autoTasks.remove": "Remove",
+  "owner.services.autoTasks.removeConfirm": "Remove this auto-task? This deletes it immediately and removes any open customer tasks it already generated. Completed tasks are kept.",
   "owner.services.autoTasks.empty": "No auto-tasks yet. Add one — when a customer is tagged with the relationship above, the system will generate a task series for each row.",
   "owner.services.autoTasks.untitled": "Untitled auto-task",
   "owner.services.autoTasks.titleEn": "Task title (English)",
