@@ -3559,14 +3559,44 @@ update public.tax_employees
 alter table public.tax_tasks
   add column if not exists review_target_status_key text;
 
+-- display_order sits one below the community's earliest terminal
+-- status (e.g. "Completed") so the board reads not-started →
+-- in-progress → pending review → completed, instead of pending
+-- review landing after every terminal column. Falls back to the very
+-- end only for the (unexpected) case of a community with no terminal
+-- status configured at all.
 insert into public.tax_task_status_options (id, community_id, key, label_i18n, color, display_order, is_terminal)
 select 'tstat_' || c.id || '_pending_review', c.id, 'pending_review',
-  '{"en":"Pending review","es":"Pendiente de revisión"}'::jsonb, '#f59e0b', 9999, false
+  '{"en":"Pending review","es":"Pendiente de revisión"}'::jsonb, '#f59e0b',
+  coalesce(
+    (select min(o.display_order) - 1 from public.tax_task_status_options o
+     where o.community_id = c.id and o.is_terminal = true),
+    (select coalesce(max(o.display_order), 0) + 10 from public.tax_task_status_options o
+     where o.community_id = c.id)
+  ),
+  false
 from public.communities c
 where c.business_type = 'tax'
   and not exists (
     select 1 from public.tax_task_status_options o
     where o.community_id = c.id and o.key = 'pending_review'
+  );
+
+-- Corrective pass for communities whose "Pending review" column was
+-- already seeded (above, before this fix, with display_order 9999)
+-- and so landed after "Completed" instead of before it — moves it to
+-- just before the community's earliest terminal status, same rule as
+-- the insert above.
+update public.tax_task_status_options p
+set display_order = (
+  select min(o.display_order) - 1 from public.tax_task_status_options o
+  where o.community_id = p.community_id and o.is_terminal = true
+)
+where p.key = 'pending_review'
+  and exists (
+    select 1 from public.tax_task_status_options o2
+    where o2.community_id = p.community_id and o2.is_terminal = true
+      and o2.display_order <= p.display_order
   );
 
 -- ═══════════════════════════════════════════════════════════════════════════════
