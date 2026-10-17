@@ -95,7 +95,17 @@
   .tax-nav--desktop { display: none; }
   .tax-nav__hamburger { display: inline-flex; }
 }
-.tax-locale { display: inline-flex; border: 1px solid var(--tax-border); border-radius: 8px; overflow: hidden; }
+.tax-locale {
+  display: inline-flex; border: 1px solid var(--tax-border); border-radius: 8px; overflow: hidden;
+  /* `overflow: hidden` above makes this the one flex child a cramped
+     row is allowed to shrink past its own content size (siblings
+     without it keep their natural minimum width) — without
+     flex-shrink: 0, a tight row (the employee sidebar footer, with a
+     notification bell + this + "Switch account" + "Sign out" all
+     fighting for space) silently squashes the EN/ES buttons down to
+     an unreadable sliver instead of wrapping. */
+  flex-shrink: 0;
+}
 .tax-locale button {
   background: transparent; border: 0; padding: 6px 10px; font-size: 13px;
   cursor: pointer; color: var(--tax-muted);
@@ -406,7 +416,7 @@
   display: flex; flex-direction: column; gap: 6px;
 }
 .tax-shell__footer-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
   padding: 0 4px;
 }
 .tax-shell__main {
