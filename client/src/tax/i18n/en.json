@@ -781,6 +781,8 @@
   "owner.tasks.notes.placeholder": "Add a note — visible to the whole team, with your name and the time.",
   "owner.tasks.notes.addBtn": "Add note",
   "owner.tasks.notes.empty": "No notes yet.",
+  "owner.tasks.notes.showHistory": "Show {{count}} earlier",
+  "owner.tasks.notes.hideHistory": "Hide history",
   "owner.tasks.filter.allStatuses": "All statuses",
   "owner.tasks.filter.allPriorities": "All priorities",
   "owner.tasks.filter.anyOwner": "Any owner",
