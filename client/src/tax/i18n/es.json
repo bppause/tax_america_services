@@ -1187,6 +1187,8 @@
   "owner.staffDetail.role.admin": "Administrador",
   "owner.staffDetail.role.siteAdmin": "Administrador del sitio",
   "owner.staffDetail.role.selfHint": "No puede cambiar su propio rol.",
+  "owner.staffDetail.role.repair": "Corregir permisos",
+  "owner.staffDetail.role.repairHint": "Este administrador del sitio tiene al menos un permiso de sitio web/app revocado, por lo que parte de Página pública o Configuración de la práctica puede faltar en su menú. Haga clic para restaurar el conjunto completo de permisos de administrador del sitio.",
   "owner.staffDetail.assignBtn": "Asignar un cliente",
   "owner.staffDetail.cancelAssign": "Cancelar",
   "owner.staffDetail.chooseCustomer": "Elija un cliente…",

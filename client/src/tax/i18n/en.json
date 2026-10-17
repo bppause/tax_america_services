@@ -1188,6 +1188,8 @@
   "owner.staffDetail.role.admin": "Admin",
   "owner.staffDetail.role.siteAdmin": "Site admin",
   "owner.staffDetail.role.selfHint": "You can't change your own role.",
+  "owner.staffDetail.role.repair": "Fix permissions",
+  "owner.staffDetail.role.repairHint": "This site admin has at least one website/app permission revoked, so part of Public homepage or Practice setup may be missing from their sidebar. Click to restore the full site-admin permission set.",
   "owner.staffDetail.assignBtn": "Assign a customer",
   "owner.staffDetail.cancelAssign": "Cancel",
   "owner.staffDetail.chooseCustomer": "Choose a customer…",
