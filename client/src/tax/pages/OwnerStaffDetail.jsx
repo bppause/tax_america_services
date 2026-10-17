@@ -139,7 +139,7 @@ export default function OwnerStaffDetail({ employeeId }) {
       <PublicProfileCard emp={emp} auth={auth} community={community} onSaved={loadEmployee} t={t} />
       <PermissionsCard emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
 
-      <CollapsibleSection storageKey="staffDetail.assignments" defaultOpen={true}
+      <CollapsibleSection storageKey="staffDetail.assignments" defaultOpen={false}
                            title={t('owner.staffDetail.assignments')}>
         {emp.role === 'admin' && emp.permissions?.view_customers === false ? (
           <div className="tax-msg" style={{ background: 'color-mix(in srgb, #6b7280 8%, #fff)',
@@ -837,7 +837,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
   };
 
   return (
-    <CollapsibleSection storageKey="staffDetail.publicProfile" defaultOpen={true}
+    <CollapsibleSection storageKey="staffDetail.publicProfile" defaultOpen={false}
                          title={
                            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10 }}>
                              {t('owner.publicProfile.heading')}
@@ -1169,7 +1169,7 @@ function PermissionsCard({ emp, me, auth, onSaved, t }) {
   const isSelf = me?.id === emp.id;
 
   return (
-    <CollapsibleSection storageKey="staffDetail.permissions" defaultOpen={true}
+    <CollapsibleSection storageKey="staffDetail.permissions" defaultOpen={false}
                          title={t('owner.permissions.heading')}
                          subtitle={t('owner.permissions.sub', { defaultText: '' })}>
       {isSelf && (
