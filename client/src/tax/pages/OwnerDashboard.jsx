@@ -18,13 +18,17 @@ export default function OwnerDashboard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
 
-  useEffect(() => {
-    // Gate on `employee` (set after both Firebase link AND impersonation
-    // resolve) instead of `fbUser`, which stays null during impersonation.
+  const reload = () => {
     if (!employee || !community) return;
     taxApi.adminDashboard(auth, community.id)
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
+  };
+
+  useEffect(() => {
+    // Gate on `employee` (set after both Firebase link AND impersonation
+    // resolve) instead of `fbUser`, which stays null during impersonation.
+    reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee, community]);
 
@@ -95,7 +99,7 @@ export default function OwnerDashboard() {
       }}>
         <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
           <UrgentTasks tasks={data.urgentTasks || []}
-                       base={base} community={community} locale={locale} t={t} />
+                       base={base} community={community} onDeleted={reload} locale={locale} t={t} />
           <NeedsAttention rows={data.needsAttention || []}
                           base={base} t={t} />
         </div>
@@ -264,7 +268,7 @@ function Kpi({ label, value, color, sub, href }) {
   );
 }
 
-function UrgentTasks({ tasks, base, community, locale, t }) {
+function UrgentTasks({ tasks, base, community, onDeleted, locale, t }) {
   const today = new Date().toISOString().slice(0, 10);
   // Clicking a row jumps to the Tasks page with ?edit=<id> so the same
   // editor used on List / Kanban / Calendar opens for the task.
@@ -297,7 +301,7 @@ function UrgentTasks({ tasks, base, community, locale, t }) {
             return (
               <li key={t1.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
                 <TaskHover task={t1} statuses={[]} community={community}
-                           locale={locale} t={t}>
+                           onDeleted={onDeleted} locale={locale} t={t}>
                   <a href={editHref(t1.id)}
                      style={{
                        display: 'block', padding: '10px 14px',

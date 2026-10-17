@@ -2305,7 +2305,8 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
               const editHref = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
               return (
                 <TaskHover key={task.id} task={task} statuses={statuses}
-                           community={community} locale={locale} t={t}>
+                           community={community} locale={locale} t={t}
+                           onDeleted={load}>
                   <div className="tax-contact-item"
                        style={{ display: 'grid', gap: 6, opacity: task.completed_at ? 0.6 : 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>

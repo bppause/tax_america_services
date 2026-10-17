@@ -404,7 +404,7 @@ export default function OwnerTasks() {
             </p>
           : view === 'calendar' ? (
               <TasksCalendar tasks={tasks} community={community} statuses={statuses}
-                             onEdit={setEditingTask} locale={locale} t={t} />
+                             onEdit={setEditingTask} onChange={load} locale={locale} t={t} />
             )
           : view === 'kanban' ? (
               <TasksKanban tasks={tasks} statuses={statuses} community={community}
@@ -960,7 +960,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   return (
     <TaskHover task={task} statuses={statuses}
                community={community} locale={locale} t={t}
-               side="auto">
+               side="auto" onDeleted={onChange}>
     <div className="tax-contact-item" style={{
       display: 'grid', gap: 8,
       background: selected ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : undefined,
@@ -1238,6 +1238,18 @@ function TaskFormModal({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [saveStatus, setSaveStatus] = useState('idle');
+  const [delBusy, setDelBusy] = useState(false);
+  // Admins can always delete; a non-admin may also delete a task they
+  // themselves assigned (created), mirroring the server-side check in
+  // DELETE /admin/tasks/:id.
+  const canDelete = isEdit && (isAdmin || (!!employeeId && task.created_by_employee_id === employeeId));
+  const onDeleteTask = async () => {
+    if (delBusy) return;
+    if (!window.confirm(t('owner.tasks.deleteConfirm'))) return;
+    setDelBusy(true);
+    try { await taxApi.adminDeleteTask(auth, task.id); onSaved(); }
+    catch (e) { setErr(e?.message || ''); setDelBusy(false); }
+  };
   const debounceRef = useRef(null);
   const savedTimerRef = useRef(null);
   useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
@@ -1411,6 +1423,18 @@ function TaskFormModal({
             <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
           )}
         </div>
+        {canDelete && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+            <button type="button" onClick={onDeleteTask} disabled={delBusy}
+                    style={{
+                      border: 0, background: 'transparent',
+                      cursor: delBusy ? 'default' : 'pointer',
+                      color: 'var(--tax-error)', fontSize: 12, fontWeight: 600,
+                    }}>
+              {delBusy ? t('owner.tasks.deleting') : t('owner.tasks.delete')}
+            </button>
+          </div>
+        )}
         {isEdit && (
           task.last_viewed_at ? (
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 8 }}>
@@ -2791,7 +2815,7 @@ function PeriodGroupSection({ isOpen, onToggle, label, totals, periodCount, t, c
   );
 }
 
-function TasksCalendar({ tasks, community, statuses, onEdit, locale, t }) {
+function TasksCalendar({ tasks, community, statuses, onEdit, onChange, locale, t }) {
   const today = new Date();
   const [cursor, setCursor] = useState(() => ({
     year: today.getUTCFullYear(), month: today.getUTCMonth(),
@@ -2892,7 +2916,8 @@ function TasksCalendar({ tasks, community, statuses, onEdit, locale, t }) {
                 const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
                 return (
                   <TaskHover key={tt.id} task={tt} statuses={statuses}
-                             community={community} locale={locale} t={t}>
+                             community={community} locale={locale} t={t}
+                             onDeleted={onChange}>
                     <span style={{
                       display: 'block',
                       fontSize: 10, padding: '1px 4px', borderRadius: 4,
@@ -3027,7 +3052,8 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                   : '';
                 return (
                   <TaskHover key={tt.id} task={tt} statuses={statuses}
-                             community={community} locale={locale} t={t}>
+                             community={community} locale={locale} t={t}
+                             onDeleted={onChange}>
                     <button type="button"
                             draggable
                             onDragStart={e => e.dataTransfer.setData('text/plain', tt.id)}

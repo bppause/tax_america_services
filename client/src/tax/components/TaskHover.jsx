@@ -22,10 +22,13 @@ import { taxApi } from '../api';
 // edge to keep it on-screen at the right.
 //
 // 150ms enter delay still applies so quick mouse-drifts across a
-// packed Kanban column don't flash tooltips. `pointer-events: none`
-// stays so the popover never blocks the underlying click / drag
-// handler on the trigger element.
+// packed Kanban column don't flash tooltips. Leaving the trigger
+// schedules a 200ms-delayed hide (instead of closing instantly) so the
+// mouse has time to travel onto the popover itself — needed now that
+// the popover is interactive (the delete button below) and listens for
+// its own hover to stay open.
 const ENTER_DELAY_MS = 150;
+const LEAVE_DELAY_MS = 200;
 const POP_GAP_PX = 6;
 const ESTIMATED_POP_HEIGHT = 260;
 const POP_WIDTH = 300;
@@ -61,11 +64,14 @@ function computeCoords(rect, side) {
   return { top, left };
 }
 
-export default function TaskHover({ task, statuses, community, locale, t, children, side = 'auto' }) {
+export default function TaskHover({ task, statuses, community, locale, t, children, side = 'auto', onDeleted }) {
   const triggerRef = useRef(null);
   const timerRef = useRef(null);
+  const hideTimerRef = useRef(null);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState('');
 
   // Latest collaborative note, fetched lazily the first time this
   // hover opens (not on every list render) — pulled from auth context
@@ -73,7 +79,7 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   // dashboard, customer-profile task list) gets it for free, with no
   // prop drilling and no change to those pages' own task queries.
   // undefined = not fetched yet, null = fetched, no notes.
-  const { fbUser, community: authCommunity } = useEmployeeAuth();
+  const { fbUser, employee, community: authCommunity } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: authCommunity?.id };
   const [latestNote, setLatestNote] = useState(undefined);
   const fetchedForTaskId = useRef(null);
@@ -87,12 +93,23 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, task?.id]);
 
+  // Admins can always delete; a non-admin may also delete a task they
+  // themselves assigned (created), mirroring the server-side check in
+  // DELETE /admin/tasks/:id.
+  const canDelete = !!employee && (employee.role === 'admin'
+    || (!!employee.id && task.created_by_employee_id === employee.id));
+
   const reposition = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
     setCoords(computeCoords(rect, side));
   };
 
+  const clearHideTimer = () => {
+    if (hideTimerRef.current) { clearTimeout(hideTimerRef.current); hideTimerRef.current = null; }
+  };
+
   const show = () => {
+    clearHideTimer();
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       reposition();
@@ -102,10 +119,38 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   const hide = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = null;
+    clearHideTimer();
     setOpen(false);
   };
+  // Leaving the trigger schedules a hide instead of closing instantly —
+  // the popover renders through a portal, outside the trigger's own DOM
+  // subtree, so without a short grace period the mouse could never reach
+  // the delete button: it'd close the instant the cursor left the small
+  // trigger element on its way down to the popover below it.
+  const scheduleHide = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    clearHideTimer();
+    hideTimerRef.current = setTimeout(() => setOpen(false), LEAVE_DELAY_MS);
+  };
 
-  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    clearHideTimer();
+  }, []);
+
+  const onDeleteClick = async () => {
+    if (delBusy) return;
+    if (!window.confirm(t('owner.tasks.deleteConfirm'))) return;
+    setDelBusy(true); setDelErr('');
+    try {
+      await taxApi.adminDeleteTask(auth, task.id);
+      hide();
+      onDeleted?.(task.id);
+    } catch (e) {
+      setDelErr(e?.message || '');
+      setDelBusy(false);
+    }
+  };
 
   // Track scroll + resize while the popover is open so it stays
   // anchored to the trigger as the user navigates. Capture-phase
@@ -143,13 +188,20 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
 
   const popover = open && coords && typeof document !== 'undefined' ? createPortal(
     <div role="tooltip"
+         onMouseEnter={clearHideTimer}
+         onMouseLeave={scheduleHide}
          style={{
            position: 'fixed', top: coords.top, left: coords.left,
            minWidth: 240, maxWidth: POP_WIDTH, zIndex: 9999,
            background: '#fff', border: '1px solid var(--tax-border)',
            borderRadius: 8, boxShadow: '0 12px 24px rgba(0,0,0,.18)',
            padding: '10px 12px', textAlign: 'left',
-           pointerEvents: 'none',
+           // Interactive now (delete button below) — the gap kept between
+           // the trigger and the popover (POP_GAP_PX + the flip logic in
+           // computeCoords) keeps this from ever sitting on top of the
+           // trigger itself, so enabling pointer events here doesn't
+           // intercept the trigger's own click/drag handler.
+           pointerEvents: 'auto',
          }}>
       <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, whiteSpace: 'normal', color: 'var(--tax-text)' }}>
         {task.title}
@@ -246,6 +298,20 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
           )}
         </div>
       )}
+      {canDelete && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)', textAlign: 'right' }}>
+          {delErr && (
+            <div style={{ fontSize: 11, color: 'var(--tax-error)', marginBottom: 4, textAlign: 'left' }}>{delErr}</div>
+          )}
+          <button type="button" onClick={onDeleteClick} disabled={delBusy}
+                  style={{
+                    border: 0, background: 'transparent', cursor: delBusy ? 'default' : 'pointer',
+                    color: 'var(--tax-error)', fontSize: 12, fontWeight: 600, padding: '2px 0',
+                  }}>
+            {delBusy ? t('owner.tasks.deleting') : t('owner.tasks.delete')}
+          </button>
+        </div>
+      )}
     </div>,
     document.body
   ) : null;
@@ -253,8 +319,8 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   return (
     <span ref={triggerRef}
           style={{ display: 'block' }}
-          onMouseEnter={show} onMouseLeave={hide}
-          onFocus={show} onBlur={hide}>
+          onMouseEnter={show} onMouseLeave={scheduleHide}
+          onFocus={show} onBlur={scheduleHide}>
       {children}
       {popover}
     </span>

@@ -733,6 +733,7 @@
   "owner.tasks.overdue": "overdue",
   "owner.tasks.created": "Created",
   "owner.tasks.delete": "Delete",
+  "owner.tasks.deleting": "Deleting…",
   "owner.tasks.deleteConfirm": "Delete this task? This cannot be undone.",
   "owner.tasks.completeNotesPrompt": "Add a brief closing note before marking this task complete (what was done, dates filed, references, etc.):",
   "owner.tasks.completeNotesRequired": "A closing note is required to complete a task.",
