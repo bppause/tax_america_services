@@ -71,6 +71,11 @@ export default function OwnerSettings() {
       const parts = [t('owner.settings.saved')];
       if (r?.tasksCreated)  parts.push(t('owner.settings.lookahead.created', { n: r.tasksCreated }));
       if (r?.tasksDeleted)  parts.push(t('owner.settings.lookahead.deleted', { n: r.tasksDeleted }));
+      // Temporary diagnostic — the prune's matching signal has been
+      // wrong twice already (source, then period_key, both found blank
+      // on some older rows), so surface exactly what the server saw
+      // this time instead of guessing a third filter blind.
+      if (r?.pruneDebug) parts.push(`debug: ${JSON.stringify(r.pruneDebug)}`);
       setMsg({ kind: 'success', text: parts.join(' · ') });
       load();
     } catch (e) {

@@ -2205,22 +2205,46 @@ ${closingHtml}
     const cutoff = new Date();
     cutoff.setUTCMonth(cutoff.getUTCMonth() + Math.max(1, lookaheadMonths));
     const cutoffIso = cutoff.toISOString().slice(0, 10);
-    const { data: rows } = await supabase.from('tax_tasks')
-      .select('id')
+    // Fetch every open task beyond the cutoff with enough columns to
+    // diagnose, not just the ones we currently believe are generator
+    // output — the matching signal has been wrong twice already (first
+    // source, then period_key, both backfilled/blank on sufficiently
+    // old rows), so this surfaces what's actually in the data instead
+    // of guessing a third filter blind.
+    const { data: allBeyond } = await supabase.from('tax_tasks')
+      .select('id, source, period_key, schedule_id, service_auto_task_id, due_date')
       .eq('community_id', communityId)
-      .not('period_key', 'is', null)
       .is('archived_at', null)
       .is('completed_at', null)
       .gt('due_date', cutoffIso)
-      .limit(20000);
-    const dropIds = (rows || []).map(t => t.id);
-    if (!dropIds.length) return { deleted: 0 };
+      .limit(5000);
+    const beyond = allBeyond || [];
+    const debug = {
+      cutoffIso,
+      beyondTotal: beyond.length,
+      withPeriodKey: beyond.filter(r => r.period_key).length,
+      withSource: beyond.filter(r => r.source === 'relationship_schedule').length,
+      withScheduleOrAutoTask: beyond.filter(r => r.schedule_id || r.service_auto_task_id).length,
+      sample: beyond.slice(0, 5).map(r => ({
+        due_date: r.due_date, source: r.source,
+        period_key: r.period_key, schedule_id: r.schedule_id,
+        service_auto_task_id: r.service_auto_task_id,
+      })),
+    };
+    // Still delete using the best signal we have (period_key, falling
+    // back to schedule_id/service_auto_task_id being set — both are
+    // also generator-exclusive, same as period_key, in case period_key
+    // itself is blank on very old rows but one of these survived).
+    const dropIds = beyond
+      .filter(r => r.period_key || r.schedule_id || r.service_auto_task_id)
+      .map(r => r.id);
+    if (!dropIds.length) return { deleted: 0, debug };
     const { error } = await supabase.from('tax_tasks').delete().in('id', dropIds);
     if (error) {
       warn('[tax-task-prune] delete failed', error.message);
-      return { deleted: 0, error: error.message };
+      return { deleted: 0, error: error.message, debug };
     }
-    return { deleted: dropIds.length };
+    return { deleted: dropIds.length, debug };
   }
 
   // Manual trigger — useful for development + as a one-off
@@ -3442,19 +3466,20 @@ ${closingHtml}
     if (error) return sendSupabaseError(res, error);
 
     // Keep recurring tasks consistent with the new horizon. Both helpers
-    // are idempotent and only touch source='relationship_schedule' rows
-    // that are still open — completed history and manual one-offs are
-    // preserved regardless of direction.
+    // are idempotent and only touch generator-created rows that are
+    // still open — completed history and manual one-offs are preserved
+    // regardless of direction.
     //   • Prune: drops auto-generated tasks whose due_date now falls
     //     past the new cutoff (no-op when the value increased).
     //   • Refresh: regenerates the missing future tasks across all
     //     active customer-services in this community (no-op when the
     //     value decreased, since the existing rows already cover the
     //     shorter horizon).
-    let tasksDeleted = 0, tasksCreated = 0;
+    let tasksDeleted = 0, tasksCreated = 0, pruneDebug = null;
     try {
       const r = await pruneTasksBeyondLookahead({ communityId: communitySlug, lookaheadMonths: months });
       tasksDeleted = r.deleted || 0;
+      pruneDebug = r.debug || null;
     } catch (e) { warn('[tax-lookahead] prune failed', e?.message || e); }
     try {
       const r = await refreshRecurringTasksForCommunity(communitySlug);
@@ -3469,7 +3494,7 @@ ${closingHtml}
         after: { months, tasksDeleted, tasksCreated },
       });
     } catch (_e) {}
-    res.json({ ok: true, months, tasksDeleted, tasksCreated });
+    res.json({ ok: true, months, tasksDeleted, tasksCreated, pruneDebug });
   });
 
   // Public tax-calendar horizon: how many months of recurring
