@@ -2138,11 +2138,24 @@ ${closingHtml}
     // Phase 4n.48: walk the new tax_customer_services join first.
     // Each (customer, product) row fires the per-product generator;
     // idempotent — existing tasks are no-ops.
-    const { data: svcRows } = await supabase
+    const { data: svcRows, error: svcErr } = await supabase
       .from('tax_customer_services')
       .select('customer_id, product_id')
       .eq('active', true)
       .limit(20000);
+    // The query's error was never checked before — a real failure here
+    // (bad column, connection hiccup, etc.) would silently look like
+    // "0 active services" with no way to tell the difference. Surface
+    // it, and also report the raw active-row count independent of this
+    // query succeeding, to settle whether 0 scanned means "no error,
+    // genuinely nothing active" or something else entirely.
+    let svcQueryError = svcErr ? (svcErr.message || String(svcErr)) : null;
+    let activeServiceRowCount = null;
+    try {
+      const { count } = await supabase.from('tax_customer_services')
+        .select('id', { count: 'exact', head: true }).eq('active', true);
+      activeServiceRowCount = count ?? null;
+    } catch (_e) { /* best-effort diagnostic only */ }
     for (const r of svcRows || []) {
       scanned++;
       try {
@@ -2158,7 +2171,7 @@ ${closingHtml}
     // retired for customer tagging — services drive everything now,
     // and the schema migration cleared those rows. The cron loop
     // intentionally no longer iterates that table.
-    return { scanned, created };
+    return { scanned, created, svcQueryError, activeServiceRowCount };
   }
 
   // Per-community variant of refreshAllRelationshipTasks. Walks just
