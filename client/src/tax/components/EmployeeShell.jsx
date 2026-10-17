@@ -49,7 +49,7 @@ function NavGroup({ groupKey, label, children, defaultCollapsed = false }) {
 // employees; staff see only the "Work" items relevant to them.
 export default function EmployeeShell({ community, active, children }) {
   const { t, locale } = useT();
-  const { fbUser, employee, signOut, impersonation, exitImpersonation, customerAccess } = useEmployeeAuth();
+  const { fbUser, employee, signOut, switchAccount, impersonation, exitImpersonation, customerAccess } = useEmployeeAuth();
   const base = community ? `/tax/${community.id}/employee` : '#';
   const isAdmin = employee?.role === 'admin';
   // Owner-wide setting (Settings → Admin/staff view) — trims the sidebar
@@ -335,6 +335,12 @@ export default function EmployeeShell({ community, active, children }) {
                 )}
               </div>
               <LocaleSwitcher />
+              {!impersonation && (
+                <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={switchAccount}
+                        title={t('employee.switchAccount.hint')}>
+                  {t('employee.switchAccount')}
+                </button>
+              )}
               <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={signOut}>
                 {t('portal.signout')}
               </button>
