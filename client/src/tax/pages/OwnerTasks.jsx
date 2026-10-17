@@ -39,34 +39,37 @@ function formatDuration(totalSeconds) {
   return `${h}h ${m}m`;
 }
 
-// Inline completion-note prompt. When a status change would move the
-// task into a terminal bucket and there's no existing note (or the
-// patch isn't already supplying one), prompt the user via
-// window.prompt and merge the result into the patch. Returns null
-// when the user cancels — the caller should skip the API call.
-// Keeps the inline status dropdown and the Kanban drag-drop from
-// surprising the user with a server 400.
+// Inline status-change-note prompt. Any status change — not just one
+// that moves a task into a terminal bucket — gets a note, so prompt
+// the user via window.prompt (unless the patch already carries one,
+// or the task already has one) and merge the result into the patch.
+// Returns null when the user cancels — the caller should skip the API
+// call. Keeps the inline status dropdown and the Kanban drag-drop from
+// surprising the user with a server 400. The prompt copy still calls
+// out "closing note" specifically when the target status is terminal
+// (the server gates completion on it too), and a plainer "what
+// changed" note otherwise.
 //
-// task.notes stays the legacy single field the server still gates
-// completion on (no server-side change needed), but a freshly-prompted
+// task.notes stays the legacy single field the server gates status
+// changes on (no server-side change needed), but a freshly-prompted
 // note also belongs in the collaborative notes log (see TaskNotesSection
-// below) so completion notes show up in that shared history too —
-// `onNewNote(trimmedNote)`, when supplied, fires for exactly that case
-// (never for an already-existing note, which would just duplicate it).
-export function ensureCompletionNotes({ statuses, task, patch, t, onNewNote }) {
-  if (!patch || !patch.statusKey) return patch;
-  const target = (statuses || []).find(s => s.key === patch.statusKey);
-  if (!target?.is_terminal) return patch;
+// below) so it shows up in that shared history too — `onNewNote(trimmedNote)`,
+// when supplied, fires for exactly that case (never for an
+// already-existing note, which would just duplicate it).
+export function ensureStatusChangeNotes({ statuses, task, patch, t, onNewNote }) {
+  if (!patch || !patch.statusKey || patch.statusKey === task?.status_key) return patch;
   const incoming = String(patch.notes || '').trim();
   const existing = String(task?.notes || '').trim();
   if (incoming || existing) return patch;
+  const target = (statuses || []).find(s => s.key === patch.statusKey);
+  const promptKey = target?.is_terminal ? 'owner.tasks.completeNotesPrompt' : 'owner.tasks.statusChangeNotesPrompt';
   const note = typeof window !== 'undefined'
-    ? window.prompt(t('owner.tasks.completeNotesPrompt'))
+    ? window.prompt(t(promptKey))
     : null;
   if (note === null) return null;
   const trimmed = String(note).trim();
   if (!trimmed) {
-    if (typeof window !== 'undefined') window.alert(t('owner.tasks.completeNotesRequired'));
+    if (typeof window !== 'undefined') window.alert(t('owner.tasks.statusChangeNotesRequired'));
     return null;
   }
   onNewNote?.(trimmed);
@@ -967,11 +970,11 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   const prCol = priorityColorOf(task.priority, community);
 
   const update = async (patch) => {
-    // Completing a task requires a closing note — see the server-side
-    // notes_required_on_complete check. Prompt the owner inline when
-    // the row's status is being flipped to terminal and there's no
-    // note yet, so the server round-trip never has to fail.
-    const finalPatch = ensureCompletionNotes({
+    // Any status change requires a note — see the server-side
+    // notes_required_on_status_change check. Prompt the owner inline
+    // when the row's status is being changed and there's no note yet,
+    // so the server round-trip never has to fail.
+    const finalPatch = ensureStatusChangeNotes({
       statuses, task, patch, t,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, task.id, { body }).catch(() => {}),
     });
@@ -1403,7 +1406,7 @@ function TaskFormModal({
   // through the same path — single source of truth, same completion-
   // notes prompt.
   const onProgressSetStatus = (key) => {
-    const patch = ensureCompletionNotes({
+    const patch = ensureStatusChangeNotes({
       statuses, task: { ...task, notes }, patch: { statusKey: key }, t,
       // Create mode has no task.id yet — the prompted note still lands
       // in local `notes` state below and gets seeded into the log once
@@ -3070,7 +3073,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     if (!id) return;
     const task = tasks.find(tt => tt.id === id);
     if (!task || task.status_key === targetKey) return;
-    const patch = ensureCompletionNotes({
+    const patch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
     });
