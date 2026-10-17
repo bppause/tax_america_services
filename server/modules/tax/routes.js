@@ -70,6 +70,8 @@ module.exports = function createTaxRouter(deps) {
     sendTaxLeadEmail,
     sendTaxTaskAssignedEmail,
     sendTaxTaskStatusChangedEmail,
+    sendTaxTaskPendingReviewEmail,
+    sendTaxTaskReviewDecisionEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
@@ -339,7 +341,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.get('x-tax-community') || '', 200);
     if (uid && email && communitySlug) {
       const { data: emp } = await supabase.from('tax_employees')
-        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner')
+        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner, is_seed_owner')
         .eq('email', email).eq('community_id', communitySlug).maybeSingle();
       if (emp && emp.status === 'active' && emp.role === 'admin' &&
           (!emp.firebase_uid || emp.firebase_uid === uid)) {
@@ -362,6 +364,14 @@ module.exports = function createTaxRouter(deps) {
   // Otherwise only the employee row flagged is_owner does.
   function actorIsOwner(actor) {
     return actor?.source === 'global' || !!actor?.employee?.is_owner;
+  }
+
+  // The seeded owner is the one account whose owner status is
+  // permanent and who alone can grant or revoke is_owner on anyone
+  // else — see PUT /admin/employees/:id/owner. A global admin still
+  // outranks everyone, same as actorIsOwner above.
+  function actorIsSeedOwner(actor) {
+    return actor?.source === 'global' || !!actor?.employee?.is_seed_owner;
   }
 
   // ── GET /community/:slug ────────────────────────────────────────────────────
@@ -2582,6 +2592,121 @@ ${closingHtml}
     }
   }
 
+  // Notify every owner in a task's community the moment it lands on
+  // "Pending review" — the whole point of the review queue is that it
+  // needs the owner to actually look at it, so this fires once, right
+  // when PATCH /admin/tasks/:id parks the task there (see
+  // stillRequiresReview below), not on every subsequent edit.
+  async function notifyOwnersTaskPendingReview({ taskId, actor }) {
+    try {
+      const { data: task } = await supabase.from('tax_tasks')
+        .select(`
+          id, community_id, title, due_date, priority,
+          customer:tax_customers ( id, name, business_name, email )
+        `).eq('id', taskId).maybeSingle();
+      if (!task) return;
+      const { data: owners } = await supabase.from('tax_employees')
+        .select('id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs')
+        .eq('community_id', task.community_id).eq('is_owner', true).neq('status', 'archived');
+      if (!owners || !owners.length) return;
+      const { data: community } = await supabase.from('communities')
+        .select('id, name').eq('id', task.community_id).maybeSingle();
+      for (const owner of owners) {
+        if (actor && owner.id === actor.id) continue;
+        const channels = getEmployeeChannels(owner, 'task_pending_review');
+        if (channels.includes('in_app')) {
+          await supabase.from('tax_employee_notifications').insert({
+            id: 'tenot_' + uuidv4().slice(0, 12),
+            community_id: task.community_id,
+            employee_id: owner.id,
+            type: 'task_pending_review',
+            title_i18n: {
+              es: `Pendiente de tu revisión: ${task.title}`,
+              en: `Awaiting your review: ${task.title}`,
+            },
+            body_i18n: {
+              es: 'Una tarea está esperando tu aprobación para contar como completada.',
+              en: 'A task is waiting on your approval to count as completed.',
+            },
+            payload: { taskId },
+          });
+        }
+        if (channels.includes('email')
+            && owner.email
+            && typeof sendTaxTaskPendingReviewEmail === 'function'
+            && await communityStaffEmailFlag(task.community_id, 'tax_staff_email_task_pending_review_enabled')) {
+          await sendTaxTaskPendingReviewEmail({
+            community: community || { id: task.community_id, name: '' },
+            task, owner, actor,
+          });
+        }
+      }
+    } catch (e) {
+      warn('[tax-task-review] owner notify failed', e?.message || e);
+    }
+  }
+
+  // Notify a task's assignee once the owner acts on their review —
+  // approved (done), or sent back with a note on what still needs
+  // work. Reuses the task_status_changed notification type/toggle
+  // (the review decision IS a status change, from the assignee's
+  // point of view) rather than adding yet another type to configure.
+  async function notifyTaskReviewDecision({ taskId, decision, note, newStatusKey, actor }) {
+    try {
+      const { data: task } = await supabase.from('tax_tasks')
+        .select(`
+          id, community_id, title, due_date, priority, assigned_employee_id,
+          customer:tax_customers ( id, name, business_name, email )
+        `).eq('id', taskId).maybeSingle();
+      if (!task || !task.assigned_employee_id) return;
+      if (actor && task.assigned_employee_id === actor.id) return;
+      const [{ data: assignee }, { data: community }, { data: statusOpt }] = await Promise.all([
+        supabase.from('tax_employees')
+          .select('id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs')
+          .eq('id', task.assigned_employee_id).maybeSingle(),
+        supabase.from('communities').select('id, name').eq('id', task.community_id).maybeSingle(),
+        supabase.from('tax_task_status_options')
+          .select('key, label_i18n').eq('community_id', task.community_id).eq('key', newStatusKey).maybeSingle(),
+      ]);
+      if (!assignee || assignee.status === 'archived') return;
+      const assigneeLang = assignee.locale === 'en' ? 'en' : 'es';
+      const newStatusLabel = (statusOpt && (statusOpt.label_i18n?.[assigneeLang] || statusOpt.label_i18n?.es || statusOpt.label_i18n?.en)) || newStatusKey;
+      const channels = getEmployeeChannels(assignee, 'task_status_changed');
+      if (channels.includes('in_app')) {
+        await supabase.from('tax_employee_notifications').insert({
+          id: 'tenot_' + uuidv4().slice(0, 12),
+          community_id: task.community_id,
+          employee_id: assignee.id,
+          type: 'task_status_changed',
+          title_i18n: decision === 'approve'
+            ? { es: `Tarea aprobada: ${task.title}`, en: `Task approved: ${task.title}` }
+            : { es: `Se solicitaron cambios: ${task.title}`, en: `Changes requested: ${task.title}` },
+          body_i18n: decision === 'approve'
+            ? {
+                es: note ? `El propietario aprobó esta tarea. Nota: ${note}` : 'El propietario aprobó esta tarea.',
+                en: note ? `The owner approved this task. Note: ${note}` : 'The owner approved this task.',
+              }
+            : {
+                es: `El propietario pidió cambios y la tarea volvió a "${newStatusLabel}". Motivo: ${note}`,
+                en: `The owner requested changes and the task moved back to "${newStatusLabel}". Reason: ${note}`,
+              },
+          payload: { taskId, decision, note: note || '' },
+        });
+      }
+      if (channels.includes('email')
+          && assignee.email
+          && typeof sendTaxTaskReviewDecisionEmail === 'function'
+          && await communityStaffEmailFlag(task.community_id, 'tax_staff_email_task_status_changed_enabled')) {
+        await sendTaxTaskReviewDecisionEmail({
+          community: community || { id: task.community_id, name: '' },
+          task, assignee, actor, decision, note, newStatusLabel,
+        });
+      }
+    } catch (e) {
+      warn('[tax-task-review] assignee notify failed', e?.message || e);
+    }
+  }
+
   // Shared welcome-email plumbing — loads the customer, community, and the
   // current relationships, builds the portal URL, hands off to the email
   // sender. Audit-logged.
@@ -3726,6 +3851,7 @@ ${closingHtml}
     lead:              'tax_staff_email_lead_enabled',
     task_assigned:     'tax_staff_email_task_assigned_enabled',
     task_status_changed: 'tax_staff_email_task_status_changed_enabled',
+    task_pending_review: 'tax_staff_email_task_pending_review_enabled',
     message:           'tax_staff_email_message_enabled',
     signature_signed:  'tax_staff_email_signature_signed_enabled',
     staff_welcome:     'tax_staff_email_welcome_enabled',
@@ -3961,7 +4087,7 @@ ${closingHtml}
         tax_email_message_enabled, tax_email_signature_enabled,
         tax_staff_emails_master_enabled,
         tax_staff_email_lead_enabled, tax_staff_email_task_assigned_enabled,
-        tax_staff_email_task_status_changed_enabled,
+        tax_staff_email_task_status_changed_enabled, tax_staff_email_task_pending_review_enabled,
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
@@ -8205,6 +8331,7 @@ ${closingHtml}
     //      review look identical to one that was actually done.
     //      review_target_status_key remembers what was actually
     //      requested, so approval can restore it.
+    let enteredPendingReview = false;
     if (update.status_key && update.status_key !== cur.status_key) {
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
@@ -8236,7 +8363,11 @@ ${closingHtml}
           update.review_target_status_key = update.status_key;
           update.status_key = await ensurePendingReviewStatus(cur.community_id);
           update.pending_review_at = new Date().toISOString();
-          // completed_at stays null until the reviewer approves.
+          // completed_at stays null until the reviewer approves. Only
+          // freshly entering the queue (not already sitting in it)
+          // triggers the owner notification below — otherwise every
+          // unrelated edit to an already-pending task would re-notify.
+          enteredPendingReview = cur.status_key !== update.status_key;
         } else {
           update.completed_at = new Date().toISOString();
         }
@@ -8277,6 +8408,9 @@ ${closingHtml}
         newStatusKey: update.status_key,
         actor: emp,
       });
+    }
+    if (enteredPendingReview) {
+      await notifyOwnersTaskPendingReview({ taskId, actor: emp });
     }
     res.json({ ok: true });
   });
@@ -8356,6 +8490,15 @@ ${closingHtml}
     if (!['approve', 'reject'].includes(decision)) {
       return res.status(400).json({ error: 'decision must be approve or reject.' });
     }
+    // Rejecting sends the task back to the preparer with nothing but a
+    // status change unless the owner says why — require the note so
+    // the assignee actually knows what's left to do.
+    if (decision === 'reject' && !note) {
+      return res.status(400).json({
+        error: 'note_required',
+        message: 'Add a note explaining why this task still needs work before sending it back.',
+      });
+    }
     const { data: cur } = await supabase.from('tax_tasks')
       .select('id, community_id, pending_review_at, reviewed_at, status_key, notes, review_target_status_key')
       .eq('id', taskId).maybeSingle();
@@ -8383,16 +8526,17 @@ ${closingHtml}
       update.status_key = cur.review_target_status_key || cur.status_key;
     } else {
       update.pending_review_at = null; // back to in-flight; preparer fixes and re-completes
-      // Move off "Pending review" back to a working status so the
-      // board doesn't show a stuck task with nothing actionable left
-      // to do about it.
+      // Move explicitly back to "In progress" — rejecting means there's
+      // more work to do, not just "somewhere non-terminal". Falls back
+      // to the first other non-terminal, non-pending-review status if
+      // a community has renamed or removed that key.
       const { data: statusOpts } = await supabase.from('tax_task_status_options')
         .select('key, display_order, is_terminal')
         .eq('community_id', cur.community_id)
         .order('display_order', { ascending: true });
-      const reopenStatus = (statusOpts || [])
-        .find(s => !s.is_terminal && s.key !== 'pending_review')?.key;
-      if (reopenStatus) update.status_key = reopenStatus;
+      const reopenStatus = (statusOpts || []).find(s => s.key === 'in_progress' && !s.is_terminal)
+        || (statusOpts || []).find(s => !s.is_terminal && s.key !== 'pending_review');
+      if (reopenStatus) update.status_key = reopenStatus.key;
     }
     const { error } = await supabase.from('tax_tasks').update(update).eq('id', taskId);
     if (error) return sendSupabaseError(res, error);
@@ -8403,6 +8547,11 @@ ${closingHtml}
         after: { note: note ? note.slice(0, 200) : '' },
       });
     } catch (_e) {}
+    await notifyTaskReviewDecision({
+      taskId, decision, note,
+      newStatusKey: update.status_key || cur.status_key,
+      actor: emp,
+    });
     res.json({ ok: true, decision });
   });
 
@@ -11394,7 +11543,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -11410,7 +11559,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -11448,6 +11597,7 @@ ${closingHtml}
       preferredCommunicationEmail: e.preferred_communication_email || '',
       locale: e.locale, role: e.role, status: e.status,
       is_owner: !!e.is_owner,
+      is_seed_owner: !!e.is_seed_owner,
       notificationChannels: Array.isArray(e.notification_channels) ? e.notification_channels : ['in_app'],
       notificationPrefs: (e.notification_prefs && typeof e.notification_prefs === 'object') ? e.notification_prefs : {},
       // Effective permissions map. Only revoked keys are stored
@@ -11492,6 +11642,19 @@ ${closingHtml}
         es: 'Cuando cambia el estado de una tarea asignada a usted (por otra persona, o un flujo automático).',
       },
       default_channels: ['in_app'],
+    },
+    {
+      key: 'task_pending_review',
+      label_i18n: { en: 'Task awaiting your review', es: 'Tarea esperando su revisión' },
+      description_i18n: {
+        en: 'Owner-only. When a task is submitted for review and needs your approval before it counts as done.',
+        es: 'Solo propietario. Cuando una tarea se envía a revisión y necesita su aprobación antes de contar como terminada.',
+      },
+      // Defaults to both channels (unlike the other task types, which
+      // default to in_app only) — a task sits stuck until the owner
+      // acts, so this one shouldn't rely on them happening to check
+      // the portal's bell.
+      default_channels: ['in_app', 'email'],
     },
   ];
 
@@ -12278,7 +12441,7 @@ ${closingHtml}
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -12465,43 +12628,51 @@ ${closingHtml}
   });
 
   // PUT /admin/employees/:id/owner — grant or revoke owner status.
-  // Self-service version of the one-off SQL seed: lets the current
-  // owner hand the role to someone else (or add a second owner)
-  // without needing a schema migration every time. Only an existing
-  // owner (or a global admin) can call this.
+  // Self-service version of the one-off SQL seed: lets the seed owner
+  // hand the role to someone else (or add a second owner) without
+  // needing a schema migration every time. Only the seeded owner (or a
+  // global admin) can call this — a regular owner they've promoted
+  // can't grant or revoke anyone else's owner status, including their
+  // own. That keeps exactly one account always able to fix a mistake,
+  // instead of any current owner being able to lock the others out.
   router.put('/admin/employees/:id/owner', async (req, res) => {
     const actor = await requireOwnerAdmin(req, res, 'manage_employees');
     if (!actor) return;
-    if (!actorIsOwner(actor)) {
+    if (!actorIsSeedOwner(actor)) {
       return res.status(403).json({
-        error: 'owner_required',
-        message: 'Only the owner can grant or revoke owner status.',
+        error: 'seed_owner_required',
+        message: 'Only the original owner can grant or revoke owner status.',
       });
     }
     const empId = trim(req.params.id, 200);
     const nextIsOwner = !!req.body?.isOwner;
 
     const { data: existing } = await supabase.from('tax_employees')
-      .select('id, email, community_id, role, is_owner').eq('id', empId).maybeSingle();
+      .select('id, email, community_id, role, is_owner, is_seed_owner').eq('id', empId).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Employee not found.' });
 
-    if (nextIsOwner && existing.role !== 'admin') {
-      return res.status(400).json({ error: 'must_be_admin', message: 'Only an admin can be made owner.' });
-    }
-    // Block revoking your own owner status — same lockout guard as role
-    // and manage_employees. If you want to hand it off, grant it to
-    // someone else first, then revoke your own from their account.
-    if (actor.source === 'employee' && actor.employee?.id === empId && !nextIsOwner) {
+    // The seed owner's own status is permanent — never revocable (and
+    // there's nothing to "grant" since it's already set). Without this,
+    // the one account guaranteed to always have authority could be
+    // stripped of it.
+    if (existing.is_seed_owner) {
       return res.status(409).json({
-        error: 'cannot_revoke_self',
-        message: 'You can\'t revoke your own owner status — grant it to someone else first.',
+        error: 'cannot_modify_seed_owner',
+        message: 'The original owner\'s status can\'t be changed here.',
       });
     }
 
-    if (nextIsOwner === existing.is_owner) return res.json({ ok: true, is_owner: nextIsOwner });
+    if (nextIsOwner === existing.is_owner) return res.json({ ok: true, is_owner: nextIsOwner, role: existing.role });
 
+    const update = { is_owner: nextIsOwner, updated_at: new Date().toISOString() };
+    // Owner outranks admin — granting owner to a staff member promotes
+    // them to admin in the same step, rather than making the seed owner
+    // promote to admin first and grant owner as a separate action.
+    if (nextIsOwner && existing.role !== 'admin') {
+      update.role = 'admin';
+    }
     const { error } = await supabase.from('tax_employees')
-      .update({ is_owner: nextIsOwner, updated_at: new Date().toISOString() })
+      .update(update)
       .eq('id', empId);
     if (error) return sendSupabaseError(res, error);
 
@@ -12509,10 +12680,11 @@ ${closingHtml}
       await auditLog({
         entity: 'tax.employee', entityId: empId, action: 'set_owner',
         actorEmail: actor.email || '',
-        before: { is_owner: existing.is_owner }, after: { is_owner: nextIsOwner },
+        before: { is_owner: existing.is_owner, role: existing.role },
+        after: { is_owner: nextIsOwner, role: update.role || existing.role },
       });
     } catch (_e) {}
-    res.json({ ok: true, is_owner: nextIsOwner });
+    res.json({ ok: true, is_owner: nextIsOwner, role: update.role || existing.role });
   });
 
   // PUT /admin/employees/:id/public-profile — owner sets the homepage

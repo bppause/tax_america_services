@@ -1920,6 +1920,166 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // Notification to a community's owner(s) when a task lands on
+  // "Pending review" and needs their sign-off before it counts as
+  // done. Fires once per entry into the queue — see
+  // notifyOwnersTaskPendingReview in routes.js.
+  const sendTaxTaskPendingReviewEmail = async ({ community, task, owner, actor }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(owner?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Owner has no email.' };
+
+    const lang = (owner && owner.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const taskUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
+    const actorLabel = (actor && (actor.name || actor.email)) || '';
+    const ownerFirst = firstNameOf(owner) || '';
+    const customerLine = task.customer
+      ? (task.customer.business_name || task.customer.name || task.customer.email || '')
+      : '';
+
+    const subjectDefault = lang === 'en'
+      ? `Awaiting your review: ${task.title}`
+      : `Pendiente de tu revisión: ${task.title}`;
+    const greeting = lang === 'en'
+      ? (ownerFirst ? `Hi ${ownerFirst},` : 'Hi,')
+      : (ownerFirst ? `Hola ${ownerFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? (actorLabel
+          ? `${actorLabel} submitted a task for your review on ${community.name}. It won't count as done until you approve it.`
+          : `A task was submitted for your review on ${community.name}. It won't count as done until you approve it.`)
+      : (actorLabel
+          ? `${actorLabel} envió una tarea a tu revisión en ${community.name}. No contará como terminada hasta que la apruebes.`
+          : `Se envió una tarea a tu revisión en ${community.name}. No contará como terminada hasta que la apruebes.`);
+    const cta = lang === 'en' ? 'Review this task →' : 'Revisar esta tarea →';
+    const dueLabel = lang === 'en' ? 'Due' : 'Vence';
+    const customerLabel = lang === 'en' ? 'Customer' : 'Cliente';
+
+    const textLines = [
+      greeting, '', intro, '',
+      task.title,
+      task.due_date ? `${dueLabel}: ${task.due_date}` : '',
+      customerLine ? `${customerLabel}: ${customerLine}` : '',
+      '', `${cta} ${taskUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#fffbeb;padding:14px 16px;border-radius:8px;margin:14px 0;border:1px solid #fde68a">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(task.title)}</div>
+          ${task.due_date ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(dueLabel)}:</strong> ${escapeHtml(task.due_date)}</div>` : ''}
+          ${customerLine ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(customerLabel)}:</strong> ${escapeHtml(customerLine)}</div>` : ''}
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(taskUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      owner_name: displayNameOf(owner) || owner.email || '',
+      owner_first_name: ownerFirst,
+      actor_name: actorLabel,
+      task_title: task.title,
+      task_due: task.due_date || '',
+      task_url: taskUrl,
+      customer_name: customerLine,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'task_pending_review', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    return sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+  };
+
+  // Notification to a task's assignee once the owner acts on their
+  // review — approved (done), or sent back with a note on what still
+  // needs work. See notifyTaskReviewDecision in routes.js.
+  const sendTaxTaskReviewDecisionEmail = async ({ community, task, assignee, actor, decision, note, newStatusLabel }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(assignee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Assignee has no email.' };
+
+    const lang = (assignee && assignee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const taskUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
+    const actorLabel = (actor && (actor.name || actor.email)) || '';
+    const assigneeFirst = firstNameOf(assignee) || '';
+    const approved = decision === 'approve';
+
+    const subjectDefault = approved
+      ? (lang === 'en' ? `Task approved: ${task.title}` : `Tarea aprobada: ${task.title}`)
+      : (lang === 'en' ? `Changes requested: ${task.title}` : `Se solicitaron cambios: ${task.title}`);
+    const greeting = lang === 'en'
+      ? (assigneeFirst ? `Hi ${assigneeFirst},` : 'Hi,')
+      : (assigneeFirst ? `Hola ${assigneeFirst},` : 'Hola,');
+    const intro = approved
+      ? (lang === 'en'
+          ? `${actorLabel || 'The owner'} approved your task on ${community.name} — it now counts as done.`
+          : `${actorLabel || 'El propietario'} aprobó tu tarea en ${community.name} — ahora cuenta como terminada.`)
+      : (lang === 'en'
+          ? `${actorLabel || 'The owner'} reviewed your task on ${community.name} and sent it back — it still needs work.`
+          : `${actorLabel || 'El propietario'} revisó tu tarea en ${community.name} y la devolvió — todavía necesita trabajo.`);
+    const cta = lang === 'en' ? 'Open this task →' : 'Abrir esta tarea →';
+    const statusLabel = lang === 'en' ? 'Status' : 'Estado';
+    const noteLabel = lang === 'en' ? 'Note from the owner' : 'Nota del propietario';
+
+    const textLines = [
+      greeting, '', intro, '',
+      task.title,
+      newStatusLabel ? `${statusLabel}: ${newStatusLabel}` : '',
+      note ? `${noteLabel}: ${note}` : '',
+      '', `${cta} ${taskUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:${approved ? '#f0fdf4' : '#fef2f2'};padding:14px 16px;border-radius:8px;margin:14px 0;border:1px solid ${approved ? '#bbf7d0' : '#fecaca'}">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(task.title)}</div>
+          ${newStatusLabel ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(statusLabel)}:</strong> ${escapeHtml(newStatusLabel)}</div>` : ''}
+          ${note ? `<div style="margin-top:8px;color:#333"><strong>${escapeHtml(noteLabel)}:</strong><br>${escapeHtml(note)}</div>` : ''}
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(taskUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      assignee_name: displayNameOf(assignee) || assignee.email || '',
+      assignee_first_name: assigneeFirst,
+      actor_name: actorLabel,
+      task_title: task.title,
+      task_url: taskUrl,
+      decision,
+      note: note || '',
+      new_status: newStatusLabel || '',
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'task_review_decision', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    return sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+  };
+
   // Daily digest for owners + staff. Composed by the digest cron from
   // counts + a list of priority items the employee should act on today.
   // Skipped at the caller level when there's nothing to report (no
@@ -2268,6 +2428,8 @@ module.exports = function createTaxSenders(deps) {
     sendTaxLeadConfirmationEmail,
     sendTaxTaskAssignedEmail,
     sendTaxTaskStatusChangedEmail,
+    sendTaxTaskPendingReviewEmail,
+    sendTaxTaskReviewDecisionEmail,
     sendTaxDailyDigestEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,

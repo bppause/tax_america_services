@@ -1410,17 +1410,29 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
 
 // "Owner" sits above admin — only an owner can create or promote
 // another admin, and only an owner can sign off a task someone else
-// completed (no delegation to a non-owner admin). Self-service hand-off
-// so granting it doesn't require another database migration: the
-// current owner grants it here, the same way RoleSwitcher promotes
-// staff to admin. Anyone who isn't an owner just sees a read-only
-// badge when the row they're viewing has it.
+// completed (no delegation to a non-owner admin). Granting/revoking it
+// on anyone else is reserved for the seed owner specifically (see
+// PUT /admin/employees/:id/owner) — a regular owner they've promoted
+// can't touch anyone's owner status, including their own, so there's
+// always exactly one account that can fix a mistake. Staff (not just
+// admins) can be targeted: granting owner to a staff member promotes
+// them to admin in the same step.
 function OwnerToggle({ emp, me, auth, onSaved, t }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const isSelf = emp.id === me?.id;
 
-  if (!me?.is_owner) {
+  // The seed owner's own status is permanent — shown as a fixed badge,
+  // never editable, not even by themselves.
+  if (emp.is_seed_owner) {
+    return (
+      <span style={{
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', background: '#fef3c7', color: '#92400e',
+      }}>{t('owner.staffDetail.owner.badge')}</span>
+    );
+  }
+
+  if (!me?.is_seed_owner) {
     return emp.is_owner ? (
       <span style={{
         padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
@@ -1428,7 +1440,6 @@ function OwnerToggle({ emp, me, auth, onSaved, t }) {
       }}>{t('owner.staffDetail.owner.badge')}</span>
     ) : null;
   }
-  if (emp.role !== 'admin') return null; // only an admin can be made owner
 
   const onChange = async (next) => {
     setBusy(true); setErr('');
@@ -1445,12 +1456,12 @@ function OwnerToggle({ emp, me, auth, onSaved, t }) {
       <label style={{
         display: 'inline-flex', alignItems: 'center', gap: 6,
         padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-        textTransform: 'uppercase', cursor: (busy || (isSelf && emp.is_owner)) ? 'not-allowed' : 'pointer',
+        textTransform: 'uppercase', cursor: busy ? 'not-allowed' : 'pointer',
         background: emp.is_owner ? '#fef3c7' : 'var(--tax-bg-alt)',
         color: emp.is_owner ? '#92400e' : 'var(--tax-muted)',
-      }} title={isSelf && emp.is_owner ? t('owner.staffDetail.owner.selfHint') : undefined}>
+      }} title={!emp.is_owner && emp.role !== 'admin' ? t('owner.staffDetail.owner.promotesAdmin') : undefined}>
         <input type="checkbox" checked={!!emp.is_owner}
-               disabled={busy || (isSelf && emp.is_owner)}
+               disabled={busy}
                onChange={e => onChange(e.target.checked)}
                style={{ margin: 0 }} />
         {t('owner.staffDetail.owner.badge')}

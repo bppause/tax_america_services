@@ -73,6 +73,29 @@ export function ensureCompletionNotes({ statuses, task, patch, t, onNewNote }) {
   return { ...patch, notes: trimmed };
 }
 
+// When a task requires owner review and hasn't been approved yet,
+// picking a terminal status was never really "mark as done" — the
+// server always redirects it into "Pending review" instead (see
+// stillRequiresReview in PATCH /admin/tasks/:id). Showing the raw
+// terminal label (e.g. "Completed") as a plain option hid that, so a
+// preparer who picked it would be surprised to see "Pending review"
+// after saving. This relabels those options instead of hiding them —
+// the value sent to the server is still the real terminal key
+// unchanged, only the displayed text differs.
+export function statusSelectOptions(statuses, task, t, locale) {
+  const needsReview = !!task?.requires_review && !task?.reviewed_at;
+  return (statuses || []).map(s => {
+    const label = pickI18n(s.label_i18n, locale).value || s.key;
+    return {
+      key: s.key,
+      id: s.id,
+      label: (needsReview && s.is_terminal)
+        ? t('owner.tasks.field.statusSubmitForReview', { status: label })
+        : label,
+    };
+  });
+}
+
 export default function OwnerTasks() {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -1060,8 +1083,8 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
                     border: '1px solid var(--tax-border)',
                     background: `color-mix(in srgb, ${statusBg} 18%, #fff)`,
                   }}>
-            {statuses.map(s => (
-              <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
+            {statusSelectOptions(statuses, task, t, locale).map(opt => (
+              <option key={opt.id} value={opt.key}>{opt.label}</option>
             ))}
           </select>
           <button type="button" onClick={onEdit} disabled={busy}
@@ -1555,10 +1578,15 @@ function TaskFormModal({
             <div>
               <label>{t('owner.tasks.field.status')}</label>
               <select value={statusKey} onChange={e => onProgressSetStatus(e.target.value)}>
-                {statuses.map(s => (
-                  <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
+                {statusSelectOptions(statuses, isEdit ? task : { requires_review: true, reviewed_at: null }, t, locale).map(opt => (
+                  <option key={opt.id} value={opt.key}>{opt.label}</option>
                 ))}
               </select>
+              {(isEdit ? (task.requires_review && !task.reviewed_at) : true) && (
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.statusReviewHint')}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1679,7 +1707,12 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOv
     if (!onSetStatus || !terminalStatus) return;
     if (currentStatus?.is_terminal) return;
     const label = pickI18n(terminalStatus.label_i18n, locale).value || terminalStatus.key;
-    if (window.confirm(t('owner.tasks.progress.nudgeComplete', { status: label }))) {
+    // Matches statusSelectOptions' relabeling above — the server parks
+    // this into "Pending review" either way when review is still
+    // pending, so the confirm shouldn't promise an immediate complete.
+    const needsReview = !!task?.requires_review && !task?.reviewed_at;
+    const promptKey = needsReview ? 'owner.tasks.progress.nudgeCompleteReview' : 'owner.tasks.progress.nudgeComplete';
+    if (window.confirm(t(promptKey, { status: label }))) {
       onSetStatus(terminalStatus.key);
     }
   };
@@ -1750,6 +1783,12 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOv
     finally { setReviewConfigBusy(false); }
   };
   const onReview = async (decision) => {
+    // Sending it back with nothing but a status change leaves the
+    // preparer guessing — matches the server-side note_required check.
+    if (decision === 'reject' && !reviewNote.trim()) {
+      setReviewErr(t('owner.tasks.progress.reviewNoteRequired'));
+      return;
+    }
     setReviewBusy(true); setReviewErr('');
     try {
       await taxApi.adminReviewTask(auth, task.id, { decision, note: reviewNote.trim() });

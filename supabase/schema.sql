@@ -3584,3 +3584,31 @@ where c.business_type = 'tax'
 -- ═══════════════════════════════════════════════════════════════════════════════
 alter table public.communities
   add column if not exists tax_task_review_override_enabled boolean not null default false;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Owner email notification: task awaiting your review
+--
+-- Mirrors the existing per-type staff-email columns (task_assigned,
+-- task_status_changed, …). Defaults ON like those, so an owner who
+-- never opens Settings still gets emailed the moment a task needs
+-- their sign-off, not just the in-app bell.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.communities
+  add column if not exists tax_staff_email_task_pending_review_enabled boolean not null default true;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Seed owner — the one account whose owner status can never be revoked,
+-- and the only account allowed to grant or revoke is_owner on anyone
+-- else via PUT /admin/employees/:id/owner. Previously any current
+-- owner could manage other owners' status; that made it too easy for
+-- someone an owner had just promoted to turn around and lock the
+-- others out. Exactly one row carries this per community, set once
+-- here and never through the self-service endpoint.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_employees
+  add column if not exists is_seed_owner boolean not null default false;
+
+update public.tax_employees
+  set is_seed_owner = true
+  where community_id = 'tax-america-services'
+    and email = 'taxamericaservices@gmail.com';
