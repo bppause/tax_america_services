@@ -1017,7 +1017,10 @@ function DigestScheduleEditor({ settings, busy, t }) {
 
 // current "enabled" value here so a disabled feature starts collapsed,
 // saving vertical space on the screen.
-function CollapsibleSection({ storageKey, defaultOpen, title, subtitle, statusLabel, enabled, children }) {
+// Exported — reused by OwnerStaffDetail.jsx so the staff edit page's
+// sections (Public profile, Permissions, Customer assignments) collapse
+// the same way Settings' sections do, instead of a second copy.
+export function CollapsibleSection({ storageKey, defaultOpen, title, subtitle, statusLabel, enabled, children }) {
   const lsKey = `tax.ownerSettings.${storageKey}.open`;
   const [open, setOpen] = useState(() => {
     try {

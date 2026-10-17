@@ -7,6 +7,7 @@ import { CERT_LIBRARY } from '../lib/certLibrary';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
+import { CollapsibleSection } from './OwnerSettings';
 
 // Category display order mirrors OwnerCustomers so the chip groups feel
 // consistent between the customer browser and the assignment manager.
@@ -82,15 +83,9 @@ export default function OwnerStaffDetail({ employeeId }) {
       <a href={back} style={{ fontSize: 14, color: 'var(--tax-muted)' }}>← {t('owner.staff.back')}</a>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginTop: 8 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <h2 style={{ margin: 0, marginBottom: 4 }}>
-            {displayPersonName(emp) || emp.email}
-            <span style={{
-              marginLeft: 12, padding: '2px 10px', borderRadius: 999,
-              background: emp.role === 'admin' ? 'var(--tax-brand-primary)' : 'var(--tax-bg-alt)',
-              color: emp.role === 'admin' ? '#fff' : 'var(--tax-muted)',
-              fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
-              verticalAlign: 'middle',
-            }}>{emp.role}</span>
+          <h2 style={{ margin: 0, marginBottom: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <span>{displayPersonName(emp) || emp.email}</span>
+            <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
           </h2>
           {/* One-sentence summary of what this person can see, right under
@@ -144,30 +139,32 @@ export default function OwnerStaffDetail({ employeeId }) {
       <PublicProfileCard emp={emp} auth={auth} community={community} onSaved={loadEmployee} t={t} />
       <PermissionsCard emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
 
-      <h3 style={{ marginTop: 32 }}>{t('owner.staffDetail.assignments')}</h3>
-      {emp.role === 'admin' && emp.permissions?.view_customers === false ? (
-        <div className="tax-msg" style={{ background: 'color-mix(in srgb, #6b7280 8%, #fff)',
-                                          color: 'var(--tax-text)', borderLeft: '3px solid #6b7280' }}>
-          <strong>{t('owner.staffDetail.webAdminBanner')}</strong>
-          <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
-            {t('owner.staffDetail.webAdminHint')}
+      <CollapsibleSection storageKey="staffDetail.assignments" defaultOpen={true}
+                           title={t('owner.staffDetail.assignments')}>
+        {emp.role === 'admin' && emp.permissions?.view_customers === false ? (
+          <div className="tax-msg" style={{ background: 'color-mix(in srgb, #6b7280 8%, #fff)',
+                                            color: 'var(--tax-text)', borderLeft: '3px solid #6b7280' }}>
+            <strong>{t('owner.staffDetail.webAdminBanner')}</strong>
+            <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
+              {t('owner.staffDetail.webAdminHint')}
+            </div>
           </div>
-        </div>
-      ) : emp.role === 'admin' ? (
-        <div className="tax-msg" style={{ background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
-                                          color: 'var(--tax-text)', borderLeft: '3px solid var(--tax-brand-primary)' }}>
-          <strong>{t('employee.profile.assignments.adminBanner')}</strong>
-          <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
-            {t('owner.staffDetail.adminHint')}
+        ) : emp.role === 'admin' ? (
+          <div className="tax-msg" style={{ background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
+                                            color: 'var(--tax-text)', borderLeft: '3px solid var(--tax-brand-primary)' }}>
+            <strong>{t('employee.profile.assignments.adminBanner')}</strong>
+            <div style={{ marginTop: 4, color: 'var(--tax-muted)', fontSize: 13 }}>
+              {t('owner.staffDetail.adminHint')}
+            </div>
           </div>
-        </div>
-      ) : (
-        <AssignmentManager
-          assignments={assignments} customers={customers}
-          empId={employeeId} auth={auth}
-          onChange={loadAssignments} t={t}
-          locale={locale} community={community} />
-      )}
+        ) : (
+          <AssignmentManager
+            assignments={assignments} customers={customers}
+            empId={employeeId} auth={auth}
+            onChange={loadAssignments} t={t}
+            locale={locale} community={community} />
+        )}
+      </CollapsibleSection>
     </EmployeeShell>
   );
 }
@@ -840,18 +837,18 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
   };
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-        <h3 style={{ margin: 0 }}>{t('owner.publicProfile.heading')}</h3>
-        {saveStatus === 'saving' && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>Saving…</span>}
-        {saveStatus === 'saved'  && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
-        {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
-          <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{saveStatus}</span>
-        )}
-      </div>
-      <p className="tax-section__lede" style={{ marginTop: 4, marginBottom: 12 }}>
-        {t('owner.publicProfile.sub')}
-      </p>
+    <CollapsibleSection storageKey="staffDetail.publicProfile" defaultOpen={true}
+                         title={
+                           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10 }}>
+                             {t('owner.publicProfile.heading')}
+                             {saveStatus === 'saving' && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-muted)' }}>Saving…</span>}
+                             {saveStatus === 'saved'  && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+                             {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+                               <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-error)' }}>{saveStatus}</span>
+                             )}
+                           </span>
+                         }
+                         subtitle={t('owner.publicProfile.sub')}>
 
       <div style={{
         display: 'grid', gap: 12, maxWidth: 720,
@@ -1051,7 +1048,7 @@ function PublicProfileCard({ emp, auth, community, onSaved, t }) {
         </label>
 
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1172,11 +1169,9 @@ function PermissionsCard({ emp, me, auth, onSaved, t }) {
   const isSelf = me?.id === emp.id;
 
   return (
-    <section style={{ marginTop: 32 }}>
-      <h3 style={{ margin: 0 }}>{t('owner.permissions.heading')}</h3>
-      <p className="tax-section__lede" style={{ marginTop: 4, marginBottom: 12 }}>
-        {t('owner.permissions.sub', { defaultText: '' })}
-      </p>
+    <CollapsibleSection storageKey="staffDetail.permissions" defaultOpen={true}
+                         title={t('owner.permissions.heading')}
+                         subtitle={t('owner.permissions.sub', { defaultText: '' })}>
       {isSelf && (
         <div className="tax-msg" style={{
           background: 'color-mix(in srgb, #92400e 8%, #fff)',
@@ -1241,7 +1236,7 @@ function PermissionsCard({ emp, me, auth, onSaved, t }) {
           </span>
         )}
       </div>
-    </section>
+    </CollapsibleSection>
   );
 }
 
@@ -1296,6 +1291,64 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // to a "Restore" affordance.
 // Mirror of AccessScopePill (on the list page) for the detail header.
 // Inline since it's tiny and the two pages don't otherwise share code.
+// Editable role control — was a read-only badge until role had no
+// update path at all (set once at creation, no way to promote a staff
+// member to admin afterward). "Site admin" bundles role=admin with
+// view_customers revoked in one pick, same as the Add Staff form's
+// three-way picker, instead of requiring two separate trips (change
+// role here, then find the toggle in Permissions below).
+function RoleSwitcher({ emp, me, auth, onSaved, t }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSelf = emp.id === me?.id;
+  const value = emp.role !== 'admin' ? 'staff'
+    : (emp.permissions?.view_customers === false ? 'site_admin' : 'admin');
+
+  const onChange = async (next) => {
+    if (next === value) return;
+    setBusy(true); setErr('');
+    try {
+      const nextRole = next === 'staff' ? 'staff' : 'admin';
+      if (nextRole !== emp.role) {
+        await taxApi.adminSetEmployeeRole(auth, emp.id, nextRole);
+      }
+      if (next === 'site_admin' && emp.permissions?.view_customers !== false) {
+        await taxApi.adminSetEmployeePermissions(auth, emp.id,
+          { ...(emp.permissions || {}), view_customers: false });
+      } else if (next === 'admin' && emp.permissions?.view_customers === false) {
+        // Promoting a former site admin to full admin restores customer
+        // visibility — otherwise picking "Admin" here would silently do
+        // nothing (they'd still be a web-only admin underneath).
+        const { view_customers, ...rest } = emp.permissions || {};
+        await taxApi.adminSetEmployeePermissions(auth, emp.id, rest);
+      }
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <select value={value} disabled={busy || isSelf}
+              onChange={e => onChange(e.target.value)}
+              title={isSelf ? t('owner.staffDetail.role.selfHint') : undefined}
+              style={{
+                padding: '2px 8px', borderRadius: 999, fontSize: 12, fontWeight: 700,
+                textTransform: 'uppercase', cursor: isSelf ? 'not-allowed' : 'pointer',
+                border: '1px solid var(--tax-border)',
+                background: value === 'staff' ? 'var(--tax-bg-alt)' : 'var(--tax-brand-primary)',
+                color: value === 'staff' ? 'var(--tax-muted)' : '#fff',
+              }}>
+        <option value="staff">{t('owner.staffDetail.role.staff')}</option>
+        <option value="admin">{t('owner.staffDetail.role.admin')}</option>
+        <option value="site_admin">{t('owner.staffDetail.role.siteAdmin')}</option>
+      </select>
+      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
+    </span>
+  );
+}
+
 function DetailAccessScopePill({ emp, t }) {
   if (emp.status === 'archived') return null;
   const isAdmin = emp.role === 'admin';

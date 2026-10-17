@@ -12026,6 +12026,49 @@ ${closingHtml}
     res.json({ ok: true, permissions: sanitized });
   });
 
+  // PUT /admin/employees/:id/role — change an existing employee's role
+  // (staff <-> admin). Previously role was set once at creation with no
+  // way to change it afterward, so a staff member could never be
+  // promoted to admin (and therefore could never get website-management
+  // access, which is gated on role, not permissions) without recreating
+  // their account. Body: { role: 'admin' | 'staff' }.
+  router.put('/admin/employees/:id/role', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    if (!actor) return;
+    const empId = trim(req.params.id, 200);
+    const role = req.body?.role === 'admin' ? 'admin' : (req.body?.role === 'staff' ? 'staff' : null);
+    if (!role) return res.status(400).json({ error: 'role must be "admin" or "staff".' });
+
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, email, community_id, role').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+
+    // Block an owner-admin from demoting themselves — only path back
+    // would be direct DB access.
+    if (actor.source === 'employee' && actor.employee?.id === empId && role !== 'admin') {
+      return res.status(409).json({
+        error: 'cannot_demote_self',
+        message: 'You can\'t change your own role away from admin.',
+      });
+    }
+
+    if (role === existing.role) return res.json({ ok: true, role });
+
+    const { error } = await supabase.from('tax_employees')
+      .update({ role, updated_at: new Date().toISOString() })
+      .eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'set_role',
+        actorEmail: actor.email || '',
+        before: { role: existing.role }, after: { role },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, role });
+  });
+
   // PUT /admin/employees/:id/public-profile — owner sets the homepage
   // profile fields (visibility, photo URL, title, bio, display order).
   // Gated on manage_employees so a delegated co-admin can curate the
