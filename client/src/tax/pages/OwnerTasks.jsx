@@ -404,7 +404,7 @@ export default function OwnerTasks() {
             </p>
           : view === 'calendar' ? (
               <TasksCalendar tasks={tasks} community={community} statuses={statuses}
-                             onEdit={setEditingTask} locale={locale} t={t} />
+                             onEdit={setEditingTask} onChange={load} locale={locale} t={t} />
             )
           : view === 'kanban' ? (
               <TasksKanban tasks={tasks} statuses={statuses} community={community}
@@ -960,7 +960,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   return (
     <TaskHover task={task} statuses={statuses}
                community={community} locale={locale} t={t}
-               side="auto">
+               side="auto" onDeleted={onChange}>
     <div className="tax-contact-item" style={{
       display: 'grid', gap: 8,
       background: selected ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : undefined,
@@ -2791,7 +2791,7 @@ function PeriodGroupSection({ isOpen, onToggle, label, totals, periodCount, t, c
   );
 }
 
-function TasksCalendar({ tasks, community, statuses, onEdit, locale, t }) {
+function TasksCalendar({ tasks, community, statuses, onEdit, onChange, locale, t }) {
   const today = new Date();
   const [cursor, setCursor] = useState(() => ({
     year: today.getUTCFullYear(), month: today.getUTCMonth(),
@@ -2892,7 +2892,8 @@ function TasksCalendar({ tasks, community, statuses, onEdit, locale, t }) {
                 const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
                 return (
                   <TaskHover key={tt.id} task={tt} statuses={statuses}
-                             community={community} locale={locale} t={t}>
+                             community={community} locale={locale} t={t}
+                             onDeleted={onChange}>
                     <span style={{
                       display: 'block',
                       fontSize: 10, padding: '1px 4px', borderRadius: 4,
@@ -3027,7 +3028,8 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                   : '';
                 return (
                   <TaskHover key={tt.id} task={tt} statuses={statuses}
-                             community={community} locale={locale} t={t}>
+                             community={community} locale={locale} t={t}
+                             onDeleted={onChange}>
                     <button type="button"
                             draggable
                             onDragStart={e => e.dataTransfer.setData('text/plain', tt.id)}
