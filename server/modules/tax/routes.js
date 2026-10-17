@@ -6277,7 +6277,7 @@ ${closingHtml}
       .select(`
         id, customer_id, product_id, title, status_key, priority, due_date, completed_at,
         assigned_employee_id, last_viewed_at, last_viewed_by_employee_id,
-        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email ),
+        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, status ),
         product:tax_products ( id, slug, name_i18n ),
         last_viewed_by:tax_employees!tax_tasks_last_viewed_by_employee_id_fkey ( id, name, email )
       `)
@@ -6287,8 +6287,11 @@ ${closingHtml}
     if (terminalKeys.length) openQ = openQ.not('status_key', 'in', `(${terminalKeys.map(k => `"${k}"`).join(',')})`);
     if (scopedToNothing) openQ = openQ.eq('id', '__none__'); // returns nothing
     else if (allowedCustomerIds) openQ = openQ.in('customer_id', allowedCustomerIds);
-    const { data: openTasks, error: openErr } = await openQ.limit(2000);
+    const { data: rawOpenTasks, error: openErr } = await openQ.limit(2000);
     if (openErr) return sendSupabaseError(res, openErr);
+    // Same defensive filter as GET /admin/tasks — an archived customer's
+    // tasks never belong on the dashboard, however they survived.
+    const openTasks = (rawOpenTasks || []).filter(t0 => t0.customer?.status !== 'archived');
 
     // Completion rate over the last 30 days. Count tasks that completed
     // in the window vs tasks whose due_date fell in the window.
@@ -6447,7 +6450,7 @@ ${closingHtml}
       .select(`
         id, title, customer_id, product_id, status_key, priority, due_date, completed_at,
         assigned_employee_id,
-        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email ),
+        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, status ),
         product:tax_products ( id, slug, name_i18n ),
         assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email )
       `)
@@ -6519,8 +6522,11 @@ ${closingHtml}
         q = q.or(orClauses.join(','));
       }
     }
-    const { data: tasks, error } = await q;
+    const { data: rawTasks, error } = await q;
     if (error) return sendSupabaseError(res, error);
+    // Same defensive filter as GET /admin/tasks — an archived customer's
+    // tasks never belong in the working dashboard, however they survived.
+    const tasks = (rawTasks || []).filter(t0 => t0.customer?.status !== 'archived');
 
     const { data: statusOpts } = await supabase.from('tax_task_status_options')
       .select('key, is_terminal').eq('community_id', communitySlug);
@@ -7427,7 +7433,7 @@ ${closingHtml}
         blocked_by_task_id, requires_review, reviewer_employee_id,
         pending_review_at, reviewed_at, reviewed_by_employee_id, review_note,
         last_viewed_at, last_viewed_by_employee_id,
-        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, address ),
+        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, address, status ),
         product:tax_products ( id, slug, name_i18n, category ),
         auto_task:tax_service_auto_tasks ( id, title_i18n, cadence_kind, anchor_rule ),
         assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email ),
@@ -7592,7 +7598,12 @@ ${closingHtml}
 
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
-    res.json({ tasks: data || [] });
+    // Defensive filter, independent of whether the archive cleanup ran
+    // (e.g. a customer archived before that cleanup existed, or a race
+    // with the nightly generator) — an archived customer's tasks never
+    // belong on the working Tasks page regardless of how they survived.
+    const tasks = (data || []).filter(t0 => t0.customer?.status !== 'archived');
+    res.json({ tasks });
   });
 
   // GET /admin/tasks/periods — rollup view.
@@ -7677,8 +7688,16 @@ ${closingHtml}
     // which is still well within range.
     q = q.limit(10000);
 
-    const { data: rows, error } = await q;
+    const { data: rawRows, error } = await q;
     if (error) return sendSupabaseError(res, error);
+    // Same defensive filter as GET /admin/tasks — an archived customer's
+    // tasks never belong in the rollup, however they survived. This
+    // query doesn't embed the customer object (thin column slice by
+    // design), so resolve archived ids separately instead.
+    const { data: archivedCustRows } = await supabase.from('tax_customers')
+      .select('id').eq('community_id', communitySlug).eq('status', 'archived');
+    const archivedCustIds = new Set((archivedCustRows || []).map(r => r.id));
+    const rows = (rawRows || []).filter(r => !r.customer_id || !archivedCustIds.has(r.customer_id));
 
     const { data: statusOpts } = await supabase.from('tax_task_status_options')
       .select('key, is_terminal').eq('community_id', communitySlug);
@@ -8128,7 +8147,7 @@ ${closingHtml}
     let q = supabase.from('tax_tasks')
       .select(`
         id, title, due_date, priority, status_key, customer_id, product_id, pending_review_at,
-        customer:tax_customers ( id, name, business_name, first_name, last_name, email ),
+        customer:tax_customers ( id, name, business_name, first_name, last_name, email, status ),
         product:tax_products ( id, slug, name_i18n ),
         assigned_employee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
@@ -8141,7 +8160,8 @@ ${closingHtml}
     if (!isFullCustomerAdmin(emp)) q = q.eq('reviewer_employee_id', emp.id);
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
-    res.json({ tasks: data || [] });
+    const tasks = (data || []).filter(t0 => t0.customer?.status !== 'archived');
+    res.json({ tasks });
   });
 
   // PATCH /admin/tasks/bulk — apply the same patch to many tasks.
