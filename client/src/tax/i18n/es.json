@@ -780,6 +780,8 @@
   "owner.tasks.notes.placeholder": "Agregue una nota — visible para todo el equipo, con su nombre y la hora.",
   "owner.tasks.notes.addBtn": "Agregar nota",
   "owner.tasks.notes.empty": "Aún no hay notas.",
+  "owner.tasks.notes.showHistory": "Ver {{count}} anteriores",
+  "owner.tasks.notes.hideHistory": "Ocultar historial",
   "owner.tasks.filter.allStatuses": "Todos los estados",
   "owner.tasks.filter.allPriorities": "Todas las prioridades",
   "owner.tasks.filter.anyOwner": "Cualquier responsable",

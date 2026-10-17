@@ -1093,11 +1093,43 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
 // OwnerCustomerDetail.jsx's customer NotesSection. No edit or delete
 // (notes are an audit trail, same v1 scope as the customer version);
 // newest first.
+function NoteCard({ n, locale, t }) {
+  return (
+    <div style={{
+      padding: '8px 10px', border: '1px solid var(--tax-border)',
+      borderRadius: 8, background: 'var(--tax-bg-alt)',
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', gap: 8,
+        fontSize: 11, color: 'var(--tax-muted)', marginBottom: 4,
+      }}>
+        <span>
+          <strong style={{ color: 'var(--tax-text)' }}>
+            {n.author_name || n.author_email || t('owner.customer.notes.unknownAuthor')}
+          </strong>
+          {n.author_role === 'admin' && (
+            <span style={{
+              marginLeft: 6, padding: '0 6px', borderRadius: 999,
+              background: 'var(--tax-brand-primary)', color: '#fff',
+              fontSize: 10, fontWeight: 700,
+            }}>ADMIN</span>
+          )}
+        </span>
+        <span>{formatDateTime(n.created_at, locale)}</span>
+      </div>
+      <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{n.body}</div>
+    </div>
+  );
+}
+
 function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
   const [notes, setNotes] = useState(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // Collapsed by default — only the latest note shows; older ones are
+  // a click away instead of pushing the rest of the task form down.
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const load = () => {
     setErr('');
@@ -1122,7 +1154,12 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 
   return (
     <div>
-      <label>{t('owner.tasks.field.notes')}</label>
+      <label>
+        {t('owner.tasks.field.notes')}
+        {notes && notes.length > 0 && (
+          <span style={{ color: 'var(--tax-muted)', fontWeight: 400 }}> ({notes.length})</span>
+        )}
+      </label>
       {/* Plain div, not <form> — this renders inside TaskFormModal's own
           outer <form>, and a nested <form> is invalid HTML; clicking this
           submit button was triggering the outer form's handler instead
@@ -1149,33 +1186,24 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
         <p style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{t('owner.tasks.notes.empty')}</p>
       )}
       {notes && notes.length > 0 && (
-        <div style={{ display: 'grid', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
-          {notes.map(n => (
-            <div key={n.id} style={{
-              padding: '8px 10px', border: '1px solid var(--tax-border)',
-              borderRadius: 8, background: 'var(--tax-bg-alt)',
-            }}>
-              <div style={{
-                display: 'flex', justifyContent: 'space-between', gap: 8,
-                fontSize: 11, color: 'var(--tax-muted)', marginBottom: 4,
-              }}>
-                <span>
-                  <strong style={{ color: 'var(--tax-text)' }}>
-                    {n.author_name || n.author_email || t('owner.customer.notes.unknownAuthor')}
-                  </strong>
-                  {n.author_role === 'admin' && (
-                    <span style={{
-                      marginLeft: 6, padding: '0 6px', borderRadius: 999,
-                      background: 'var(--tax-brand-primary)', color: '#fff',
-                      fontSize: 10, fontWeight: 700,
-                    }}>ADMIN</span>
-                  )}
-                </span>
-                <span>{formatDateTime(n.created_at, locale)}</span>
-              </div>
-              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{n.body}</div>
+        <div style={{ display: 'grid', gap: 8 }}>
+          <NoteCard n={notes[0]} locale={locale} t={t} />
+          {notes.length > 1 && (
+            <button type="button" onClick={() => setHistoryOpen(o => !o)}
+                    style={{
+                      justifySelf: 'start', border: 0, background: 'transparent', cursor: 'pointer',
+                      color: 'var(--tax-brand-primary)', fontSize: 12, fontWeight: 600, padding: 0,
+                    }}>
+              {historyOpen
+                ? t('owner.tasks.notes.hideHistory')
+                : t('owner.tasks.notes.showHistory', { count: notes.length - 1 })}
+            </button>
+          )}
+          {historyOpen && (
+            <div style={{ display: 'grid', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+              {notes.slice(1).map(n => <NoteCard key={n.id} n={n} locale={locale} t={t} />)}
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>

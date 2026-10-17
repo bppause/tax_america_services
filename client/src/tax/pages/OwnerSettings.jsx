@@ -905,21 +905,27 @@ function DigestScheduleEditor({ settings, busy, t }) {
     draft.timezone !== initial.timezone ||
     draft.sendDays.slice().sort().join(',') !== initial.sendDays.slice().sort().join(',');
 
-  const onSave = async (e) => {
-    e?.preventDefault?.(); e?.stopPropagation?.();
-    setSaving(true); setMsg({ kind: 'idle', text: '' });
-    try {
-      await taxApi.adminSetDigestSchedule(auth, {
-        communitySlug: community.id,
-        sendHour: draft.sendHour,
-        timezone: draft.timezone,
-        sendDays: draft.sendDays,
-      });
-      setMsg({ kind: 'success', text: t('owner.settings.staffEmails.digest.scheduleSaved') });
-    } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
-    } finally { setSaving(false); }
-  };
+  // Auto-save 1.2s after the last change (hour/timezone select or day
+  // toggle) — no explicit Save button.
+  useEffect(() => {
+    if (!dirty) return;
+    const id = setTimeout(async () => {
+      setSaving(true); setMsg({ kind: 'idle', text: '' });
+      try {
+        await taxApi.adminSetDigestSchedule(auth, {
+          communitySlug: community.id,
+          sendHour: draft.sendHour,
+          timezone: draft.timezone,
+          sendDays: draft.sendDays,
+        });
+        setMsg({ kind: 'success', text: t('owner.settings.staffEmails.digest.scheduleSaved') });
+      } catch (e) {
+        setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+      } finally { setSaving(false); }
+    }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.sendHour, draft.timezone, draft.sendDays.slice().sort().join(',')]);
 
   return (
     <div onClick={e => e.stopPropagation()}
@@ -998,13 +1004,10 @@ function DigestScheduleEditor({ settings, busy, t }) {
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
-        <button type="button"
-                className="tax-btn tax-btn--primary tax-btn--sm"
-                disabled={!dirty || saving}
-                onClick={onSave}>
-          {saving ? t('lead.submitting') : t('owner.settings.staffEmails.digest.saveSchedule')}
-        </button>
-        {msg.text && (
+        {saving && (
+          <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>Saving…</span>
+        )}
+        {!saving && msg.text && (
           <span style={{ fontSize: 12,
                          color: msg.kind === 'error' ? 'var(--tax-error)' : 'var(--tax-success)' }}>
             {msg.text}
@@ -1151,17 +1154,29 @@ function StatusRow({ row, auth, onChange, t }) {
   const [terminal, setTerminal] = useState(!!row.is_terminal);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [saved, setSaved] = useState(false);
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
 
-  const onSave = async () => {
-    setBusy(true); setErr('');
+  const doSave = async (overrides = {}) => {
+    setBusy(true); setErr(''); setSaved(false);
     try {
       await taxApi.adminUpdateTaskStatus(auth, row.id, {
-        labelI18n: { en: en.trim(), es: es.trim() },
-        color, displayOrder: Number(order) || 0, isTerminal: terminal,
+        labelI18n: { en: (overrides.en ?? en).trim(), es: (overrides.es ?? es).trim() },
+        color: overrides.color ?? color,
+        displayOrder: Number(overrides.order ?? order) || 0,
+        isTerminal: overrides.terminal ?? terminal,
       });
-      setEditing(false); onChange();
+      onChange();
+      setSaved(true);
+      savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
+  };
+  const scheduleSave = (overrides) => {
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => doSave(overrides), 1200);
   };
   const onDelete = async () => {
     if (!window.confirm(t('owner.settings.taskStatuses.deleteConfirm'))) return;
@@ -1199,36 +1214,41 @@ function StatusRow({ row, auth, onChange, t }) {
       {editing && (
         <div style={{ display: 'grid', gap: 8, padding: 10, background: 'var(--tax-bg-alt)', borderRadius: 6 }}>
           <div className="tax-form__row2">
-            <input type="text" value={en} onChange={e => setEn(e.target.value)} placeholder="English"
+            <input type="text" value={en}
+                   onChange={e => { setEn(e.target.value); scheduleSave({ en: e.target.value }); }}
+                   placeholder="English"
                    style={{ padding: 6, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-            <input type="text" value={es} onChange={e => setEs(e.target.value)} placeholder="Español"
+            <input type="text" value={es}
+                   onChange={e => { setEs(e.target.value); scheduleSave({ es: e.target.value }); }}
+                   placeholder="Español"
                    style={{ padding: 6, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 13 }}>
             <label>
               {t('owner.settings.taskStatuses.color')}:&nbsp;
-              <input type="color" value={color} onChange={e => setColor(e.target.value)} />
+              <input type="color" value={color}
+                     onChange={e => { setColor(e.target.value); scheduleSave({ color: e.target.value }); }} />
             </label>
             <label>
               {t('owner.settings.taskStatuses.order')}:&nbsp;
-              <input type="number" value={order} onChange={e => setOrder(e.target.value)}
+              <input type="number" value={order}
+                     onChange={e => { setOrder(e.target.value); scheduleSave({ order: e.target.value }); }}
                      style={{ width: 70, padding: 4, border: '1px solid var(--tax-border)', borderRadius: 4 }} />
             </label>
             <label>
-              <input type="checkbox" checked={terminal} onChange={e => setTerminal(e.target.checked)} />
+              <input type="checkbox" checked={terminal}
+                     onChange={e => { setTerminal(e.target.checked); doSave({ terminal: e.target.checked }); }} />
               {' '}{t('owner.settings.taskStatuses.terminal')}
             </label>
           </div>
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" onClick={onSave} disabled={busy}
-                    className="tax-btn tax-btn--primary tax-btn--sm">
-              {busy ? t('lead.submitting') : t('owner.faq.saveOverride')}
-            </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button type="button" onClick={() => setEditing(false)}
                     className="tax-btn tax-btn--ghost tax-btn--sm" style={{ color: 'var(--tax-text)' }}>
               {t('preview.close')}
             </button>
+            {busy && <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>{t('lead.submitting')}</span>}
+            {saved && !busy && <span style={{ fontSize: 11, color: 'var(--tax-success, #166534)' }}>✓ {t('owner.settings.saved')}</span>}
           </div>
         </div>
       )}
@@ -1422,29 +1442,50 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
 
   const onField = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const onSave = async () => {
-    setBusy(true); setMsg({ kind: 'idle', text: '' });
-    try {
-      await taxApi.adminUpdateCommunityContact(auth, {
-        communitySlug: community.id,
-        contact_email: form.contact_email.trim(),
-        phone: form.phone.trim(),
-        whatsapp: form.whatsapp.trim(),
-        address_line1: form.address_line1.trim(),
-        address_line2: form.address_line2.trim(),
-        city: form.city.trim(),
-        state: form.state.trim(),
-        postal_code: form.postal_code.trim(),
-        country: form.country.trim(),
-        calendly_url: form.calendly_url.trim(),
-      });
-      setMsg({ kind: 'success', text: t('owner.settings.saved') });
-      setEditing(false);
-      onSaved();
-    } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
-    } finally { setBusy(false); }
-  };
+  const dirty = !!settings && (
+    form.contact_email !== (settings.contact_email || '') ||
+    form.phone !== (settings.phone || '') ||
+    form.whatsapp !== (settings.whatsapp || '') ||
+    form.address_line1 !== (settings.address_line1 || '') ||
+    form.address_line2 !== (settings.address_line2 || '') ||
+    form.city !== (settings.city || '') ||
+    form.state !== (settings.state || '') ||
+    form.postal_code !== (settings.postal_code || '') ||
+    form.country !== (settings.country || '') ||
+    form.calendly_url !== (settings.calendly_url || '')
+  );
+
+  // Auto-save 1.2s after the last field edit while in edit mode — no
+  // explicit Save button. "Close" below just collapses back to the
+  // compact read view; it no longer discards anything.
+  useEffect(() => {
+    if (!editing || !dirty) return;
+    const id = setTimeout(async () => {
+      setBusy(true); setMsg({ kind: 'idle', text: '' });
+      try {
+        await taxApi.adminUpdateCommunityContact(auth, {
+          communitySlug: community.id,
+          contact_email: form.contact_email.trim(),
+          phone: form.phone.trim(),
+          whatsapp: form.whatsapp.trim(),
+          address_line1: form.address_line1.trim(),
+          address_line2: form.address_line2.trim(),
+          city: form.city.trim(),
+          state: form.state.trim(),
+          postal_code: form.postal_code.trim(),
+          country: form.country.trim(),
+          calendly_url: form.calendly_url.trim(),
+        });
+        setMsg({ kind: 'success', text: t('owner.settings.saved') });
+        onSaved();
+      } catch (e) {
+        setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+      } finally { setBusy(false); }
+    }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, form.contact_email, form.phone, form.whatsapp, form.address_line1,
+      form.address_line2, form.city, form.state, form.postal_code, form.country, form.calendly_url]);
 
   return (
     <CollapsibleSection
@@ -1509,11 +1550,8 @@ function CommunityContactSection({ settings, auth, community, t, onSaved }) {
                  value={form.calendly_url}
                  onChange={v => onField('calendly_url', v)} />
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                    disabled={busy} onClick={onSave}>
-              {busy ? t('lead.submitting') : t('owner.settings.community.saveBtn')}
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            {busy && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>Saving…</span>}
             <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                     disabled={busy} onClick={() => setEditing(false)}>
               {t('preview.close')}
@@ -1552,23 +1590,38 @@ function EmailFromSection({ settings, platformDefaults, auth, community, t, onSa
 
   const onField = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const onSave = async () => {
-    setBusy(true); setMsg({ kind: 'idle', text: '' });
-    try {
-      await taxApi.adminSetEmailFrom(auth, {
-        communitySlug: community.id,
-        email_from_name:       form.email_from_name.trim(),
-        email_from_name_en:    form.email_from_name_en.trim(),
-        email_from_address:    form.email_from_address.trim(),
-        email_from_address_en: form.email_from_address_en.trim(),
-      });
-      setMsg({ kind: 'success', text: t('owner.settings.saved') });
-      setEditing(false);
-      onSaved();
-    } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
-    } finally { setBusy(false); }
-  };
+  const dirty = !!settings && (
+    form.email_from_name !== (settings.tax_email_from_name || '') ||
+    form.email_from_name_en !== (settings.tax_email_from_name_en || '') ||
+    form.email_from_address !== (settings.tax_email_from_address || '') ||
+    form.email_from_address_en !== (settings.tax_email_from_address_en || '')
+  );
+
+  // Auto-save 1.2s after the last field edit while in edit mode — no
+  // explicit Save button. "Close" below just collapses back to the
+  // compact read view; it no longer discards anything.
+  useEffect(() => {
+    if (!editing || !dirty) return;
+    const id = setTimeout(async () => {
+      setBusy(true); setMsg({ kind: 'idle', text: '' });
+      try {
+        await taxApi.adminSetEmailFrom(auth, {
+          communitySlug: community.id,
+          email_from_name:       form.email_from_name.trim(),
+          email_from_name_en:    form.email_from_name_en.trim(),
+          email_from_address:    form.email_from_address.trim(),
+          email_from_address_en: form.email_from_address_en.trim(),
+        });
+        setMsg({ kind: 'success', text: t('owner.settings.saved') });
+        onSaved();
+      } catch (e) {
+        setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+      } finally { setBusy(false); }
+    }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing, form.email_from_name, form.email_from_name_en,
+      form.email_from_address, form.email_from_address_en]);
 
   // Effective preview: what the customer/employee actually sees as the
   // sender today, given the current saved overrides + platform fallbacks.
@@ -1656,11 +1709,8 @@ function EmailFromSection({ settings, platformDefaults, auth, community, t, onSa
                    value={form.email_from_address_en}
                    onChange={v => onField('email_from_address_en', v)} />
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="button" className="tax-btn tax-btn--primary"
-                    disabled={busy} onClick={onSave}>
-              {busy ? t('lead.submitting') : t('owner.settings.community.saveBtn')}
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {busy && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>Saving…</span>}
             <button type="button" className="tax-btn tax-btn--ghost"
                     disabled={busy} onClick={() => setEditing(false)}>
               {t('preview.close')}
@@ -1718,7 +1768,19 @@ function Field({ id, label, type, value, onChange, placeholder, hint }) {
 
 function LookaheadEditor({ initial, busy, onSave, onRefresh, t }) {
   const [draft, setDraft] = useState(String(initial));
-  const dirty = String(initial) !== String(draft);
+  useEffect(() => { setDraft(String(initial)); }, [initial]);
+
+  // Auto-save 1.2s after the owner stops typing a valid value — no
+  // explicit Save button. "Refresh tasks now" below stays a deliberate
+  // manual click; it never fires on its own.
+  useEffect(() => {
+    const n = Number(draft);
+    if (!Number.isFinite(n) || n < 1 || n > 24 || n === Number(initial)) return;
+    const id = setTimeout(() => { onSave(Math.max(1, Math.min(24, Math.round(n)))); }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft]);
+
   return (
     <div style={{ display: 'grid', gap: 10, maxWidth: 560 }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
@@ -1726,13 +1788,6 @@ function LookaheadEditor({ initial, busy, onSave, onRefresh, t }) {
         <input type="number" min="1" max="24" value={draft}
                onChange={e => setDraft(e.target.value)} disabled={busy}
                style={{ width: 80, padding: '6px 8px', border: '1px solid var(--tax-border)', borderRadius: 6 }} />
-        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                disabled={busy || !dirty
-                          || !Number.isFinite(Number(draft))
-                          || Number(draft) < 1 || Number(draft) > 24}
-                onClick={() => onSave(Math.max(1, Math.min(24, Math.round(Number(draft) || 6))))}>
-          {t('owner.settings.lookahead.save')}
-        </button>
       </label>
       <div>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
@@ -1757,12 +1812,27 @@ function ThresholdEditor({ initial, busy, onSave, t }) {
     urgent: String(initial.urgent ?? 2),
     soon:   String(initial.soon   ?? 7),
   });
+  useEffect(() => {
+    setDraft({ urgent: String(initial.urgent ?? 2), soon: String(initial.soon ?? 7) });
+  }, [initial.urgent, initial.soon]);
+
   const u = Number(draft.urgent);
   const s = Number(draft.soon);
   const validNums = Number.isFinite(u) && Number.isFinite(s);
   const ordered = validNums && u <= s;
   const dirty = String(initial.urgent) !== draft.urgent
              || String(initial.soon) !== draft.soon;
+
+  // Auto-save 1.2s after the last edit, only once both fields are valid
+  // and correctly ordered — same validation that used to gate the Save
+  // button, just applied before firing instead of before enabling it.
+  useEffect(() => {
+    if (!dirty || !ordered) return;
+    const id = setTimeout(() => { onSave({ urgentDays: u, soonDays: s, upcomingDays: 0 }); }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.urgent, draft.soon]);
+
   return (
     <div style={{ display: 'grid', gap: 8, maxWidth: 560 }}>
       <div style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
@@ -1778,16 +1848,9 @@ function ThresholdEditor({ initial, busy, onSave, t }) {
           {t('owner.settings.urgency.outOfOrder')}
         </div>
       )}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                disabled={busy || !dirty || !ordered}
-                onClick={() => onSave({ urgentDays: u, soonDays: s, upcomingDays: 0 })}>
-          {t('owner.settings.urgency.save')}
-        </button>
-        <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
-          {t('owner.settings.urgency.preview', { urgent: u || '?', soon: s || '?' })}
-        </span>
-      </div>
+      <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+        {t('owner.settings.urgency.preview', { urgent: u || '?', soon: s || '?' })}
+      </span>
     </div>
   );
 }
@@ -1835,6 +1898,19 @@ function ColorOverridesEditor({ initialPriority, initialUrgency, busy, onSave, t
     JSON.stringify(priority) !== JSON.stringify(initialPriority || {}) ||
     JSON.stringify(urgency)  !== JSON.stringify(initialUrgency  || {});
 
+  // Auto-save 1.2s after the last color change or reset. The native
+  // color picker fires onChange continuously while dragging — the
+  // debounce just resets on each one, so the save only actually
+  // lands once the owner settles on a color.
+  useEffect(() => {
+    if (!dirty) return;
+    const id = setTimeout(() => {
+      onSave({ priorityColors: priority, urgencyColors: urgency });
+    }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priority, urgency]);
+
   return (
     <div style={{ display: 'grid', gap: 18, maxWidth: 720 }}>
       <ColorGroup
@@ -1857,27 +1933,6 @@ function ColorOverridesEditor({ initialPriority, initialUrgency, busy, onSave, t
         setColor={setUColor} clearColor={clearUColor}
         busy={busy} t={t}
       />
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                disabled={busy || !dirty}
-                onClick={() => onSave({
-                  priorityColors: priority,
-                  urgencyColors:  urgency,
-                })}>
-          {t('owner.settings.colors.save')}
-        </button>
-        {dirty && (
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                  disabled={busy}
-                  onClick={() => {
-                    setPriority(initialPriority || {});
-                    setUrgency(initialUrgency || {});
-                  }}
-                  style={{ color: 'var(--tax-text)' }}>
-            {t('owner.settings.colors.discard')}
-          </button>
-        )}
-      </div>
     </div>
   );
 }
@@ -2073,19 +2128,27 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
         || (cur.es || '').trim() !== (def.es || '').trim();
   };
 
-  const onSave = async () => {
-    setBusy(true); setMsg({ kind: 'idle', text: '' });
-    try {
-      await taxApi.adminUpdateLandingCopy(auth, {
-        communitySlug: community.id, copy: payload,
-      });
-      setMsg({ kind: 'success', text: t('owner.settings.saved') });
-      onSaved && onSaved();
-    } catch (e) {
-      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
-    } finally { setBusy(false); }
-  };
-  const onResetAll = () => setDraft(seedFrom(settings?.landing_copy_i18n));
+  // Auto-save 1.2s after the last edit across any field/locale — no
+  // explicit Save button. Per-field "Reset to default" buttons stay;
+  // they're a distinct feature (clear one field's override), not a
+  // pending-changes discard.
+  useEffect(() => {
+    if (!dirty) return;
+    const id = setTimeout(async () => {
+      setBusy(true); setMsg({ kind: 'idle', text: '' });
+      try {
+        await taxApi.adminUpdateLandingCopy(auth, {
+          communitySlug: community.id, copy: payload,
+        });
+        setMsg({ kind: 'success', text: t('owner.settings.saved') });
+        onSaved && onSaved();
+      } catch (e) {
+        setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+      } finally { setBusy(false); }
+    }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payload, dirty]);
 
   return (
     <CollapsibleSection
@@ -2166,18 +2229,9 @@ function LandingCopySection({ settings, auth, community, t, onSaved }) {
           </CollapsibleSection>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                disabled={!dirty || busy} onClick={onSave}>
-          {busy ? t('lead.submitting') : t('owner.settings.copy.save')}
-        </button>
-        {dirty && (
-          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                  disabled={busy} onClick={onResetAll} style={{ color: 'var(--tax-text)' }}>
-            {t('owner.settings.copy.discard')}
-          </button>
-        )}
-      </div>
+      {busy && (
+        <div style={{ marginTop: 14, fontSize: 12, color: 'var(--tax-muted)' }}>Saving…</div>
+      )}
     </CollapsibleSection>
   );
 }
