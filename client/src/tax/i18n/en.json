@@ -1041,7 +1041,7 @@
   "owner.customer.section.profile": "Profile",
   "owner.customer.section.relationships": "Service relationships",
   "owner.customer.section.documents": "Documents",
-  "owner.customer.section.threads": "Recent threads",
+  "owner.customer.section.activity": "Customer journey",
   "owner.activity.title": "Activity timeline",
   "owner.activity.empty": "Nothing on this customer's timeline yet.",
   "owner.activity.undo.button": "Undo",
