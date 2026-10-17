@@ -965,6 +965,7 @@ function ActivityRow({ event, fmt, relTime, t, undoing, onUndo }) {
     email_bounced: '!',
     customer_created: '★',
     service_removed: '⊗',  relationship_removed: '⊗',
+    service_added: '✓',    relationship_added: '✓',
     audit: '⚙',
   };
   const TONE = {

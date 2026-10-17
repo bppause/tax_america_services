@@ -8,6 +8,7 @@ import { displayPersonName } from '../lib/personName';
 import { urgencyOf, effectiveUrgency, colorOf, priorityColorOf, resolveThresholds, URGENCY_LABEL_KEY } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
 import { formatDateTime } from '../lib/lastSignIn';
+import { mailtoHref, whatsappHref, taskContactMessage } from '../lib/contactLinks';
 import TaskHover from '../components/TaskHover';
 
 // Owner / staff task tracker. Replaces the spreadsheet workflow:
@@ -1407,6 +1408,21 @@ function TaskFormModal({
     finally { setBusy(false); }
   };
 
+  // Quick-contact — email/WhatsApp the task's customer directly from
+  // the edit modal instead of hunting them down on the Customers page.
+  const selectedCustomer = customerId ? customers.find(c => c.id === customerId) : null;
+  const contactMsg = selectedCustomer && title.trim()
+    ? taskContactMessage({
+        locale, taskTitle: title.trim(),
+        firstName: selectedCustomer.first_name || displayPersonName(selectedCustomer) || '',
+        communityName: community?.name || '',
+      })
+    : null;
+  const mailHref = selectedCustomer && contactMsg ? mailtoHref(selectedCustomer.email, contactMsg) : null;
+  const waHref = selectedCustomer && contactMsg
+    ? whatsappHref(selectedCustomer.whatsapp || selectedCustomer.phone, contactMsg.whatsapp)
+    : null;
+
   return (
     <div className="tax-modal" role="dialog" aria-modal="true"
          onMouseDown={onBackdropMouseDown} onClick={onBackdropClick}>
@@ -1448,6 +1464,20 @@ function TaskFormModal({
               {t('owner.tasks.lastViewed.never')}
             </div>
           )
+        )}
+        {(mailHref || waHref) && (
+          <div style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
+            {mailHref && (
+              <a href={mailHref} style={{
+                fontSize: 12, fontWeight: 600, color: 'var(--tax-brand-primary)', textDecoration: 'none',
+              }}>✉️ {t('owner.tasks.contact.email')}</a>
+            )}
+            {waHref && (
+              <a href={waHref} target="_blank" rel="noopener noreferrer" style={{
+                fontSize: 12, fontWeight: 600, color: '#25d366', textDecoration: 'none',
+              }}>💬 {t('owner.tasks.contact.whatsapp')}</a>
+            )}
+          </div>
         )}
         <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
           <div>

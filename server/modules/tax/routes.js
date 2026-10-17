@@ -5020,7 +5020,7 @@ ${closingHtml}
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at, updated_at')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -5129,6 +5129,68 @@ ${closingHtml}
     const { error } = await supabase.from('tax_leads').update(update).eq('id', leadId);
     if (error) return sendSupabaseError(res, error);
     res.json({ ok: true });
+  });
+
+  // ── Collaborative lead notes ─────────────────────────────────────────────
+  // tax_leads.notes was a single overwritable field — the second person to
+  // save wiped out whatever the first person wrote, with no author or
+  // timestamp kept. Same shape as tax_customer_notes / tax_task_notes:
+  // append-only, each entry stamped with its author at write time.
+  router.get('/admin/leads/:id/notes', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
+    const leadId = trim(req.params.id, 200);
+    const { data, error } = await supabase.from('tax_lead_notes')
+      .select('id, body, author_email, author_name, author_role, created_at')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ notes: data || [] });
+  });
+
+  router.post('/admin/leads/:id/notes', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_leads');
+    if (!actor) return;
+    const leadId = trim(req.params.id, 200);
+    const body = trim(req.body?.body || '', MAX_TEXT_LEN);
+    if (!body) return res.status(400).json({ error: 'Note body is required.' });
+    const { data: lead } = await supabase.from('tax_leads')
+      .select('id, community_id').eq('id', leadId).maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Lead not found.' });
+
+    // requireOwnerAdmin only returns {email, source, employee?} — no name
+    // on the top-level object, and role lives under .employee for a
+    // community admin (a global admin has no employee row at all here).
+    let authorName = '';
+    if (actor.source === 'employee' && actor.employee?.id) {
+      const { data: empRow } = await supabase.from('tax_employees')
+        .select('name').eq('id', actor.employee.id).maybeSingle();
+      authorName = empRow?.name || '';
+    }
+    const noteId = 'lnote_' + uuidv4().slice(0, 12);
+    const row = {
+      id: noteId, community_id: lead.community_id, lead_id: leadId,
+      body,
+      author_email: actor.email || '',
+      author_name:  authorName || actor.email || '',
+      author_role:  'admin',
+    };
+    const { error } = await supabase.from('tax_lead_notes').insert(row);
+    if (error) return sendSupabaseError(res, error);
+    // Bump the lead's updated_at so "no activity in N days" staleness
+    // tracking on the inbox list reflects this note, not just status
+    // changes — best-effort, doesn't fail the note write if it errors.
+    try {
+      await supabase.from('tax_leads')
+        .update({ updated_at: new Date().toISOString() }).eq('id', leadId);
+    } catch (_e) {}
+    try {
+      await auditLog({
+        entity: 'tax.lead_note', entityId: noteId, action: 'create',
+        actorEmail: actor.email || '', actorName: authorName || '',
+        after: { leadId, length: body.length },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, note: row });
   });
 
   // ── POST /admin/leads/:id/convert ────────────────────────────────────────
@@ -6337,7 +6399,7 @@ ${closingHtml}
       .select(`
         id, customer_id, product_id, title, status_key, priority, due_date, completed_at,
         assigned_employee_id, last_viewed_at, last_viewed_by_employee_id,
-        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, status ),
+        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, status ),
         product:tax_products ( id, slug, name_i18n ),
         last_viewed_by:tax_employees!tax_tasks_last_viewed_by_employee_id_fkey ( id, name, email )
       `)
@@ -6510,7 +6572,7 @@ ${closingHtml}
       .select(`
         id, title, customer_id, product_id, status_key, priority, due_date, completed_at,
         assigned_employee_id,
-        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, status ),
+        customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, status ),
         product:tax_products ( id, slug, name_i18n ),
         assignee:tax_employees!tax_tasks_assigned_employee_id_fkey ( id, name, email )
       `)
@@ -7284,6 +7346,35 @@ ${closingHtml}
           title: `Relationship removed: ${rname}`,
           detail: after.deleted
             ? `${after.deleted} recurring task(s) removed`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+        });
+        continue;
+      }
+      // Service / relationship *additions* — mirrors the removal
+      // entries above so "when did we add their second service, and
+      // who did it" is answerable from the timeline, not just removals.
+      if (a.action === 'service_add' && after.productId) {
+        const pname = productNameById.get(String(after.productId)) || String(after.productId);
+        push(a.created_at, {
+          kind: 'service_added', tone: 'ok',
+          title: `Service added: ${pname}`,
+          detail: after.tasksCreated
+            ? `${after.tasksCreated} recurring task(s) created`
+            : '',
+          actor: a.actor_name || a.actor_email || null,
+          ref: { kind: 'audit', id: a.id },
+        });
+        continue;
+      }
+      if (a.action === 'relationship_add' && after.relationshipTypeId) {
+        const rname = relTypeNameById.get(String(after.relationshipTypeId)) || String(after.relationshipTypeId);
+        push(a.created_at, {
+          kind: 'relationship_added', tone: 'ok',
+          title: `Relationship added: ${rname}`,
+          detail: after.tasksCreated
+            ? `${after.tasksCreated} recurring task(s) created`
             : '',
           actor: a.actor_name || a.actor_email || null,
           ref: { kind: 'audit', id: a.id },
@@ -10198,13 +10289,6 @@ ${closingHtml}
       created_by_email: actor || null,
     }, { onConflict: 'customer_id,relationship_type_id' });
     if (error) return sendSupabaseError(res, error);
-    try {
-      await auditLog({
-        entity: 'tax.customer_relationship', entityId: relId,
-        action: 'add', actorEmail: actor || 'system',
-        after: { customerId, typeId },
-      });
-    } catch (_e) {}
     // Generate scheduled tasks for this newly-added relationship.
     let tasksCreated = 0;
     try {
@@ -10213,6 +10297,16 @@ ${closingHtml}
       });
       tasksCreated = r.created || 0;
     } catch (e) { warn('[tax-rel-add] task gen failed', e?.message || e); }
+    try {
+      // entity/entityId match the service_add / *_remove convention
+      // (tax.customer + customerId) so this surfaces in the customer's
+      // activity timeline, which filters audit rows by entity_id.
+      await auditLog({
+        entity: 'tax.customer', entityId: customerId,
+        action: 'relationship_add', actorEmail: actor || 'system',
+        after: { relationshipTypeId: typeId, tasksCreated },
+      });
+    } catch (_e) {}
     res.json({ ok: true, tasksCreated });
   });
 

@@ -7,6 +7,7 @@ import { formatFrequency } from '../lib/taskFrequency';
 import { formatDateTime } from '../lib/lastSignIn';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
+import { mailtoHref, whatsappHref, taskContactMessage } from '../lib/contactLinks';
 
 // Hover card shared by every task surface in the employee portal —
 // Calendar pips, Kanban cards, Tasks list rows, Periods view, the
@@ -179,6 +180,17 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
 
   const customer = task.customer;
   const product  = task.product;
+  const contactMsg = customer
+    ? taskContactMessage({
+        locale, taskTitle: task.title,
+        firstName: customer.first_name || displayPersonName(customer) || '',
+        communityName: community?.name || '',
+      })
+    : null;
+  const mailHref = customer && contactMsg ? mailtoHref(customer.email, contactMsg) : null;
+  const waHref = customer && contactMsg
+    ? whatsappHref(customer.whatsapp || customer.phone, contactMsg.whatsapp)
+    : null;
   const assignee = task.assignee;
   const status   = (statuses || []).find(s => s.key === task.status_key);
   const thresholds = resolveThresholds(community);
@@ -276,6 +288,20 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
             : t('owner.tasks.lastViewed.neverHover')}
         </span>
       </div>
+      {(mailHref || waHref) && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
+          {mailHref && (
+            <a href={mailHref} style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--tax-brand-primary)', textDecoration: 'none',
+            }}>✉️ {t('owner.tasks.contact.email')}</a>
+          )}
+          {waHref && (
+            <a href={waHref} target="_blank" rel="noopener noreferrer" style={{
+              fontSize: 12, fontWeight: 600, color: '#25d366', textDecoration: 'none',
+            }}>💬 {t('owner.tasks.contact.whatsapp')}</a>
+          )}
+        </div>
+      )}
       {latestNote !== undefined && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
           <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 2 }}>

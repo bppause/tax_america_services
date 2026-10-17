@@ -4,6 +4,11 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import { displayPersonName } from '../lib/personName';
+import { formatDateTime } from '../lib/lastSignIn';
+
+// A lead sitting untouched this long (no status change, no note) gets
+// flagged on the inbox row so a fresh inquiry can't quietly go cold.
+const STALE_DAYS = 3;
 
 // Display statuses surface in the inbox. The DB still permits 'contacted'
 // for back-compat with legacy rows; we bucket those into "open" alongside
@@ -201,9 +206,20 @@ function statusLabel(status, t) {
   return t('owner.leads.status.open');
 }
 
+// Stale = still open (new/contacted) and nothing has touched it — no
+// status change, no note — in STALE_DAYS. updated_at is bumped by both
+// (PUT /admin/leads/:id always stamps it, and POST .../notes bumps it
+// too), so it's a single reliable "last touched" signal.
+function staleDays(lead) {
+  if (lead.status !== 'new' && lead.status !== 'contacted') return 0;
+  const ts = lead.updated_at || lead.created_at;
+  if (!ts) return 0;
+  const days = Math.floor((Date.now() - new Date(ts).getTime()) / 86400000);
+  return days >= STALE_DAYS ? days : 0;
+}
+
 function LeadRow({ lead, auth, onChange, communitySlug, community, products, relTypes, focused, locale, t }) {
   const [expanded, setExpanded] = useState(!!focused);
-  const [notes, setNotes] = useState(lead.notes || '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
@@ -226,14 +242,6 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
     setBusy(true); setErr('');
     try {
       await taxApi.adminUpdateLead(auth, lead.id, { status: next, ...extra });
-      onChange();
-    } catch (e) { setErr(e?.message || ''); }
-    finally { setBusy(false); }
-  };
-  const saveNotes = async () => {
-    setBusy(true); setErr('');
-    try {
-      await taxApi.adminUpdateLead(auth, lead.id, { notes });
       onChange();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
@@ -274,6 +282,15 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               marginLeft: 8, padding: '1px 8px', borderRadius: 999,
               background: b.bg, color: b.fg, fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
             }}>{statusLabel(lead.status, t)}</span>
+            {staleDays(lead) > 0 && (
+              <span title={t('owner.leads.stale.hint', { n: staleDays(lead) })}
+                style={{
+                  marginLeft: 6, padding: '2px 9px', borderRadius: 999,
+                  background: '#fee2e2', color: '#991b1b',
+                  border: '1.5px solid #f87171',
+                  fontSize: 11, fontWeight: 800, letterSpacing: '.03em',
+                }}>⏱ {t('owner.leads.stale.badge', { n: staleDays(lead) })}</span>
+            )}
             {lead.source === 'returning_customer' ? (
               <span title="This email is already linked to an existing customer"
                 style={{
@@ -438,21 +455,20 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               </div>
             </div>
           )}
+          {/* Legacy single-field note, read-only — kept visible so no
+              pre-existing data disappears, but no longer written to
+              (the collaborative LeadNotesSection below replaces it). */}
+          {lead.notes && (
+            <div style={{ marginBottom: 12, padding: 10, background: '#fff',
+                          border: '1px solid var(--tax-border)', borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
+                {t('owner.leads.legacyNote')}
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{lead.notes}</div>
+            </div>
+          )}
           <div style={{ marginBottom: 12 }}>
-            <label htmlFor={`ln-${lead.id}`} style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
-              {t('owner.leads.notes')}
-            </label>
-            <textarea id={`ln-${lead.id}`} rows={3} value={notes}
-                      onChange={e => setNotes(e.target.value)} maxLength={4000}
-                      style={{
-                        width: '100%', padding: 10, border: '1px solid var(--tax-border)',
-                        borderRadius: 8, font: 'inherit', fontSize: 14,
-                      }} />
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
-                    onClick={saveNotes}
-                    style={{ marginTop: 6, color: 'var(--tax-text)' }}>
-              {t('owner.leads.saveNotes')}
-            </button>
+            <LeadNotesSection auth={auth} leadId={lead.id} locale={locale} t={t} />
           </div>
 
           {lead.status === 'closed' && (lead.close_reason || lead.close_reason_note) && (
@@ -558,6 +574,115 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
                             window.location.href =
                               `/tax/${communitySlug}/employee/customers/${encodeURIComponent(customerId)}`;
                           }} />
+      )}
+    </div>
+  );
+}
+
+// Collaborative lead notes — append-only, author + timestamp kept per
+// entry, mirroring the task-notes / customer-notes pattern elsewhere in
+// the employee portal. Replaces the old single overwritable notes field,
+// where the second person to save silently erased the first person's
+// context.
+function LeadNoteCard({ n, locale, t }) {
+  return (
+    <div style={{
+      padding: '8px 10px', border: '1px solid var(--tax-border)',
+      borderRadius: 8, background: 'var(--tax-bg-alt)',
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', gap: 8,
+        fontSize: 11, color: 'var(--tax-muted)', marginBottom: 4,
+      }}>
+        <strong style={{ color: 'var(--tax-text)' }}>
+          {n.author_name || n.author_email || t('owner.leads.notesSection.unknownAuthor')}
+        </strong>
+        <span>{formatDateTime(n.created_at, locale)}</span>
+      </div>
+      <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{n.body}</div>
+    </div>
+  );
+}
+
+function LeadNotesSection({ auth, leadId, locale, t }) {
+  const [notes, setNotes] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const load = () => {
+    setErr('');
+    taxApi.adminListLeadNotes(auth, leadId)
+      .then(d => setNotes(d.notes || []))
+      .catch(e => setErr(e?.message || t('error.loadFailed')));
+  };
+  useEffect(load, [leadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onSubmit = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminCreateLeadNote(auth, leadId, { body });
+      setDraft('');
+      load();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+        {t('owner.leads.notes')}
+        {notes && notes.length > 0 && (
+          <span style={{ color: 'var(--tax-muted)', fontWeight: 400 }}> ({notes.length})</span>
+        )}
+      </label>
+      <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(); }
+                }}
+                rows={2} maxLength={4000}
+                placeholder={t('owner.leads.notesSection.placeholder')}
+                style={{
+                  width: '100%', padding: 10, border: '1px solid var(--tax-border)',
+                  borderRadius: 8, font: 'inherit', fontSize: 14,
+                }} />
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                onClick={onSubmit} disabled={busy || !draft.trim()}>
+          {busy ? t('lead.submitting') : t('owner.leads.notesSection.addBtn')}
+        </button>
+      </div>
+
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+
+      {notes === null && <p style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{t('loading')}</p>}
+      {notes && notes.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{t('owner.leads.notesSection.empty')}</p>
+      )}
+      {notes && notes.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, marginTop: 8 }}>
+          <LeadNoteCard n={notes[0]} locale={locale} t={t} />
+          {notes.length > 1 && (
+            <button type="button" onClick={() => setHistoryOpen(o => !o)}
+                    style={{
+                      justifySelf: 'start', border: 0, background: 'transparent', cursor: 'pointer',
+                      color: 'var(--tax-brand-primary)', fontSize: 12, fontWeight: 600, padding: 0,
+                    }}>
+              {historyOpen
+                ? t('owner.leads.notesSection.hideHistory')
+                : t('owner.leads.notesSection.showHistory', { count: notes.length - 1 })}
+            </button>
+          )}
+          {historyOpen && (
+            <div style={{ display: 'grid', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+              {notes.slice(1).map(n => <LeadNoteCard key={n.id} n={n} locale={locale} t={t} />)}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
