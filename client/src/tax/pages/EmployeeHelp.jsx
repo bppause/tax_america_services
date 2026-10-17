@@ -47,7 +47,11 @@ export default function EmployeeHelp() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(a);
     }
-    const order = ['getting_started', 'messages', 'notifications', 'profile', 'admin'];
+    // 'admin' carries the bulk of real content (its own articles are now
+    // ordered to read as a workflow: leads → customers → tasks → config
+    // → audit) so it sits right after onboarding. 'messages' is dropped —
+    // its one article was retired when the Inbox tab was removed.
+    const order = ['getting_started', 'admin', 'notifications', 'profile'];
     return order
       .map(cat => ({ category: cat, items: groups.get(cat) || [] }))
       .filter(g => g.items.length > 0);
