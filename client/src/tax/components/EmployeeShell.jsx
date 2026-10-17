@@ -8,11 +8,17 @@ import ImpersonationBanner from './ImpersonationBanner';
 
 // Collapsible sidebar section — remembers whether the user last left it
 // open or closed, per browser (localStorage), so returning to the app
-// keeps the menu exactly as they arranged it. Defaults to open.
-function NavGroup({ groupKey, label, children }) {
+// keeps the menu exactly as they arranged it. `defaultCollapsed` only
+// applies the first time (no stored preference yet) — once the user
+// toggles it, their choice wins from then on.
+function NavGroup({ groupKey, label, children, defaultCollapsed = false }) {
   const storageKey = `tax.employeeNav.${groupKey}.collapsed`;
   const [collapsed, setCollapsed] = useState(() => {
-    try { return localStorage.getItem(storageKey) === '1'; } catch { return false; }
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored != null) return stored === '1';
+    } catch { /* ignore */ }
+    return defaultCollapsed;
   });
   const toggle = () => {
     setCollapsed(prev => {
@@ -228,7 +234,7 @@ export default function EmployeeShell({ community, active, children }) {
                     "Meet the team" section is curated per-employee from
                     Practice setup → Staff → Public profile card. */}
                 {isAdmin && (
-                  <NavGroup groupKey="public-homepage" label={t('employee.nav.groupPublicHomepage')}>
+                  <NavGroup groupKey="public-homepage" label={t('employee.nav.groupPublicHomepage')} defaultCollapsed>
                     {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                     {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                     {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
@@ -245,7 +251,7 @@ export default function EmployeeShell({ community, active, children }) {
                     homepage only" scope a view_customers-revoked admin
                     account is meant to have. */}
                 {isAdmin && perm('view_customers') && (
-                  <NavGroup groupKey="practice-setup" label={t('employee.nav.groupPracticeSetup')}>
+                  <NavGroup groupKey="practice-setup" label={t('employee.nav.groupPracticeSetup')} defaultCollapsed>
                     {perm('manage_employees')       && navLink('staff',          `${base}/staff`,           t('employee.nav.staff'))}
                     {perm('manage_email_templates') && navLink('email-templates', `${base}/email-templates`, t('employee.nav.emailTemplates'))}
                     {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
