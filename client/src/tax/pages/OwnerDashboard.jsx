@@ -17,6 +17,11 @@ export default function OwnerDashboard() {
 
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
+  // Separate fetch — not part of the KPI/urgent-tasks payload. The owner
+  // sees every task awaiting review; anyone else only the ones
+  // specifically delegated to them (GET /admin/tasks/awaiting-review
+  // applies that scoping server-side).
+  const [awaitingReview, setAwaitingReview] = useState([]);
 
   const reload = () => {
     if (!employee || !community) return;
@@ -24,11 +29,18 @@ export default function OwnerDashboard() {
       .then(d => setData(d))
       .catch(e => setErr(e?.message || t('error.loadFailed')));
   };
+  const reloadAwaitingReview = () => {
+    if (!employee || !community) return;
+    taxApi.adminTasksAwaitingReview(auth)
+      .then(d => setAwaitingReview(d.tasks || []))
+      .catch(() => {});
+  };
 
   useEffect(() => {
     // Gate on `employee` (set after both Firebase link AND impersonation
     // resolve) instead of `fbUser`, which stays null during impersonation.
     reload();
+    reloadAwaitingReview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee, community]);
 
@@ -100,6 +112,11 @@ export default function OwnerDashboard() {
         <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
           <UrgentTasks tasks={data.urgentTasks || []}
                        base={base} community={community} onDeleted={reload} locale={locale} t={t} />
+          {awaitingReview.length > 0 && (
+            <AwaitingReview tasks={awaitingReview}
+                            base={base} community={community}
+                            onDeleted={reloadAwaitingReview} locale={locale} t={t} />
+          )}
           <NeedsAttention rows={data.needsAttention || []}
                           base={base} t={t} />
         </div>
@@ -328,6 +345,60 @@ function UrgentTasks({ tasks, base, community, onDeleted, locale, t }) {
           })}
         </ul>
       )}
+    </section>
+  );
+}
+
+// Tasks a preparer has marked done but that are parked on "Pending
+// review" until the owner signs off — only ever the owner, no
+// delegation. The answer to "where can I see what's waiting on me to
+// review". Approving/rejecting still happens from the task's own edit
+// modal (Progress panel); this is the at-a-glance list + deep link.
+function AwaitingReview({ tasks, base, community, onDeleted, locale, t }) {
+  const editHref = (id) => `${base}/tasks?edit=${encodeURIComponent(id)}`;
+  return (
+    <section style={{ border: '1px solid #fde68a', borderRadius: 10,
+                       background: '#fff', overflow: 'hidden' }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '12px 14px', borderBottom: '1px solid #fde68a',
+                        background: '#fffbeb' }}>
+        <strong style={{ fontSize: 14, color: '#92400e' }}>
+          {t('owner.dashboard.awaitingReview.heading')} ({tasks.length})
+        </strong>
+      </header>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {tasks.map(t1 => {
+          const cust = t1.customer;
+          const custName = cust?.business_name
+            || displayPersonName(cust)
+            || cust?.email
+            || t('owner.dashboard.practiceWide');
+          return (
+            <li key={t1.id} style={{ borderTop: '1px solid var(--tax-border)' }}>
+              <TaskHover task={t1} statuses={[]} community={community}
+                         onDeleted={onDeleted} locale={locale} t={t}>
+                <a href={editHref(t1.id)}
+                   style={{
+                     display: 'block', padding: '10px 14px',
+                     textDecoration: 'none', color: 'inherit',
+                   }}>
+                  <div style={{ fontWeight: 600 }}>{t1.title}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: 'var(--tax-muted)',
+                                 display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {cust && <span>{custName}</span>}
+                    {t1.product && (
+                      <span>· {pickI18n(t1.product.name_i18n, locale).value || t1.product.slug}</span>
+                    )}
+                    {t1.assigned_employee && (
+                      <span>· {displayPersonName(t1.assigned_employee) || t1.assigned_employee.email}</span>
+                    )}
+                  </div>
+                </a>
+              </TaskHover>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }

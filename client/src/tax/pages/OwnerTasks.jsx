@@ -1568,7 +1568,7 @@ function TaskFormModal({
           )}
 
           {isEdit && !isSimple && (
-            <TaskProgressPanel task={task} tasks={tasks} employees={employees}
+            <TaskProgressPanel task={task} tasks={tasks}
                                 isAdmin={isAdmin} isOwner={isOwner} employeeId={employeeId}
                                 statuses={statuses} currentStatusKey={statusKey}
                                 onSetStatus={onProgressSetStatus}
@@ -1617,7 +1617,7 @@ function TaskFormModal({
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so starting a timer or
 // approving a review never risks closing the modal.
-function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
   // ── Time tracking ──────────────────────────────────────────────────────
   const [entries, setEntries] = useState(null);
   const [totalSeconds, setTotalSeconds] = useState(0);
@@ -1717,7 +1717,6 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeI
 
   // ── Review ──────────────────────────────────────────────────────────────
   const [requiresReview, setRequiresReview] = useState(!!task.requires_review);
-  const [reviewerEmployeeId, setReviewerEmployeeId] = useState(task.reviewer_employee_id || '');
   const [reviewConfigBusy, setReviewConfigBusy] = useState(false);
   const [reviewConfigErr, setReviewConfigErr] = useState('');
   const [reviewBusy, setReviewBusy] = useState(false);
@@ -1728,23 +1727,14 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeI
   const approved = reviewDecision === 'approve' || !!task.reviewed_at;
   const changesRequested = reviewDecision === 'reject';
   const pendingReview = !approved && !changesRequested && !!task.pending_review_at && !task.reviewed_at;
-  // The owner can always review; any other admin only if they're the
-  // specific reviewer this task was delegated to — matches the server
-  // gate on POST /admin/tasks/:id/review.
-  const isReviewer = isOwner || (task.reviewer_employee_id && task.reviewer_employee_id === employeeId);
-  const reviewerEmp = employees.find(e => e.id === reviewerEmployeeId);
+  // Only the owner can review — no delegation to another admin, matches
+  // the server gate on POST /admin/tasks/:id/review.
+  const isReviewer = isOwner;
 
   const onSetRequiresReview = async (val) => {
     setRequiresReview(val);
     setReviewConfigBusy(true); setReviewConfigErr('');
     try { await taxApi.adminUpdateTask(auth, task.id, { requiresReview: val }); }
-    catch (e) { setReviewConfigErr(e?.message || ''); }
-    finally { setReviewConfigBusy(false); }
-  };
-  const onSetReviewer = async (val) => {
-    setReviewerEmployeeId(val);
-    setReviewConfigBusy(true); setReviewConfigErr('');
-    try { await taxApi.adminUpdateTask(auth, task.id, { reviewerEmployeeId: val }); }
     catch (e) { setReviewConfigErr(e?.message || ''); }
     finally { setReviewConfigBusy(false); }
   };
@@ -1830,22 +1820,13 @@ function TaskProgressPanel({ task, tasks, employees, isAdmin, isOwner, employeeI
                      onChange={e => onSetRequiresReview(e.target.checked)} />
               {t('owner.tasks.progress.requiresReview')}
             </label>
-            {requiresReview && (
-              <select value={reviewerEmployeeId} disabled={reviewConfigBusy}
-                      onChange={e => onSetReviewer(e.target.value)}>
-                <option value="">{t('owner.tasks.progress.reviewerAny')}</option>
-                {employees.filter(e => e.role === 'admin' && e.permissions?.view_customers !== false).map(e => (
-                  <option key={e.id} value={e.id}>{displayPersonName(e) || e.email}</option>
-                ))}
-              </select>
-            )}
           </div>
         )}
+        {/* No reviewer picker — review always goes to the owner, never a
+            delegated admin, so there's nothing to assign. */}
         {!isAdmin && requiresReview && (
           <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-            {reviewerEmp
-              ? t('owner.tasks.progress.reviewerIs', { name: displayPersonName(reviewerEmp) || reviewerEmp.email })
-              : t('owner.tasks.progress.reviewerAny')}
+            {t('owner.tasks.progress.reviewerAny')}
           </div>
         )}
         {reviewConfigErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{reviewConfigErr}</div>}

@@ -268,6 +268,9 @@ export const taxApi = {
   adminSetEmployeeRole(auth, id, role) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/role`, { role }, auth, { admin: true });
   },
+  adminSetEmployeeOwner(auth, id, isOwner) {
+    return request('PUT', `/admin/employees/${encodeURIComponent(id)}/owner`, { isOwner }, auth, { admin: true });
+  },
   adminSetEmployeePublicProfile(auth, id, payload) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/public-profile`, payload, auth, { admin: true });
   },
