@@ -8245,14 +8245,19 @@ ${closingHtml}
     const { data: existing } = await supabase.from('tax_task_status_options')
       .select('key').eq('community_id', communityId).eq('key', 'pending_review').maybeSingle();
     if (existing) return 'pending_review';
-    const { data: maxRow } = await supabase.from('tax_task_status_options')
-      .select('display_order').eq('community_id', communityId)
-      .order('display_order', { ascending: false }).limit(1).maybeSingle();
+    const { data: opts } = await supabase.from('tax_task_status_options')
+      .select('display_order, is_terminal').eq('community_id', communityId);
+    const terminalOrders = (opts || []).filter(o => o.is_terminal).map(o => o.display_order ?? 0);
+    const maxOrder = (opts || []).reduce((m, o) => Math.max(m, o.display_order ?? 0), 0);
+    // Sits one below the earliest terminal status (e.g. "Completed") so
+    // the board reads not-started → in-progress → pending review →
+    // completed, instead of landing after every terminal column.
+    const displayOrder = terminalOrders.length ? Math.min(...terminalOrders) - 1 : maxOrder + 10;
     await supabase.from('tax_task_status_options').insert({
       id: 'tstat_' + uuidv4().slice(0, 12),
       community_id: communityId, key: 'pending_review',
       label_i18n: { en: 'Pending review', es: 'Pendiente de revisión' },
-      color: '#f59e0b', display_order: (maxRow?.display_order ?? 0) + 10, is_terminal: false,
+      color: '#f59e0b', display_order: displayOrder, is_terminal: false,
     });
     return 'pending_review';
   }
