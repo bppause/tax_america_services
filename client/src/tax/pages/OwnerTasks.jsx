@@ -45,7 +45,14 @@ function formatDuration(totalSeconds) {
 // when the user cancels — the caller should skip the API call.
 // Keeps the inline status dropdown and the Kanban drag-drop from
 // surprising the user with a server 400.
-export function ensureCompletionNotes({ statuses, task, patch, t }) {
+//
+// task.notes stays the legacy single field the server still gates
+// completion on (no server-side change needed), but a freshly-prompted
+// note also belongs in the collaborative notes log (see TaskNotesSection
+// below) so completion notes show up in that shared history too —
+// `onNewNote(trimmedNote)`, when supplied, fires for exactly that case
+// (never for an already-existing note, which would just duplicate it).
+export function ensureCompletionNotes({ statuses, task, patch, t, onNewNote }) {
   if (!patch || !patch.statusKey) return patch;
   const target = (statuses || []).find(s => s.key === patch.statusKey);
   if (!target?.is_terminal) return patch;
@@ -61,6 +68,7 @@ export function ensureCompletionNotes({ statuses, task, patch, t }) {
     if (typeof window !== 'undefined') window.alert(t('owner.tasks.completeNotesRequired'));
     return null;
   }
+  onNewNote?.(trimmed);
   return { ...patch, notes: trimmed };
 }
 
@@ -928,7 +936,10 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
     // notes_required_on_complete check. Prompt the owner inline when
     // the row's status is being flipped to terminal and there's no
     // note yet, so the server round-trip never has to fail.
-    const finalPatch = ensureCompletionNotes({ statuses, task, patch, t });
+    const finalPatch = ensureCompletionNotes({
+      statuses, task, patch, t,
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, task.id, { body }).catch(() => {}),
+    });
     if (!finalPatch) return;
     setBusy(true); setErr('');
     try { await taxApi.adminUpdateTask(auth, task.id, finalPatch); onChange(); }
@@ -1078,6 +1089,93 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   );
 }
 
+// Collaborative, timestamped, multi-author notes log for a task — mirrors
+// OwnerCustomerDetail.jsx's customer NotesSection. No edit or delete
+// (notes are an audit trail, same v1 scope as the customer version);
+// newest first.
+function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
+  const [notes, setNotes] = useState(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const load = () => {
+    setErr('');
+    taxApi.adminListTaskNotes(auth, taskId)
+      .then(d => setNotes(d.notes || []))
+      .catch(e => setErr(e?.message || t('error.loadFailed')));
+  };
+  useEffect(load, [taskId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    const body = draft.trim();
+    if (!body) return;
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminCreateTaskNote(auth, taskId, { body });
+      setDraft('');
+      load();
+    } catch (e2) {
+      setErr(e2?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <label>{t('owner.tasks.field.notes')}</label>
+      <form onSubmit={onSubmit} style={{ marginTop: 4, marginBottom: 10 }}>
+        <textarea value={draft} onChange={e => setDraft(e.target.value)}
+                  rows={2} maxLength={4000}
+                  placeholder={t('owner.tasks.notes.placeholder')} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+          <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm"
+                  disabled={busy || !draft.trim()}>
+            {busy ? t('lead.submitting') : t('owner.tasks.notes.addBtn')}
+          </button>
+        </div>
+      </form>
+
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+
+      {notes === null && <p style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{t('loading')}</p>}
+      {notes && notes.length === 0 && (
+        <p style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{t('owner.tasks.notes.empty')}</p>
+      )}
+      {notes && notes.length > 0 && (
+        <div style={{ display: 'grid', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+          {notes.map(n => (
+            <div key={n.id} style={{
+              padding: '8px 10px', border: '1px solid var(--tax-border)',
+              borderRadius: 8, background: 'var(--tax-bg-alt)',
+            }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between', gap: 8,
+                fontSize: 11, color: 'var(--tax-muted)', marginBottom: 4,
+              }}>
+                <span>
+                  <strong style={{ color: 'var(--tax-text)' }}>
+                    {n.author_name || n.author_email || t('owner.customer.notes.unknownAuthor')}
+                  </strong>
+                  {n.author_role === 'admin' && (
+                    <span style={{
+                      marginLeft: 6, padding: '0 6px', borderRadius: 999,
+                      background: 'var(--tax-brand-primary)', color: '#fff',
+                      fontSize: 10, fontWeight: 700,
+                    }}>ADMIN</span>
+                  )}
+                </span>
+                <span>{formatDateTime(n.created_at, locale)}</span>
+              </div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{n.body}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Unified create + edit modal. Customer picker is a typeahead with an
 // inline "+ New customer" affordance; picking a customer auto-fills the
 // service from the customer's first active relationship (best-effort —
@@ -1112,6 +1210,19 @@ function TaskFormModal({
   const [suggestions, setSuggestions] = useState([]);
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [defaultProductHint, setDefaultProductHint] = useState(null);
+  // Only close on a genuine backdrop click — i.e. the mousedown AND the
+  // click both landed directly on the backdrop, not inside the panel. A
+  // plain onClick==onClose on the backdrop also fires when a drag that
+  // *starts* inside the panel (selecting text in Notes, dragging a date
+  // picker, etc.) happens to release past the panel's edge, since the
+  // browser's synthesized click target becomes the shared ancestor —
+  // the backdrop itself. That's what made the modal feel like it closed
+  // on an ordinary click.
+  const backdropMouseDownRef = useRef(false);
+  const onBackdropMouseDown = (e) => { backdropMouseDownRef.current = e.target === e.currentTarget; };
+  const onBackdropClick = (e) => {
+    if (backdropMouseDownRef.current && e.target === e.currentTarget) onClose();
+  };
 
   useEffect(() => {
     const product = products.find(p => p.id === productId);
@@ -1202,11 +1313,26 @@ function TaskFormModal({
     doSave.current(overrides);
   };
 
+  // Bumped whenever a completion note gets logged (see onNewNote below)
+  // so the collaborative notes history re-fetches and shows it.
+  const [notesRefreshKey, setNotesRefreshKey] = useState(0);
+
   // Lets TaskProgressPanel's timer-driven reminders (move to in-progress /
-  // mark complete) change status through the same path the Status select
-  // itself uses — single source of truth, same completion-notes prompt.
+  // mark complete), and the Status select right below, change status
+  // through the same path — single source of truth, same completion-
+  // notes prompt.
   const onProgressSetStatus = (key) => {
-    const patch = ensureCompletionNotes({ statuses, task: { ...task, notes }, patch: { statusKey: key }, t });
+    const patch = ensureCompletionNotes({
+      statuses, task: { ...task, notes }, patch: { statusKey: key }, t,
+      // Create mode has no task.id yet — the prompted note still lands
+      // in local `notes` state below and gets seeded into the log once
+      // the task is actually created (see onSave).
+      onNewNote: isEdit ? (body) => {
+        taxApi.adminCreateTaskNote(auth, task.id, { body })
+          .then(() => setNotesRefreshKey(k => k + 1))
+          .catch(() => {});
+      } : undefined,
+    });
     if (!patch) return;
     setStatusKey(patch.statusKey);
     if (patch.notes !== undefined) setNotes(patch.notes);
@@ -1218,19 +1344,26 @@ function TaskFormModal({
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
     setBusy(true); setErr('');
     try {
-      await taxApi.adminCreateTask(auth, {
+      const trimmedNotes = notes.trim();
+      const result = await taxApi.adminCreateTask(auth, {
         communitySlug: community.id,
         title: title.trim(), customerId: customerId || null, productId: productId || null,
         statusKey, priority, assignedEmployeeId: assignedTo || null,
-        dueDate: dueDate || null, notes: notes.trim(),
+        dueDate: dueDate || null, notes: trimmedNotes,
       });
+      // Seed the collaborative notes log with the initial note typed at
+      // creation, so it shows up in the same history new entries land in.
+      if (trimmedNotes && result?.id) {
+        taxApi.adminCreateTaskNote(auth, result.id, { body: trimmedNotes }).catch(() => {});
+      }
       onSaved();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
   };
 
   return (
-    <div className="tax-modal" role="dialog" aria-modal="true" onClick={onClose}>
+    <div className="tax-modal" role="dialog" aria-modal="true"
+         onMouseDown={onBackdropMouseDown} onClick={onBackdropClick}>
       <div className="tax-modal__panel" style={{ maxWidth: 640 }} onClick={e => e.stopPropagation()}>
         <button type="button" className="tax-modal__close"
                 onClick={onClose} aria-label={t('preview.close')}>×</button>
@@ -1322,7 +1455,7 @@ function TaskFormModal({
             </div>
             <div>
               <label>{t('owner.tasks.field.status')}</label>
-              <select value={statusKey} onChange={e => { setStatusKey(e.target.value); saveNow({ statusKey: e.target.value }); }}>
+              <select value={statusKey} onChange={e => onProgressSetStatus(e.target.value)}>
                 {statuses.map(s => (
                   <option key={s.id} value={s.key}>{pickI18n(s.label_i18n, locale).value || s.key}</option>
                 ))}
@@ -1335,10 +1468,15 @@ function TaskFormModal({
             <input type="date" value={dueDate} onChange={e => { setDueDate(e.target.value); saveNow({ dueDate: e.target.value }); }} />
           </div>
 
-          <div>
-            <label>{t('owner.tasks.field.notes')}</label>
-            <textarea rows={4} value={notes} onChange={e => { setNotes(e.target.value); scheduleAutoSave({ notes: e.target.value }); }} maxLength={4000} />
-          </div>
+          {isEdit ? (
+            <TaskNotesSection auth={auth} taskId={task.id} locale={locale} t={t} refreshKey={notesRefreshKey} />
+          ) : (
+            <div>
+              <label>{t('owner.tasks.field.notes')}</label>
+              <textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} maxLength={4000}
+                        placeholder={t('owner.tasks.notes.placeholder')} />
+            </div>
+          )}
 
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks} employees={employees}
@@ -2800,6 +2938,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     if (!task || task.status_key === targetKey) return;
     const patch = ensureCompletionNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
     });
     if (!patch) return;
     try {

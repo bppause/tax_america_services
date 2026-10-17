@@ -5,6 +5,8 @@ import { displayPersonName } from '../lib/personName';
 import { effectiveUrgency, colorOf, priorityColorOf, resolveThresholds } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
 import { formatDateTime } from '../lib/lastSignIn';
+import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
+import { taxApi } from '../api';
 
 // Hover card shared by every task surface in the employee portal —
 // Calendar pips, Kanban cards, Tasks list rows, Periods view, the
@@ -65,6 +67,26 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState(null);
 
+  // Latest collaborative note, fetched lazily the first time this
+  // hover opens (not on every list render) — pulled from auth context
+  // directly so every call site (Calendar, Kanban, Tasks list, Periods,
+  // dashboard, customer-profile task list) gets it for free, with no
+  // prop drilling and no change to those pages' own task queries.
+  // undefined = not fetched yet, null = fetched, no notes.
+  const { fbUser, community: authCommunity } = useEmployeeAuth();
+  const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: authCommunity?.id };
+  const [latestNote, setLatestNote] = useState(undefined);
+  const fetchedForTaskId = useRef(null);
+  useEffect(() => {
+    if (!open || !task?.id) return;
+    if (fetchedForTaskId.current === task.id) return;
+    fetchedForTaskId.current = task.id;
+    taxApi.adminListTaskNotes(auth, task.id)
+      .then(d => setLatestNote((d.notes || [])[0] || null))
+      .catch(() => setLatestNote(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, task?.id]);
+
   const reposition = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
     setCoords(computeCoords(rect, side));
@@ -105,8 +127,10 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   // the initial flip decision).
   useLayoutEffect(() => {
     if (open) reposition();
+    // Re-run once the note arrives — it can grow the popover enough to
+    // need a different above/below flip than the initial estimate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, latestNote]);
 
   const customer = task.customer;
   const product  = task.product;
@@ -200,6 +224,28 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
             : t('owner.tasks.lastViewed.neverHover')}
         </span>
       </div>
+      {latestNote !== undefined && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
+          <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginBottom: 2 }}>
+            {t('owner.tasks.lastNote.label')}
+          </div>
+          {latestNote ? (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--tax-text)', whiteSpace: 'pre-wrap' }}>
+                {latestNote.body.length > 180 ? latestNote.body.slice(0, 180) + '…' : latestNote.body}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
+                {t('owner.tasks.lastNote.byline', {
+                  name: latestNote.author_name || latestNote.author_email || t('owner.tasks.lastViewed.someone'),
+                  date: formatDateTime(latestNote.created_at, locale),
+                })}
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('owner.tasks.lastNote.none')}</div>
+          )}
+        </div>
+      )}
     </div>,
     document.body
   ) : null;

@@ -18,21 +18,47 @@ const CATEGORY_KEY = {
   audit: 'portal.profile.category.audit',
 };
 
-function SectionCard({ title, icon, children, action }) {
+// Collapsible — remembers whether the user last left each section open
+// or closed, per browser (localStorage), keyed by `storageKey` so each
+// of this page's many sections tracks its own state independently.
+// Collapsed by default on a first visit (no stored preference yet).
+function SectionCard({ title, icon, children, action, storageKey }) {
+  const lsKey = `tax.customerDetail.${storageKey}.open`;
+  const [open, setOpen] = useState(() => {
+    try {
+      const saved = localStorage.getItem(lsKey);
+      if (saved === '1') return true;
+      if (saved === '0') return false;
+    } catch { /* ignore */ }
+    return false;
+  });
+  useEffect(() => {
+    try { localStorage.setItem(lsKey, open ? '1' : '0'); } catch { /* ignore */ }
+  }, [open, lsKey]);
+
   return (
     <div style={{
       background: '#fff', border: '1px solid var(--tax-border)',
       borderRadius: 12, padding: '20px 24px', marginTop: 20,
       boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: open ? 16 : 0 }}>
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, minWidth: 0,
+                  background: 'transparent', border: 0, padding: 0, margin: 0,
+                  cursor: 'pointer', font: 'inherit', textAlign: 'left',
+                }}>
+          <span aria-hidden="true" style={{
+            color: 'var(--tax-muted)', fontSize: 13, fontWeight: 700,
+            flex: '0 0 auto', width: 14, textAlign: 'center',
+          }}>{open ? '▾' : '▸'}</span>
           {icon && <span style={{ fontSize: 18 }}>{icon}</span>}
-          {title}
-        </h3>
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>{title}</h3>
+        </button>
         {action}
       </div>
-      {children}
+      {open && children}
     </div>
   );
 }
@@ -301,6 +327,11 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [reportDrawer, setReportDrawer] = useState(null); // null = closed; { taskTitle, initialReportId, nonce } = open
   const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
   const [scrollToReportId, setScrollToReportId] = useState(null);
+  // Adding/removing a tagged service creates or deletes that service's
+  // generated tasks server-side — bump this so the Tasks section (a
+  // sibling, with its own independently-fetched task list) re-fetches
+  // instead of showing stale rows for tasks that no longer exist.
+  const [tasksRefreshKey, setTasksRefreshKey] = useState(0);
 
   // Listen for "Send to customer" postMessage from the owner preview tab.
   useEffect(() => {
@@ -353,13 +384,14 @@ export default function OwnerCustomerDetail({ customerId }) {
       <CustomerHeaderCard c={c} auth={auth} community={community} load={load} t={t} />
 
       {/* Flat section cards — task-first order */}
-      <SectionCard title={t('owner.customer.section.tasks')} icon="✅">
+      <SectionCard title={t('owner.customer.section.tasks')} icon="✅" storageKey="tasks">
         <TasksSection auth={auth} customer={c} customerId={customerId} community={community}
                       isAdmin={employee?.role === 'admin'} locale={locale} t={t}
+                      refreshKey={tasksRefreshKey}
                       onOpenReportDrawer={(opts) => setReportDrawer(opts)} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊"
+      <SectionCard title={t('owner.customer.bookkeeping.heading')} icon="📊" storageKey="bookkeeping"
         action={
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                   onClick={() => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: null, nonce: Date.now() })}>
@@ -371,37 +403,38 @@ export default function OwnerCustomerDetail({ customerId }) {
           onOpen={(reportId) => setReportDrawer({ taskTitle: 'Financial Reports (P&L / Balance Sheet)', initialReportId: reportId, nonce: Date.now() })} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.section.services')} icon="🏷️">
-        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t} />
+      <SectionCard title={t('owner.customer.section.services')} icon="🏷️" storageKey="services">
+        <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t}
+                         onChanged={() => setTasksRefreshKey(k => k + 1)} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.inquiry.heading')} icon="📤">
+      <SectionCard title={t('owner.customer.inquiry.heading')} icon="📤" storageKey="inquiry">
         <ServiceInquirySection customer={c} auth={auth} community={community} locale={locale} t={t} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.section.notes')} icon="📝">
+      <SectionCard title={t('owner.customer.section.notes')} icon="📝" storageKey="notes">
         <NotesSection auth={auth} customerId={customerId} locale={locale} t={t} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.section.documents')} icon="📄">
+      <SectionCard title={t('owner.customer.section.documents')} icon="📄" storageKey="documents">
         <DocumentsSection data={data} auth={auth} customerId={customerId} onChange={load} t={t} />
       </SectionCard>
 
       {community?.tax_customer_portal_enabled && (
-        <SectionCard title={t('owner.customer.section.signatures')} icon="✍️">
+        <SectionCard title={t('owner.customer.section.signatures')} icon="✍️" storageKey="signatures">
           <SignatureRequestsSection auth={auth} customerId={customerId} locale={locale} t={t} />
         </SectionCard>
       )}
 
-      <SectionCard title={t('owner.customer.section.assignments')} icon="👥">
+      <SectionCard title={t('owner.customer.section.assignments')} icon="👥" storageKey="assignments">
         <AssignmentsSection data={data} t={t} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.section.threads')} icon="🕐">
+      <SectionCard title={t('owner.customer.section.threads')} icon="🕐" storageKey="threads">
         <ActivityTimelineSection auth={auth} customerId={customerId} locale={locale} t={t} />
       </SectionCard>
 
-      <SectionCard title={t('owner.customer.section.profile')} icon="👤">
+      <SectionCard title={t('owner.customer.section.profile')} icon="👤" storageKey="profile">
         <ProfileSection customer={c} auth={auth} customerId={customerId} onChange={load} t={t} />
       </SectionCard>
 
@@ -2185,7 +2218,7 @@ function CompletedTasksBucket({ tasks, renderTask, t }) {
   );
 }
 
-function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t, onOpenReportDrawer }) {
+function TasksSection({ auth, customer, customerId, community, isAdmin, locale, t, onOpenReportDrawer, refreshKey }) {
   const [tasks, setTasks] = useState(null);
   const [statuses, setStatuses] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -2212,12 +2245,23 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [community, customerId]);
+  // Tagging/untagging a service adds or deletes this customer's
+  // generated tasks server-side — re-fetch when that happens so the
+  // list doesn't keep showing rows that no longer exist.
+  useEffect(() => {
+    if (!community || refreshKey === undefined) return;
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   const updateTask = async (id, patch) => {
     // Completing requires a closing note — prompt up-front so the
     // round-trip never has to fail with notes_required_on_complete.
     const target = (tasks || []).find(t0 => t0.id === id);
-    const finalPatch = ensureCompletionNotes({ statuses, task: target || {}, patch, t });
+    const finalPatch = ensureCompletionNotes({
+      statuses, task: target || {}, patch, t,
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
+    });
     if (!finalPatch) return;
     try { await taxApi.adminUpdateTask(auth, id, finalPatch); load(); }
     catch (e) { setErr(e?.message || ''); }
@@ -2477,7 +2521,7 @@ function InlineAddTask({ auth, community, customerId, statuses, employees, produ
 // outlined chips the owner can click to add. Same data flow as the
 // dropdown variant: each toggle fires the generator immediately so
 // the team has tasks queued before the screen settles.
-function ServicesSection({ community, auth, customerId, locale, t }) {
+function ServicesSection({ community, auth, customerId, locale, t, onChanged }) {
   const [services, setServices] = useState(null);
   const [products, setProducts] = useState([]);
   const [busyId, setBusyId] = useState(null);
@@ -2512,15 +2556,12 @@ function ServicesSection({ community, auth, customerId, locale, t }) {
         ? t('owner.customer.services.addedWithTasks', { count: r.tasksCreated, name })
         : t('owner.customer.services.addedNamed', { name }));
       load();
+      onChanged?.();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusyId(null); }
   };
   const onRemove = async (link) => {
     const name = pickI18n(link.product?.name_i18n, locale).value || link.product?.slug || '';
-    if (services.length <= 1) {
-      setErr(t('owner.customer.services.errLastService'));
-      return;
-    }
     if (!window.confirm(t('owner.customer.services.removeConfirm', { name }))) return;
     setBusyId(link.id); setErr(''); setMsg('');
     try {
@@ -2529,6 +2570,7 @@ function ServicesSection({ community, auth, customerId, locale, t }) {
         ? t('owner.customer.services.removedWithTasks', { count: r.tasksDeleted, name })
         : t('owner.customer.services.removedNamed', { name }));
       load();
+      onChanged?.();
     } catch (e) { setErr(e?.message || ''); }
     finally { setBusyId(null); }
   };

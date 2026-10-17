@@ -2121,6 +2121,23 @@ create index if not exists tax_tasks_assignee_idx
 create index if not exists tax_tasks_product_idx
   on public.tax_tasks(product_id, status_key) where product_id is not null;
 
+-- Collaborative task notes. tax_tasks.notes stays a single overwritable
+-- field (it still gates task completion), but the notes UI is a
+-- multi-author, append-only log here — same shape as tax_customer_notes.
+create table if not exists public.tax_task_notes (
+  id            text primary key,
+  community_id  text not null references public.communities(id) on delete cascade,
+  task_id       text not null references public.tax_tasks(id) on delete cascade,
+  body          text not null default '',
+  author_email  text not null default '',
+  author_name   text not null default '',
+  author_role   text not null default 'staff',   -- 'admin' | 'staff'
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_tax_task_notes_task
+  on public.tax_task_notes(task_id, created_at desc);
+alter table public.tax_task_notes disable row level security;
+
 -- Phase 4n.36: tasks linked to a (customer, relationship_type) get
 -- auto-generated when the relationship is added, and archived when
 -- it's removed. `source` distinguishes auto-generated rows from

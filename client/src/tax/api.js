@@ -518,6 +518,8 @@ export const taxApi = {
   adminBulkUpdateTasks(auth, payload)         { return request('PATCH',  '/admin/tasks/bulk', payload, auth); },
   adminDeleteTask(auth, id)                   { return request('DELETE', `/admin/tasks/${encodeURIComponent(id)}`, undefined, auth); },
   adminMarkTaskViewed(auth, id)               { return request('POST',   `/admin/tasks/${encodeURIComponent(id)}/viewed`, {}, auth); },
+  adminListTaskNotes(auth, id)                 { return request('GET',  `/admin/tasks/${encodeURIComponent(id)}/notes`, undefined, auth); },
+  adminCreateTaskNote(auth, id, payload)       { return request('POST', `/admin/tasks/${encodeURIComponent(id)}/notes`, payload, auth); },
 
   // Review queue (Phase 4n.56) — a designated reviewer (or any admin)
   // signs off on a task sitting in pending-review state.
