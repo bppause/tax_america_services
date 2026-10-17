@@ -3403,3 +3403,21 @@ alter table public.tax_tasks
 alter table public.communities
   add column if not exists tax_staff_email_task_status_changed_enabled
     boolean not null default true;
+
+-- Collaborative lead notes. tax_leads.notes stays a single overwritable
+-- field (legacy, no longer written by the UI), but the notes UI is a
+-- multi-author, append-only log here — same shape as tax_customer_notes
+-- and tax_task_notes.
+create table if not exists public.tax_lead_notes (
+  id            text primary key,
+  community_id  text not null references public.communities(id) on delete cascade,
+  lead_id       text not null references public.tax_leads(id) on delete cascade,
+  body          text not null default '',
+  author_email  text not null default '',
+  author_name   text not null default '',
+  author_role   text not null default 'staff',   -- 'admin' | 'staff'
+  created_at    timestamptz not null default now()
+);
+create index if not exists idx_tax_lead_notes_lead
+  on public.tax_lead_notes(lead_id, created_at desc);
+alter table public.tax_lead_notes disable row level security;
