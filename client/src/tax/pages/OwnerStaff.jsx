@@ -33,11 +33,12 @@ export default function OwnerStaff() {
     if (!form.email.trim()) { setMsg({ kind: 'error', text: t('owner.customers.errEmailRequired') }); return; }
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
-      // "Site admin" is role=admin with the view_customers permission
+      // "Site admin" is role=admin with every customer-facing permission
       // pre-revoked — a one-step shortcut for the person who should
       // manage the public website/app but never see customer data,
-      // instead of creating a regular admin and then finding that
-      // toggle in the permissions editor afterward.
+      // instead of creating a regular admin and then finding those
+      // toggles in the permissions editor afterward. Matches the set
+      // OwnerStaffDetail's role switcher uses (SITE_ADMIN_CUSTOMER_KEYS).
       const isSiteAdmin = form.role === 'site_admin';
       const result = await taxApi.adminCreateEmployee(auth, {
         communitySlug: community.id,
@@ -46,7 +47,9 @@ export default function OwnerStaff() {
         middleName: form.middleName.trim(),
         lastName: form.lastName.trim(),
         role: isSiteAdmin ? 'admin' : form.role,
-        permissions: isSiteAdmin ? { view_customers: false } : undefined,
+        permissions: isSiteAdmin
+          ? { view_customers: false, manage_customers: false, manage_leads: false }
+          : undefined,
         locale: form.locale,
         sendWelcomeEmail: form.sendWelcomeEmail,
       });

@@ -1291,18 +1291,49 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 // to a "Restore" affordance.
 // Mirror of AccessScopePill (on the list page) for the detail header.
 // Inline since it's tiny and the two pages don't otherwise share code.
+// Customer-facing powers a Site admin shouldn't have — revoked as a
+// group rather than just view_customers, so e.g. manage_leads can't
+// leave a stray customer-facing nav item visible.
+const SITE_ADMIN_CUSTOMER_KEYS = ['view_customers', 'manage_customers', 'manage_leads'];
+// Website/app powers a Site admin needs. The Public homepage / Practice
+// setup nav groups are gated on role==='admin' alone (not on these
+// permissions), so they still *render* even if one of these got
+// revoked by an earlier, unrelated permission tweak — but the specific
+// link stays hidden, which from the sidebar looks identical to "that
+// whole group is missing." Explicitly re-granting all of these when
+// picking Site admin guarantees a full, working website/app admin
+// regardless of whatever permissions this employee had before.
+const SITE_ADMIN_GRANTED_KEYS = [
+  'manage_services', 'manage_workflows', 'manage_email_templates',
+  'manage_settings', 'manage_employees', 'send_reminders', 'view_audit_logs',
+];
+
 // Editable role control — was a read-only badge until role had no
 // update path at all (set once at creation, no way to promote a staff
-// member to admin afterward). "Site admin" bundles role=admin with
-// view_customers revoked in one pick, same as the Add Staff form's
-// three-way picker, instead of requiring two separate trips (change
-// role here, then find the toggle in Permissions below).
+// member to admin afterward). "Site admin" bundles role=admin with a
+// specific, fully-reset permission profile in one pick, same as the
+// Add Staff form's three-way picker, instead of requiring a separate
+// trip through the Permissions checklist below (and instead of
+// leaving behind whatever one-off revocations the account already had,
+// which is how a "site admin" can end up seeing nothing at all).
 function RoleSwitcher({ emp, me, auth, onSaved, t }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const isSelf = emp.id === me?.id;
   const value = emp.role !== 'admin' ? 'staff'
     : (emp.permissions?.view_customers === false ? 'site_admin' : 'admin');
+
+  // Forces the exact Site admin permission profile regardless of
+  // whatever one-off revocations this account already carries — used
+  // both when switching into Site admin and by the repair link below,
+  // which has to work even when the dropdown already reads "Site
+  // admin" (so a plain re-pick wouldn't fire onChange at all).
+  const applySiteAdminProfile = async () => {
+    const nextPermissions = { ...(emp.permissions || {}) };
+    for (const k of SITE_ADMIN_CUSTOMER_KEYS) nextPermissions[k] = false;
+    for (const k of SITE_ADMIN_GRANTED_KEYS) delete nextPermissions[k];
+    await taxApi.adminSetEmployeePermissions(auth, emp.id, nextPermissions);
+  };
 
   const onChange = async (next) => {
     if (next === value) return;
@@ -1312,21 +1343,34 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
       if (nextRole !== emp.role) {
         await taxApi.adminSetEmployeeRole(auth, emp.id, nextRole);
       }
-      if (next === 'site_admin' && emp.permissions?.view_customers !== false) {
-        await taxApi.adminSetEmployeePermissions(auth, emp.id,
-          { ...(emp.permissions || {}), view_customers: false });
-      } else if (next === 'admin' && emp.permissions?.view_customers === false) {
-        // Promoting a former site admin to full admin restores customer
-        // visibility — otherwise picking "Admin" here would silently do
-        // nothing (they'd still be a web-only admin underneath).
-        const { view_customers, ...rest } = emp.permissions || {};
-        await taxApi.adminSetEmployeePermissions(auth, emp.id, rest);
+      if (next === 'site_admin') {
+        await applySiteAdminProfile();
+      } else if (next === 'admin' && SITE_ADMIN_CUSTOMER_KEYS.some(k => emp.permissions?.[k] === false)) {
+        // Promoting to full admin restores every customer-facing power
+        // — otherwise picking "Admin" here would silently do nothing
+        // for a former site admin (they'd still be web-only underneath).
+        const nextPermissions = { ...(emp.permissions || {}) };
+        for (const k of SITE_ADMIN_CUSTOMER_KEYS) delete nextPermissions[k];
+        await taxApi.adminSetEmployeePermissions(auth, emp.id, nextPermissions);
       }
       onSaved();
     } catch (e) {
       setErr(e?.message || t('respond.error.generic'));
     } finally { setBusy(false); }
   };
+
+  const onRepair = async () => {
+    setBusy(true); setErr('');
+    try { await applySiteAdminProfile(); onSaved(); }
+    catch (e) { setErr(e?.message || t('respond.error.generic')); }
+    finally { setBusy(false); }
+  };
+
+  // Does this site admin have one of the website/app powers revoked
+  // from before (so Public homepage / Practice setup render with gaps,
+  // or look entirely empty if every item in a group is hidden)?
+  const needsRepair = value === 'site_admin'
+    && SITE_ADMIN_GRANTED_KEYS.some(k => emp.permissions?.[k] === false);
 
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -1344,6 +1388,17 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
         <option value="admin">{t('owner.staffDetail.role.admin')}</option>
         <option value="site_admin">{t('owner.staffDetail.role.siteAdmin')}</option>
       </select>
+      {needsRepair && !isSelf && (
+        <button type="button" onClick={onRepair} disabled={busy}
+                title={t('owner.staffDetail.role.repairHint')}
+                style={{
+                  border: 0, background: 'transparent', color: '#92400e',
+                  fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: 0,
+                  textDecoration: 'underline',
+                }}>
+          {t('owner.staffDetail.role.repair')}
+        </button>
+      )}
       {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
     </span>
   );
