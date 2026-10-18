@@ -3665,3 +3665,15 @@ alter table public.tax_tasks
   add column if not exists status_changed_at timestamptz not null default now();
 
 update public.tax_tasks set status_changed_at = created_at;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Owner-editable priority definitions
+--
+-- Per-community override for the explanatory text shown on each task
+-- priority (Urgent/High/Normal/Low), keyed by locale: {"en":{"urgent":
+-- "...", ...}, "es":{...}}. Missing locale/key falls back to the
+-- platform default copy. Same shape and editing pattern as the
+-- existing tax_task_priority_colors override.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.communities
+  add column if not exists tax_task_priority_definitions jsonb not null default '{}'::jsonb;

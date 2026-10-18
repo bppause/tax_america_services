@@ -462,6 +462,9 @@ export const taxApi = {
   adminSetTaskColorOverrides(auth, payload) {
     return request('PUT', '/admin/community-settings/task-color-overrides', payload, auth, { admin: true });
   },
+  adminSetTaskPriorityDefinitions(auth, payload) {
+    return request('PUT', '/admin/community-settings/task-priority-definitions', payload, auth, { admin: true });
+  },
   adminRefreshTasks(auth) {
     return request('POST', '/admin/tasks/refresh', {}, auth, { admin: true });
   },

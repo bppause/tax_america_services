@@ -3576,6 +3576,57 @@ ${closingHtml}
     });
   });
 
+  // PUT /admin/community-settings/task-priority-definitions
+  // Body: { communitySlug, definitions: { en?: { urgent, high, normal, low },
+  //                                        es?: { urgent, high, normal, low } } }
+  // Same override-or-fall-back-to-default shape as task-color-overrides:
+  // an empty string for a key clears it (falls back to the platform
+  // default copy); a missing locale leaves that locale's overrides as
+  // they were.
+  router.put('/admin/community-settings/task-priority-definitions', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const PRIORITY_KEYS = ['urgent', 'high', 'normal', 'low'];
+    const sanitizeMap = (raw) => {
+      const out = {};
+      if (!raw || typeof raw !== 'object') return out;
+      for (const k of PRIORITY_KEYS) {
+        const v = raw[k];
+        if (v === '' || v === null || v === undefined) continue; // omit → falls back to default
+        if (typeof v !== 'string') continue;
+        const trimmed = v.trim().slice(0, 300);
+        if (trimmed) out[k] = trimmed;
+      }
+      return out;
+    };
+    const incoming = req.body?.definitions;
+    if (!incoming || typeof incoming !== 'object') {
+      return res.status(400).json({ error: 'definitions required.' });
+    }
+    const { data: cur } = await supabase.from('communities')
+      .select('tax_task_priority_definitions').eq('id', communitySlug).maybeSingle();
+    const existing = (cur?.tax_task_priority_definitions && typeof cur.tax_task_priority_definitions === 'object')
+      ? cur.tax_task_priority_definitions : {};
+    const nextDefinitions = { ...existing };
+    for (const locale of ['en', 'es']) {
+      if (incoming[locale] !== undefined) nextDefinitions[locale] = sanitizeMap(incoming[locale]);
+    }
+    const { error } = await supabase.from('communities')
+      .update({ tax_task_priority_definitions: nextDefinitions, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'task_priority_definitions_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: nextDefinitions,
+      });
+    } catch (_e) {}
+    res.json({ ok: true, definitions: nextDefinitions });
+  });
+
   router.put('/admin/community-settings/task-thresholds', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
     const communitySlug = trim(req.body?.communitySlug, 200);
@@ -4081,7 +4132,7 @@ ${closingHtml}
         id, name, name_en, tax_allow_customer_notif_pref_change, tax_customer_documents_enabled,
         tax_customer_portal_enabled, tax_customer_reminders_enabled, tax_task_lookahead_months,
         tax_task_urgent_days, tax_task_soon_days, tax_task_upcoming_days,
-        tax_task_priority_colors, tax_task_urgency_colors,
+        tax_task_priority_colors, tax_task_urgency_colors, tax_task_priority_definitions,
         tax_customer_emails_master_enabled,
         tax_email_welcome_enabled, tax_email_document_enabled,
         tax_email_message_enabled, tax_email_signature_enabled,
@@ -11786,7 +11837,7 @@ ${closingHtml}
     stampLastSignIn('tax_employees', emp.id, emp.last_sign_in_at);
     const [{ data: community }, assignments, { data: companion }] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale, contact_email, phone, tax_ui_mode')
+        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale, contact_email, phone, tax_ui_mode, tax_task_priority_colors, tax_task_urgency_colors, tax_task_priority_definitions')
         .eq('id', emp.community_id).maybeSingle(),
       // Only fetch assignments for staff; for admin the list would be ALL
       // customers which is a different display ("All customers in this

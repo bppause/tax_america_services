@@ -110,6 +110,16 @@ export default function OwnerSettings() {
       setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
     } finally { setBusy(false); }
   };
+  const onSaveTaskPriorityDefinitions = async (definitions) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetTaskPriorityDefinitions(auth, { communitySlug: community.id, definitions });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
   const onRefreshTasksNow = async () => {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
@@ -568,6 +578,16 @@ export default function OwnerSettings() {
           initialPriority={settings.tax_task_priority_colors || {}}
           initialUrgency={settings.tax_task_urgency_colors || {}}
           busy={busy} onSave={onSaveColorOverrides} t={t} />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        storageKey="priorityDefinitions"
+        defaultOpen={false}
+        title={t('owner.settings.priorityDefinitions.title')}
+        subtitle={t('owner.settings.priorityDefinitions.subtitle')}>
+        <PriorityDefinitionsEditor
+          initial={settings.tax_task_priority_definitions || {}}
+          busy={busy} onSave={onSaveTaskPriorityDefinitions} t={t} />
       </CollapsibleSection>
 
       <TaskStatusesSection auth={auth} community={community} t={t} />
@@ -2088,6 +2108,70 @@ function ColorGroup({ heading, subheading, buckets, labelKey, defaults, override
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Per-priority explanatory text (shown as a tooltip on the Priority
+// field in the task editor) — editable per locale, same override-or-
+// fall-back shape as the color overrides above. Placeholders show the
+// platform default copy so an empty field still previews what
+// employees currently see.
+const PRIORITY_DEFINITION_KEYS = ['urgent', 'high', 'normal', 'low'];
+const PRIORITY_DEFINITION_DEFAULTS = {
+  en: {
+    urgent: 'Drop other work for this — time-critical or blocking right now.',
+    high: 'Important — handle before normal-priority work.',
+    normal: 'Standard priority, the default pace of work.',
+    low: 'Fine to wait until the rest of the list is done.',
+  },
+  es: {
+    urgent: 'Deja todo lo demás para esto — es crítico en el tiempo o está bloqueando ahora mismo.',
+    high: 'Importante — atiéndela antes que el trabajo de prioridad normal.',
+    normal: 'Prioridad estándar, el ritmo normal de trabajo.',
+    low: 'Puede esperar hasta terminar el resto de la lista.',
+  },
+};
+
+function PriorityDefinitionsEditor({ initial, busy, onSave, t }) {
+  const [defs, setDefs] = useState(initial || {});
+  useEffect(() => { setDefs(initial || {}); }, [initial]);
+
+  const setVal = (locale, key, v) => setDefs(d => ({
+    ...d, [locale]: { ...(d[locale] || {}), [key]: v },
+  }));
+
+  const dirty = JSON.stringify(defs) !== JSON.stringify(initial || {});
+
+  // Auto-save 1.2s after the last keystroke, same debounce as the
+  // color overrides above.
+  useEffect(() => {
+    if (!dirty) return;
+    const id = setTimeout(() => { onSave(defs); }, 1200);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defs]);
+
+  return (
+    <div style={{ display: 'grid', gap: 18, maxWidth: 720 }}>
+      {['en', 'es'].map(locale => (
+        <div key={locale}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>
+            {t(`owner.settings.priorityDefinitions.locale.${locale}`)}
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {PRIORITY_DEFINITION_KEYS.map(k => (
+              <div key={k}>
+                <label style={{ fontSize: 12, fontWeight: 600 }}>{t(`owner.tasks.priority.${k}`)}</label>
+                <textarea rows={2} value={defs[locale]?.[k] || ''} disabled={busy}
+                          maxLength={300}
+                          placeholder={PRIORITY_DEFINITION_DEFAULTS[locale][k]}
+                          onChange={e => setVal(locale, k, e.target.value)} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
