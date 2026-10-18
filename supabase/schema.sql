@@ -3642,3 +3642,26 @@ update public.tax_employees
   set is_seed_owner = true
   where community_id = 'tax-america-services'
     and email = 'taxamericaservices@gmail.com';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Automatic time-in-status tracking
+--
+-- Replaces the manual start/stop timer in the task edit modal with a
+-- read-only summary computed from timestamps: time in the current
+-- status (now/completed_at − status_changed_at) and total task age
+-- (now/completed_at − created_at). status_changed_at is bumped
+-- server-side on every status_key change (PATCH /admin/tasks/:id,
+-- the bulk endpoint, and the review-decision endpoint). Backfilled to
+-- created_at for existing rows — the true "last changed" moment for
+-- tasks that already moved through several statuses before this
+-- column existed was never captured, so created_at is the best
+-- available baseline, not a claim of full accuracy.
+--
+-- The manual tax_task_time_entries table and its endpoints are left
+-- untouched (not dropped) — any time already logged there stays
+-- queryable, it's just no longer surfaced in the task edit UI.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_tasks
+  add column if not exists status_changed_at timestamptz not null default now();
+
+update public.tax_tasks set status_changed_at = created_at;

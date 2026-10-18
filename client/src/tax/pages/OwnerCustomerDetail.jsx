@@ -5,7 +5,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import TaskHover from '../components/TaskHover';
-import { ensureStatusChangeNotes } from './OwnerTasks';
+import { ensureStatusChangeNotes, notStartedFieldsMissing } from './OwnerTasks';
 import BookkeepingReportsSection from '../components/BookkeepingReports';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
@@ -2265,9 +2265,11 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
   }, [refreshKey]);
 
   const updateTask = async (id, patch) => {
+    const target = (tasks || []).find(t0 => t0.id === id);
+    const fieldsMsg = notStartedFieldsMissing({ task: target || {}, patch, t });
+    if (fieldsMsg) { window.alert(fieldsMsg); return; }
     // Any status change requires a note — prompt up-front so the
     // round-trip never has to fail with notes_required_on_status_change.
-    const target = (tasks || []).find(t0 => t0.id === id);
     const finalPatch = ensureStatusChangeNotes({
       statuses, task: target || {}, patch, t,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),

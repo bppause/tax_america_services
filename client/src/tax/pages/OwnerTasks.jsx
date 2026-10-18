@@ -32,8 +32,10 @@ export const NO_SERVICE_ID = '__none__';
 
 function formatDuration(totalSeconds) {
   const s = Math.max(0, Math.round(totalSeconds || 0));
-  const h = Math.floor(s / 3600);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
   const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
   if (h === 0 && m === 0) return '<1m';
   if (h === 0) return `${m}m`;
   return `${h}h ${m}m`;
@@ -80,6 +82,27 @@ export function ensureStatusChangeNotes({ statuses, task, patch, t, onNewNote })
   }
   onNewNote?.(trimmed);
   return { ...patch, notes: trimmed };
+}
+
+// A task can't move beyond "Not started" without an owner, priority,
+// and due date already in place — those are what make it actually
+// actionable (who's doing it, how urgent, by when). Checked against
+// whichever value is effective after the patch (falls back to the
+// task's current one). Mirrors the server gate on PATCH
+// /admin/tasks/:id and POST /admin/tasks. Returns a translated error
+// string if blocked, or null if the move is fine.
+export function notStartedFieldsMissing({ task, patch, t }) {
+  if (!patch || !patch.statusKey) return null;
+  if (patch.statusKey === 'not_started') return null;
+  const assignee = patch.assignedEmployeeId !== undefined ? patch.assignedEmployeeId : task?.assigned_employee_id;
+  const priority = patch.priority !== undefined ? patch.priority : task?.priority;
+  const due = patch.dueDate !== undefined ? patch.dueDate : task?.due_date;
+  const missing = [];
+  if (!assignee) missing.push(t('owner.tasks.field.owner'));
+  if (!priority) missing.push(t('owner.tasks.field.priority'));
+  if (!due) missing.push(t('owner.tasks.field.due'));
+  if (!missing.length) return null;
+  return t('owner.tasks.notStartedFieldsRequired', { fields: missing.join(', ') });
 }
 
 // When a task requires owner review and hasn't been approved yet,
@@ -976,6 +999,8 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   const prCol = priorityColorOf(task.priority, community);
 
   const update = async (patch) => {
+    const fieldsMsg = notStartedFieldsMissing({ task, patch, t });
+    if (fieldsMsg) { window.alert(fieldsMsg); return; }
     // Any status change requires a note — see the server-side
     // notes_required_on_status_change check. Prompt the owner inline
     // when the row's status is being changed and there's no note yet,
@@ -1214,7 +1239,8 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
                     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(); }
                   }}
                   rows={2} maxLength={4000}
-                  placeholder={t('owner.tasks.notes.placeholder')} />
+                  placeholder={t('owner.tasks.notes.placeholder')}
+                  title={t('owner.tasks.notes.hint')} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
           <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
                   onClick={onSubmit} disabled={busy || !draft.trim()}>
@@ -1270,6 +1296,14 @@ function TaskFormModal({
   const [customerId, setCustomerId] = useState(isEdit ? (task.customer_id || '') : '');
   const [productId, setProductId] = useState(isEdit ? (task.product_id || '') : '');
   const [productAutoFilledFor, setProductAutoFilledFor] = useState('');
+  // Leaving these blank silently defaults a new task to "practice-wide"
+  // — fine when that's deliberate, surprising when it's just a field the
+  // preparer skipped past. Create mode starts untouched and gates the
+  // save on an explicit choice (pick one, or confirm practice-wide is
+  // right); an existing task's customer/service were already resolved
+  // the same way when it was first created.
+  const [customerTouched, setCustomerTouched] = useState(isEdit);
+  const [productTouched, setProductTouched] = useState(isEdit);
   const [statusKey, setStatusKey] = useState(
     isEdit ? task.status_key : (statuses[0]?.key || 'not_started')
   );
@@ -1357,6 +1391,7 @@ function TaskFormModal({
         if (d?.productId && !productId) {
           setProductId(d.productId);
           setProductAutoFilledFor(customerId);
+          setProductTouched(true);
         }
       })
       .catch(() => setDefaultProductHint(null));
@@ -1412,8 +1447,14 @@ function TaskFormModal({
   // through the same path — single source of truth, same completion-
   // notes prompt.
   const onProgressSetStatus = (key) => {
+    // Owner/priority/due live in this same form — use the current
+    // local state (not the stale `task` prop) so a value just typed
+    // in, but not yet round-tripped, still counts toward the gate.
+    const effectiveTask = { ...task, notes, assigned_employee_id: assignedTo, priority, due_date: dueDate };
+    const fieldsMsg = notStartedFieldsMissing({ task: effectiveTask, patch: { statusKey: key }, t });
+    if (fieldsMsg) { window.alert(fieldsMsg); return; }
     const patch = ensureStatusChangeNotes({
-      statuses, task: { ...task, notes }, patch: { statusKey: key }, t,
+      statuses, task: effectiveTask, patch: { statusKey: key }, t,
       // Create mode has no task.id yet — the prompted note still lands
       // in local `notes` state below and gets seeded into the log once
       // the task is actually created (see onSave).
@@ -1432,6 +1473,12 @@ function TaskFormModal({
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
+    if (!customerTouched || !productTouched) {
+      const missing = [customerTouched ? null : t('owner.tasks.field.customer'), productTouched ? null : t('owner.tasks.field.service')]
+        .filter(Boolean).join(' / ');
+      if (!window.confirm(t('owner.tasks.practiceWideConfirm', { fields: missing }))) return;
+      setCustomerTouched(true); setProductTouched(true);
+    }
     setBusy(true); setErr('');
     try {
       const trimmedNotes = notes.trim();
@@ -1526,6 +1573,7 @@ function TaskFormModal({
           <div>
             <label>{t('owner.tasks.field.title')}</label>
             <input type="text" value={title} onChange={e => { setTitle(e.target.value); scheduleAutoSave({ title: e.target.value }); }}
+                   title={t('owner.tasks.field.titleHint')}
                    maxLength={300} list="task-suggestions" required autoFocus />
             <datalist id="task-suggestions">
               {suggestions.map((s, i) => (
@@ -1537,15 +1585,20 @@ function TaskFormModal({
           <div>
             <label>{t('owner.tasks.field.customer')}</label>
             <CustomerCombobox
-              customers={customers} value={customerId} onChange={v => { setCustomerId(v); saveNow({ customerId: v }); }}
+              customers={customers} value={customerId}
+              onChange={v => { setCustomerId(v); setCustomerTouched(true); saveNow({ customerId: v }); }}
               isAdmin={isAdmin} onAddNew={() => setShowInlineCreate(true)}
               locale={locale} t={t}
             />
-            {defaultProductHint?.relationshipName_i18n && productId === defaultProductHint.productId && (
+            {defaultProductHint?.relationshipName_i18n && productId === defaultProductHint.productId ? (
               <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
                 {t('owner.tasks.field.serviceAutoFilled', {
                   relationship: pickI18n(defaultProductHint.relationshipName_i18n, locale).value || ''
                 })}
+              </p>
+            ) : !isEdit && (
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                {t('owner.tasks.field.customerValueHint')}
               </p>
             )}
           </div>
@@ -1553,8 +1606,9 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.service')}</label>
-              <select value={productId} onChange={e => {
+              <select value={productId} title={t('owner.tasks.field.serviceHint')} onChange={e => {
                 setProductId(e.target.value);
+                setProductTouched(true);
                 setProductAutoFilledFor(customerId);
                 saveNow({ productId: e.target.value });
               }}>
@@ -1563,10 +1617,16 @@ function TaskFormModal({
                   <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
                 ))}
               </select>
+              {!isEdit && (
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.serviceValueHint')}
+                </p>
+              )}
             </div>
             <div>
               <label>{t('owner.tasks.field.owner')}</label>
-              <select value={assignedTo} onChange={e => { setAssignedTo(e.target.value); saveNow({ assignedTo: e.target.value }); }}>
+              <select value={assignedTo} title={t('owner.tasks.field.ownerHint')}
+                      onChange={e => { setAssignedTo(e.target.value); saveNow({ assignedTo: e.target.value }); }}>
                 <option value="">{t('owner.tasks.field.ownerNone')}</option>
                 {employees.map(em => (
                   <option key={em.id} value={em.id}>{displayPersonName(em) || em.email}</option>
@@ -1578,7 +1638,8 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.priority')}</label>
-              <select value={priority} onChange={e => { setPriority(e.target.value); saveNow({ priority: e.target.value }); }}>
+              <select value={priority} title={t('owner.tasks.field.priorityHint')}
+                      onChange={e => { setPriority(e.target.value); saveNow({ priority: e.target.value }); }}>
                 {PRIORITY_OPTIONS.map(p => (
                   <option key={p} value={p}>{t(`owner.tasks.priority.${p}`)}</option>
                 ))}
@@ -1586,7 +1647,8 @@ function TaskFormModal({
             </div>
             <div>
               <label>{t('owner.tasks.field.status')}</label>
-              <select value={statusKey} onChange={e => onProgressSetStatus(e.target.value)}>
+              <select value={statusKey} title={t('owner.tasks.field.statusHint')}
+                      onChange={e => onProgressSetStatus(e.target.value)}>
                 {statusSelectOptions(statuses, isEdit ? task : { requires_review: true, reviewed_at: null }, t, locale).map(opt => (
                   <option key={opt.id} value={opt.key}>{opt.label}</option>
                 ))}
@@ -1599,9 +1661,36 @@ function TaskFormModal({
             </div>
           </div>
 
+          {/* Visible up front, not just as a block-on-attempt — shows
+              exactly what's missing before the operator tries to move
+              the status and gets stopped. Drops away once the task has
+              actually moved past Not started. */}
+          {statusKey === 'not_started' && (
+            <div style={{
+              padding: '8px 10px', borderRadius: 8,
+              background: 'var(--tax-bg-alt)', fontSize: 12,
+            }}>
+              <div style={{ fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
+                {t('owner.tasks.notStartedChecklist.heading')}
+              </div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                <span style={{ color: assignedTo ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                  {assignedTo ? '✓' : '○'} {t('owner.tasks.field.owner')}
+                </span>
+                <span style={{ color: priority ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                  {priority ? '✓' : '○'} {t('owner.tasks.field.priority')}
+                </span>
+                <span style={{ color: dueDate ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                  {dueDate ? '✓' : '○'} {t('owner.tasks.field.due')}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div>
             <label>{t('owner.tasks.field.due')}</label>
-            <input type="date" value={dueDate} onChange={e => { setDueDate(e.target.value); saveNow({ dueDate: e.target.value }); }} />
+            <input type="date" value={dueDate} title={t('owner.tasks.field.dueHint')}
+                   onChange={e => { setDueDate(e.target.value); saveNow({ dueDate: e.target.value }); }} />
           </div>
 
           {isEdit ? (
@@ -1610,16 +1699,16 @@ function TaskFormModal({
             <div>
               <label>{t('owner.tasks.field.notes')}</label>
               <textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} maxLength={4000}
-                        placeholder={t('owner.tasks.notes.placeholder')} />
+                        placeholder={t('owner.tasks.notes.placeholder')}
+                        title={t('owner.tasks.notes.hint')} />
             </div>
           )}
 
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks}
-                                isAdmin={isAdmin} isOwner={isOwner} employeeId={employeeId}
+                                isAdmin={isAdmin} isOwner={isOwner}
                                 reviewOverrideEnabled={reviewOverrideEnabled}
                                 statuses={statuses} currentStatusKey={statusKey}
-                                onSetStatus={onProgressSetStatus}
                                 auth={auth} locale={locale} t={t} />
           )}
 
@@ -1649,6 +1738,7 @@ function TaskFormModal({
             setShowInlineCreate(false);
             onCustomersChanged?.(c);
             setCustomerId(c.id);
+            setCustomerTouched(true);
           }}
         />
       )}
@@ -1656,117 +1746,63 @@ function TaskFormModal({
   );
 }
 
+// Expand/collapse wrapper for a labeled block inside the task edit
+// panel — lets Blocked-by / Review only take up space when there's
+// something to look at or the operator asked to see it. `badge`
+// (e.g. a status pill) still renders next to the title while
+// collapsed, so a glance at the closed header is enough to tell
+// whether it needs opening. defaultOpen only decides the first
+// render; the user's own toggle wins after that.
+function CollapsibleField({ title, badge, defaultOpen, children }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div>
+      <button type="button" onClick={() => setOpen(o => !o)}
+              aria-expanded={open}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                border: 0, background: 'transparent', cursor: 'pointer', padding: 0,
+                textAlign: 'left', fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)',
+              }}>
+        <span aria-hidden="true" style={{
+          fontSize: 10, display: 'inline-block',
+          transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .1s',
+        }}>▸</span>
+        <span>{title}</span>
+        {badge}
+      </button>
+      {open && <div style={{ marginTop: 6 }}>{children}</div>}
+    </div>
+  );
+}
+
 // Per-task progress surface — the part of the picture the plain status
 // dropdown doesn't show: is this task blocked on another one, does it
 // need a reviewer's sign-off before it really counts as done, and how
-// much time has actually gone into it. All three were already fully
-// built server-side (blocked_by_task_id, requires_review/pending_review,
-// tax_task_time_entries) but had no UI at all until now. Self-contained
+// long it's actually been sitting in its current status. Self-contained
 // on purpose — it manages its own save calls instead of going through
-// the parent form's autosave/onSaved plumbing, so starting a timer or
-// approving a review never risks closing the modal.
-function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOverrideEnabled, statuses, currentStatusKey, onSetStatus, auth, locale, t }) {
-  // ── Time tracking ──────────────────────────────────────────────────────
-  const [entries, setEntries] = useState(null);
-  const [totalSeconds, setTotalSeconds] = useState(0);
-  const [timeErr, setTimeErr] = useState('');
-  const [timeBusy, setTimeBusy] = useState(false);
-  const [showLogForm, setShowLogForm] = useState(false);
-  const [manualStart, setManualStart] = useState('');
-  const [manualEnd, setManualEnd] = useState('');
-  const [manualNote, setManualNote] = useState('');
-
-  const loadTime = () => {
-    taxApi.adminGetTaskTimeEntries(auth, task.id)
-      .then(d => { setEntries(d.entries || []); setTotalSeconds(d.total_seconds || 0); })
-      .catch(e => setTimeErr(e?.message || ''));
-  };
-  useEffect(loadTime, [task.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const myRunning = (entries || []).find(e => !e.ended_at && e.employee_id === employeeId);
-  const othersRunning = (entries || []).find(e => !e.ended_at && e.employee_id !== employeeId);
-
-  // Keep the total moving while a timer runs by re-pulling the server's
-  // live-inclusive total periodically instead of ticking a local clock.
+// the parent form's autosave/onSaved plumbing, so approving a review
+// never risks closing the modal.
+function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnabled, statuses, currentStatusKey, auth, locale, t }) {
+  // ── Time summary — fully automatic, no manual start/stop. Computed
+  // from status_changed_at (bumped server-side on every status
+  // transition) and created_at; frozen once the task is completed.
+  // Re-renders on a slow interval so an open modal doesn't show a
+  // stale "just now" forever.
+  const [, forceTick] = useState(0);
   useEffect(() => {
-    if (!myRunning && !othersRunning) return;
-    const id = setInterval(loadTime, 30000);
+    if (task.completed_at) return;
+    const id = setInterval(() => forceTick(n => n + 1), 60000);
     return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [myRunning?.id, othersRunning?.id]);
+  }, [task.completed_at]);
 
-  // Reminder nudges — a timer starting/stopping is the clearest signal
-  // that work actually happened, so it's the natural moment to prompt a
-  // status move the person may have forgotten to make by hand. Both are
-  // soft: declining just leaves the status as-is.
   const currentStatus = (statuses || []).find(s => s.key === currentStatusKey);
-  const inProgressStatus = (statuses || []).find(s => s.key === 'in_progress');
-  const terminalStatus = (statuses || []).find(s => s.is_terminal);
-
-  const maybeNudgeInProgress = () => {
-    if (!onSetStatus || !inProgressStatus) return;
-    if (currentStatusKey === inProgressStatus.key) return;
-    if (currentStatus?.is_terminal) return;
-    const label = pickI18n(inProgressStatus.label_i18n, locale).value || inProgressStatus.key;
-    if (window.confirm(t('owner.tasks.progress.nudgeInProgress', { status: label }))) {
-      onSetStatus(inProgressStatus.key);
-    }
-  };
-  const maybeNudgeComplete = () => {
-    if (!onSetStatus || !terminalStatus) return;
-    if (currentStatus?.is_terminal) return;
-    const label = pickI18n(terminalStatus.label_i18n, locale).value || terminalStatus.key;
-    // Matches statusSelectOptions' relabeling above — the server parks
-    // this into "Pending review" either way when review is still
-    // pending, so the confirm shouldn't promise an immediate complete.
-    const needsReview = !!task?.requires_review && !task?.reviewed_at;
-    const promptKey = needsReview ? 'owner.tasks.progress.nudgeCompleteReview' : 'owner.tasks.progress.nudgeComplete';
-    if (window.confirm(t(promptKey, { status: label }))) {
-      onSetStatus(terminalStatus.key);
-    }
-  };
-
-  const onToggleTimer = async () => {
-    setTimeBusy(true); setTimeErr('');
-    try {
-      if (myRunning) {
-        await taxApi.adminStopTaskTimer(auth, task.id);
-        loadTime();
-        maybeNudgeComplete();
-      } else {
-        await taxApi.adminStartTaskTimer(auth, task.id);
-        loadTime();
-        maybeNudgeInProgress();
-      }
-    } catch (e) { setTimeErr(e?.message || ''); }
-    finally { setTimeBusy(false); }
-  };
-
-  const onLogManual = async () => {
-    if (!manualStart || !manualEnd) return;
-    setTimeBusy(true); setTimeErr('');
-    try {
-      // <input type="datetime-local"> values are naive local wall-clock
-      // strings with no timezone — new Date(...) parses them as the
-      // browser's local time, so .toISOString() converts to an
-      // unambiguous UTC instant before it crosses the wire (the server
-      // may run in a different timezone than the browser).
-      await taxApi.adminLogTaskTime(auth, task.id, {
-        startedAt: new Date(manualStart).toISOString(),
-        endedAt: new Date(manualEnd).toISOString(),
-        note: manualNote.trim(),
-      });
-      setManualStart(''); setManualEnd(''); setManualNote(''); setShowLogForm(false);
-      loadTime();
-    } catch (e) { setTimeErr(e?.message || ''); }
-    finally { setTimeBusy(false); }
-  };
-
-  const onDeleteEntry = async (id) => {
-    if (!window.confirm(t('owner.tasks.progress.deleteEntryConfirm'))) return;
-    try { await taxApi.adminDeleteTimeEntry(auth, id); loadTime(); }
-    catch (e) { setTimeErr(e?.message || ''); }
-  };
+  const currentStatusLabel = pickI18n(currentStatus?.label_i18n, locale).value || currentStatusKey;
+  const endForDuration = task.completed_at ? new Date(task.completed_at).getTime() : Date.now();
+  const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : endForDuration;
+  const statusStartMs = task.status_changed_at ? new Date(task.status_changed_at).getTime() : createdAtMs;
+  const secondsInStatus = Math.max(0, Math.round((endForDuration - statusStartMs) / 1000));
+  const secondsTotalAge = Math.max(0, Math.round((endForDuration - createdAtMs) / 1000));
 
   // ── Review ──────────────────────────────────────────────────────────────
   const [requiresReview, setRequiresReview] = useState(!!task.requires_review);
@@ -1833,13 +1869,22 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOv
     }}>
       <div style={{ fontWeight: 700, fontSize: 13 }}>{t('owner.tasks.progress.heading')}</div>
 
-      {/* Blocked by */}
-      <div>
-        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
-          {t('owner.tasks.progress.blockedBy')}
-        </label>
+      {/* Blocked by — collapsed unless a blocker is actually set, so an
+          unblocked task (the common case) doesn't spend space on it. */}
+      <CollapsibleField
+        title={t('owner.tasks.progress.blockedBy')}
+        defaultOpen={!!blockedByTaskId}
+        badge={blocker && (
+          <span style={badgeStyle(
+            blockerDone ? '#dcfce7' : '#fef3c7',
+            blockerDone ? '#166534' : '#92400e',
+          )}>
+            {blockerDone ? t('owner.tasks.progress.blockerDone') : t('owner.tasks.progress.blockerNotDone')}
+          </span>
+        )}>
         {isAdmin ? (
           <select value={blockedByTaskId} disabled={blockedBusy}
+                  title={t('owner.tasks.progress.blockedByHint')}
                   onChange={e => onSetBlockedBy(e.target.value)}>
             <option value="">{t('owner.tasks.progress.blockedByNone')}</option>
             {(tasks || []).filter(x => x.id !== task.id).map(x => (
@@ -1853,29 +1898,24 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOv
             {blocker ? blocker.title : t('owner.tasks.progress.blockedByNone')}
           </div>
         )}
-        {blocker && (
-          <div style={{ marginTop: 4, fontSize: 12, color: blockerDone ? 'var(--tax-success, #166534)' : '#92400e' }}>
-            {blockerDone ? t('owner.tasks.progress.blockerDone') : t('owner.tasks.progress.blockerNotDone')}
-          </div>
-        )}
         {blockedErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{blockedErr}</div>}
-      </div>
+      </CollapsibleField>
 
-      {/* Review */}
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
-            {t('owner.tasks.progress.review')}
-          </label>
-          {approved && <span style={badgeStyle('#dcfce7', '#166534')}>{t('owner.tasks.progress.reviewApproved')}</span>}
-          {!approved && pendingReview && <span style={badgeStyle('#fffbeb', '#92400e')}>{t('owner.tasks.progress.reviewPending')}</span>}
-          {!approved && !pendingReview && changesRequested && <span style={badgeStyle('#fee2e2', '#991b1b')}>{t('owner.tasks.progress.reviewChangesRequested')}</span>}
-        </div>
-
+      {/* Review — collapsed by default; opens on its own once there's
+          something to act on (awaiting sign-off, or changes came back). */}
+      <CollapsibleField
+        title={t('owner.tasks.progress.review')}
+        defaultOpen={pendingReview || changesRequested}
+        badge={
+          (approved && <span style={badgeStyle('#dcfce7', '#166534')}>{t('owner.tasks.progress.reviewApproved')}</span>) ||
+          (pendingReview && <span style={badgeStyle('#fffbeb', '#92400e')}>{t('owner.tasks.progress.reviewPending')}</span>) ||
+          (changesRequested && <span style={badgeStyle('#fee2e2', '#991b1b')}>{t('owner.tasks.progress.reviewChangesRequested')}</span>) ||
+          null
+        }>
         {isAdmin && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
-                   title={!reviewOverrideEnabled ? t('owner.tasks.progress.requiresReviewLocked') : undefined}>
+                   title={!reviewOverrideEnabled ? t('owner.tasks.progress.requiresReviewLocked') : t('owner.tasks.progress.requiresReviewHint')}>
               <input type="checkbox" checked={requiresReview}
                      disabled={reviewConfigBusy || !reviewOverrideEnabled}
                      onChange={e => onSetRequiresReview(e.target.checked)} />
@@ -1900,14 +1940,17 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOv
         {pendingReview && isReviewer && (
           <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
             <textarea rows={2} placeholder={t('owner.tasks.progress.reviewNotePlaceholder')}
+                      title={t('owner.tasks.progress.reviewNoteHint')}
                       value={reviewNote} onChange={e => setReviewNote(e.target.value)} maxLength={4000} />
             <div style={{ display: 'flex', gap: 6 }}>
               <button type="button" className="tax-btn tax-btn--primary tax-btn--sm" disabled={reviewBusy}
+                      title={t('owner.tasks.progress.approveHint')}
                       onClick={() => onReview('approve')}>
                 {t('owner.tasks.progress.approve')}
               </button>
               <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={reviewBusy}
                       style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
+                      title={t('owner.tasks.progress.requestChangesHint')}
                       onClick={() => onReview('reject')}>
                 {t('owner.tasks.progress.requestChanges')}
               </button>
@@ -1915,90 +1958,22 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, employeeId, reviewOv
           </div>
         )}
         {reviewErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{reviewErr}</div>}
-      </div>
+      </CollapsibleField>
 
-      {/* Time logged */}
+      {/* Time — fully automatic, no manual start/stop. Two numbers:
+          how long the task has sat in its current status, and its
+          total age since creation. */}
       <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
-            {t('owner.tasks.progress.timeLogged', { duration: formatDuration(totalSeconds) })}
-          </label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button type="button"
-                    className={myRunning ? 'tax-btn tax-btn--ghost tax-btn--sm' : 'tax-btn tax-btn--primary tax-btn--sm'}
-                    disabled={timeBusy}
-                    style={myRunning ? { color: 'var(--tax-error)', borderColor: 'var(--tax-error)' } : undefined}
-                    onClick={onToggleTimer}>
-              {myRunning ? t('owner.tasks.progress.stopTimer') : t('owner.tasks.progress.startTimer')}
-            </button>
-            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                    onClick={() => setShowLogForm(o => !o)}>
-              {t('owner.tasks.progress.logManually')}
-            </button>
-          </div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}
+               title={t('owner.tasks.progress.timeSummaryHint')}>
+          {t('owner.tasks.progress.timeSummary')}
+        </label>
+        <div style={{ fontSize: 13, marginTop: 2 }}>
+          {t('owner.tasks.progress.timeInStatus', { duration: formatDuration(secondsInStatus), status: currentStatusLabel })}
         </div>
-        {myRunning && (
-          <div style={{ fontSize: 12, color: 'var(--tax-brand-primary)', marginTop: 4 }}>
-            {t('owner.tasks.progress.timerRunningSince', { time: new Date(myRunning.started_at).toLocaleTimeString(locale) })}
-          </div>
-        )}
-        {!myRunning && othersRunning && (
-          <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 4 }}>
-            {t('owner.tasks.progress.someoneElseRunning', {
-              name: displayPersonName(othersRunning.employee) || othersRunning.employee?.email || '',
-            })}
-          </div>
-        )}
-        {showLogForm && (
-          // Plain div, not <form> — this renders inside TaskFormModal's
-          // own outer <form>, and nested <form> elements are invalid
-          // HTML (same bug class fixed in TaskNotesSection above).
-          <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
-            <div className="tax-form__row2">
-              <div>
-                <label style={{ fontSize: 11 }}>{t('owner.tasks.progress.start')}</label>
-                <input type="datetime-local" value={manualStart} onChange={e => setManualStart(e.target.value)} required />
-              </div>
-              <div>
-                <label style={{ fontSize: 11 }}>{t('owner.tasks.progress.end')}</label>
-                <input type="datetime-local" value={manualEnd} onChange={e => setManualEnd(e.target.value)} required />
-              </div>
-            </div>
-            <input type="text" placeholder={t('owner.tasks.progress.notePlaceholder')}
-                   value={manualNote} onChange={e => setManualNote(e.target.value)} maxLength={4000} />
-            <button type="button" className="tax-btn tax-btn--primary tax-btn--sm" disabled={timeBusy}
-                    onClick={onLogManual}>
-              {t('owner.tasks.progress.addEntry')}
-            </button>
-          </div>
-        )}
-        {timeErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{timeErr}</div>}
-        {entries && entries.length > 0 && (
-          <div style={{ marginTop: 8, display: 'grid', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
-            {entries.map(en => {
-              const emp = en.employee;
-              const canManage = isAdmin || en.employee_id === employeeId;
-              return (
-                <div key={en.id} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  fontSize: 12, padding: '4px 0', borderBottom: '1px solid var(--tax-border)',
-                }}>
-                  <span>
-                    {emp ? (displayPersonName(emp) || emp.email) : ''} —{' '}
-                    {en.ended_at ? formatDuration(en.duration_seconds) : t('owner.tasks.progress.running')}
-                    {en.note ? ` — ${en.note}` : ''}
-                  </span>
-                  {canManage && (
-                    <button type="button" onClick={() => onDeleteEntry(en.id)}
-                            style={{ border: 0, background: 'none', color: 'var(--tax-muted)', cursor: 'pointer', fontSize: 12 }}>
-                      {t('owner.services.delete')}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
+          {t('owner.tasks.progress.timeTotalAge', { duration: formatDuration(secondsTotalAge) })}
+        </div>
       </div>
     </div>
   );
@@ -2038,6 +2013,7 @@ function CustomerCombobox({ customers, value, onChange, isAdmin, onAddNew, local
         onChange={e => { setOpen(true); setQuery(e.target.value); }}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={t('owner.tasks.field.customerSearch')}
+        title={t('owner.tasks.field.customerHint')}
         autoComplete="off"
       />
       {value && !open && (
@@ -3079,6 +3055,8 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     if (!id) return;
     const task = tasks.find(tt => tt.id === id);
     if (!task || task.status_key === targetKey) return;
+    const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: targetKey }, t });
+    if (fieldsMsg) { window.alert(fieldsMsg); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
