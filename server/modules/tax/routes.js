@@ -8252,6 +8252,24 @@ ${closingHtml}
     const assignedTo  = trim(body.assignedEmployeeId || '', 200) || null;
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
+    // A task tied to a customer isn't practice-wide — it needs one of
+    // that customer's own tagged services, not a blank or unrelated one.
+    if (customerId) {
+      if (!productId) {
+        return res.status(400).json({
+          error: 'service_required_for_customer',
+          message: "A task with a customer needs one of that customer's services.",
+        });
+      }
+      const { data: link } = await supabase.from('tax_customer_services')
+        .select('id').eq('customer_id', customerId).eq('product_id', productId).eq('active', true).maybeSingle();
+      if (!link) {
+        return res.status(400).json({
+          error: 'service_not_associated',
+          message: "That service isn't tagged on this customer — add it to their services first.",
+        });
+      }
+    }
     // Same rule as PATCH: a task can't be created already sitting
     // beyond "Not started" without an owner, priority, and due date.
     if (statusKey !== 'not_started') {
@@ -8334,7 +8352,7 @@ ${closingHtml}
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority')
+      .select('id, community_id, customer_id, product_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -8388,6 +8406,32 @@ ${closingHtml}
     }
     if (body.reviewerEmployeeId !== undefined) {
       update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
+    }
+
+    // A task tied to a customer isn't practice-wide — it needs one of
+    // that customer's own tagged services, not a blank or unrelated one.
+    // Only checked when this request actually touches customer/service,
+    // so unrelated edits to an already-saved task never get retroactively
+    // invalidated by this rule.
+    if (body.customerId !== undefined || body.productId !== undefined) {
+      const effCustomerId = update.customer_id !== undefined ? update.customer_id : cur.customer_id;
+      const effProductId  = update.product_id  !== undefined ? update.product_id  : cur.product_id;
+      if (effCustomerId) {
+        if (!effProductId) {
+          return res.status(400).json({
+            error: 'service_required_for_customer',
+            message: "A task with a customer needs one of that customer's services.",
+          });
+        }
+        const { data: link } = await supabase.from('tax_customer_services')
+          .select('id').eq('customer_id', effCustomerId).eq('product_id', effProductId).eq('active', true).maybeSingle();
+        if (!link) {
+          return res.status(400).json({
+            error: 'service_not_associated',
+            message: "That service isn't tagged on this customer — add it to their services first.",
+          });
+        }
+      }
     }
 
     // Every status change requires a note — not just completion — so

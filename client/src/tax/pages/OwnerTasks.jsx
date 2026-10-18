@@ -1407,6 +1407,49 @@ function TaskFormModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
+  // Which services this customer is actually tagged with — drives the
+  // Service field's two groups below (admin-only: the services
+  // endpoints are manage_customers-gated, and a non-admin couldn't act
+  // on the associate-on-the-spot flow anyway).
+  const [customerServiceIds, setCustomerServiceIds] = useState(null);
+  const [associatingService, setAssociatingService] = useState(false);
+  useEffect(() => {
+    if (!isAdmin || !customerId) { setCustomerServiceIds(null); return; }
+    taxApi.adminListCustomerServices(auth, customerId)
+      .then(d => setCustomerServiceIds(new Set((d.services || []).map(s => s.product_id))))
+      .catch(() => setCustomerServiceIds(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, isAdmin]);
+
+  // Picking a service the customer isn't tagged with yet offers to tag
+  // it right here instead of forcing a trip to the customer page and
+  // back — same tag-and-generate-tasks endpoint the customer detail
+  // page's own service picker uses.
+  const onSelectService = async (val) => {
+    if (!val || !customerId || !customerServiceIds || customerServiceIds.has(val)) {
+      setProductId(val);
+      setProductTouched(true);
+      setProductAutoFilledFor(customerId);
+      saveNow({ productId: val });
+      return;
+    }
+    const productLabel = pickI18n(products.find(p => p.id === val)?.name_i18n, locale).value || '';
+    if (!window.confirm(t('owner.tasks.field.serviceAssociateConfirm', { service: productLabel }))) return;
+    setAssociatingService(true);
+    try {
+      await taxApi.adminAddCustomerService(auth, customerId, { productId: val });
+      setCustomerServiceIds(prev => new Set([...(prev || []), val]));
+      setProductId(val);
+      setProductTouched(true);
+      setProductAutoFilledFor(customerId);
+      saveNow({ productId: val });
+    } catch (e) {
+      window.alert(e?.message || t('respond.error.generic'));
+    } finally {
+      setAssociatingService(false);
+    }
+  };
+
   const doSave = useRef(null);
   doSave.current = async (overrides = {}) => {
     const t_ = overrides.title ?? title;
@@ -1482,6 +1525,12 @@ function TaskFormModal({
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
+    // A task with a customer isn't practice-wide — it needs one of
+    // that customer's services too, not a blank/unrelated one.
+    if (customerId && !productId) {
+      setErr(t('owner.tasks.field.serviceRequiredForCustomer'));
+      return;
+    }
     if (!customerTouched || !productTouched) {
       const missing = [customerTouched ? null : t('owner.tasks.field.customer'), productTouched ? null : t('owner.tasks.field.service')]
         .filter(Boolean).join(' / ');
@@ -1595,7 +1644,22 @@ function TaskFormModal({
             <label>{t('owner.tasks.field.customer')}</label>
             <CustomerCombobox
               customers={customers} value={customerId}
-              onChange={v => { setCustomerId(v); setCustomerTouched(true); saveNow({ customerId: v }); }}
+              onChange={v => {
+                setCustomerId(v); setCustomerTouched(true);
+                // A customer requires one of their services — the save
+                // would just get rejected server-side without one, so
+                // skip the round-trip and say so immediately. The
+                // Service field below already re-groups off the live
+                // `customerId` state, so their services are right there;
+                // picking one saves both fields together (see
+                // onSelectService / doSave, which always send the full
+                // form state, not just the field that changed).
+                if (v && !productId) {
+                  window.alert(t('owner.tasks.field.serviceRequiredForCustomer'));
+                  return;
+                }
+                saveNow({ customerId: v });
+              }}
               isAdmin={isAdmin} onAddNew={() => setShowInlineCreate(true)}
               locale={locale} t={t}
             />
@@ -1615,18 +1679,39 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.service')}</label>
-              <select value={productId} title={t('owner.tasks.field.serviceHint')} onChange={e => {
-                setProductId(e.target.value);
-                setProductTouched(true);
-                setProductAutoFilledFor(customerId);
-                saveNow({ productId: e.target.value });
-              }}>
+              <select value={productId} title={t('owner.tasks.field.serviceHint')} disabled={associatingService}
+                      onChange={e => onSelectService(e.target.value)}>
                 <option value="">{t('owner.tasks.field.servicePractice')}</option>
-                {products.map(p => (
-                  <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
-                ))}
+                {customerId && customerServiceIds ? (
+                  <>
+                    {products.filter(p => customerServiceIds.has(p.id)).length > 0 && (
+                      <optgroup label={t('owner.tasks.field.serviceGroupCustomer')}>
+                        {products.filter(p => customerServiceIds.has(p.id)).map(p => (
+                          <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {products.filter(p => !customerServiceIds.has(p.id)).length > 0 && (
+                      <optgroup label={t('owner.tasks.field.serviceGroupOther')}>
+                        {products.filter(p => !customerServiceIds.has(p.id)).map(p => (
+                          <option key={p.id} value={p.id} style={{ color: '#9ca3af' }}>
+                            {pickI18n(p.name_i18n, locale).value || p.slug}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </>
+                ) : (
+                  products.map(p => (
+                    <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
+                  ))
+                )}
               </select>
-              {!isEdit && (
+              {!productId ? (
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.servicePracticeNotice')}
+                </p>
+              ) : !isEdit && (
                 <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
                   {t('owner.tasks.field.serviceValueHint')}
                 </p>
