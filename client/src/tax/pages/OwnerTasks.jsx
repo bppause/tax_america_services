@@ -999,8 +999,12 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   const prCol = priorityColorOf(task.priority, community);
 
   const update = async (patch) => {
+    // Rather than just refusing and leaving the operator to go find
+    // the fields themselves, open the task straight into the edit
+    // modal — the Not-started checklist there shows exactly what's
+    // missing and lets them fill it in on the spot.
     const fieldsMsg = notStartedFieldsMissing({ task, patch, t });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    if (fieldsMsg) { window.alert(fieldsMsg); onEdit(); return; }
     // Any status change requires a note — see the server-side
     // notes_required_on_status_change check. Prompt the owner inline
     // when the row's status is being changed and there's no note yet,
@@ -1569,7 +1573,7 @@ function TaskFormModal({
             )}
           </div>
         )}
-        <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
+        <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0, gap: 10 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
             <input type="text" value={title} onChange={e => { setTitle(e.target.value); scheduleAutoSave({ title: e.target.value }); }}
@@ -1638,26 +1642,23 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.priority')}</label>
-              <select value={priority} title={t('owner.tasks.field.priorityHint')}
+              <select value={priority} title={t(`owner.tasks.priority.${priority}Def`)}
                       onChange={e => { setPriority(e.target.value); saveNow({ priority: e.target.value }); }}>
                 {PRIORITY_OPTIONS.map(p => (
-                  <option key={p} value={p}>{t(`owner.tasks.priority.${p}`)}</option>
+                  <option key={p} value={p} title={t(`owner.tasks.priority.${p}Def`)}>{t(`owner.tasks.priority.${p}`)}</option>
                 ))}
               </select>
             </div>
             <div>
               <label>{t('owner.tasks.field.status')}</label>
-              <select value={statusKey} title={t('owner.tasks.field.statusHint')}
+              <select value={statusKey}
+                      title={(isEdit ? (task.requires_review && !task.reviewed_at) : true)
+                        ? t('owner.tasks.field.statusReviewHint') : t('owner.tasks.field.statusHint')}
                       onChange={e => onProgressSetStatus(e.target.value)}>
                 {statusSelectOptions(statuses, isEdit ? task : { requires_review: true, reviewed_at: null }, t, locale).map(opt => (
                   <option key={opt.id} value={opt.key}>{opt.label}</option>
                 ))}
               </select>
-              {(isEdit ? (task.requires_review && !task.reviewed_at) : true) && (
-                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
-                  {t('owner.tasks.field.statusReviewHint')}
-                </p>
-              )}
             </div>
           </div>
 
@@ -1864,8 +1865,8 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
 
   return (
     <div style={{
-      marginTop: 8, padding: 14, borderRadius: 10,
-      background: 'var(--tax-bg-alt)', display: 'grid', gap: 16,
+      marginTop: 6, padding: 10, borderRadius: 10,
+      background: 'var(--tax-bg-alt)', display: 'grid', gap: 10,
     }}>
       <div style={{ fontWeight: 700, fontSize: 13 }}>{t('owner.tasks.progress.heading')}</div>
 
@@ -1901,11 +1902,13 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
         {blockedErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{blockedErr}</div>}
       </CollapsibleField>
 
-      {/* Review — collapsed by default; opens on its own once there's
-          something to act on (awaiting sign-off, or changes came back). */}
+      {/* Review — open by default whenever review is actually required
+          (true for virtually every task), since that's exactly the
+          state an operator needs visible, not tucked behind a toggle.
+          Only collapses for a task that genuinely doesn't need it. */}
       <CollapsibleField
         title={t('owner.tasks.progress.review')}
-        defaultOpen={pendingReview || changesRequested}
+        defaultOpen={requiresReview || pendingReview || changesRequested}
         badge={
           (approved && <span style={badgeStyle('#dcfce7', '#166534')}>{t('owner.tasks.progress.reviewApproved')}</span>) ||
           (pendingReview && <span style={badgeStyle('#fffbeb', '#92400e')}>{t('owner.tasks.progress.reviewPending')}</span>) ||
@@ -1921,11 +1924,6 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
                      onChange={e => onSetRequiresReview(e.target.checked)} />
               {t('owner.tasks.progress.requiresReview')}
             </label>
-            {!reviewOverrideEnabled && (
-              <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>
-                {t('owner.tasks.progress.requiresReviewLocked')}
-              </span>
-            )}
           </div>
         )}
         {/* No reviewer picker — review always goes to the owner, never a
@@ -3056,7 +3054,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     const task = tasks.find(tt => tt.id === id);
     if (!task || task.status_key === targetKey) return;
     const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: targetKey }, t });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    if (fieldsMsg) { window.alert(fieldsMsg); onEdit(task); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),

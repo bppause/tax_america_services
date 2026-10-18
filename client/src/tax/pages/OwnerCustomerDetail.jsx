@@ -2267,7 +2267,15 @@ function TasksSection({ auth, customer, customerId, community, isAdmin, locale, 
   const updateTask = async (id, patch) => {
     const target = (tasks || []).find(t0 => t0.id === id);
     const fieldsMsg = notStartedFieldsMissing({ task: target || {}, patch, t });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    if (fieldsMsg) {
+      window.alert(fieldsMsg);
+      // No task editor embedded on this page — send the operator to
+      // the full task editor (same deep link the row's own Edit link
+      // uses) so filling in the missing fields is one click away
+      // instead of a dead end.
+      window.location.href = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(id)}`;
+      return;
+    }
     // Any status change requires a note — prompt up-front so the
     // round-trip never has to fail with notes_required_on_status_change.
     const finalPatch = ensureStatusChangeNotes({
