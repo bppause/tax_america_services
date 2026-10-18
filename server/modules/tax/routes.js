@@ -8340,10 +8340,13 @@ ${closingHtml}
     //      requested, so approval can restore it.
     let enteredPendingReview = false;
     if (update.status_key && update.status_key !== cur.status_key) {
-      const effectiveNotes = (body.notes !== undefined
-        ? String(body.notes || '')
-        : String(cur.notes || ''));
-      if (!effectiveNotes.trim()) {
+      // Must be a note freshly supplied with THIS request — falling
+      // back to the task's existing notes would let every status
+      // change after the first one through silently, since that
+      // legacy field is sticky once anything has ever been typed
+      // into it. Each transition needs its own note.
+      const providedNotes = String(body.notes || '').trim();
+      if (!providedNotes) {
         return res.status(400).json({
           error: 'notes_required_on_status_change',
           message: 'Add a note describing this status change before saving it.',

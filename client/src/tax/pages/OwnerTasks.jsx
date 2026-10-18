@@ -41,14 +41,21 @@ function formatDuration(totalSeconds) {
 
 // Inline status-change-note prompt. Any status change — not just one
 // that moves a task into a terminal bucket — gets a note, so prompt
-// the user via window.prompt (unless the patch already carries one,
-// or the task already has one) and merge the result into the patch.
-// Returns null when the user cancels — the caller should skip the API
-// call. Keeps the inline status dropdown and the Kanban drag-drop from
-// surprising the user with a server 400. The prompt copy still calls
-// out "closing note" specifically when the target status is terminal
-// (the server gates completion on it too), and a plainer "what
-// changed" note otherwise.
+// the user via window.prompt (unless the patch already carries a
+// fresh one) and merge the result into the patch. Returns null when
+// the user cancels — the caller should skip the API call. Keeps the
+// inline status dropdown and the Kanban drag-drop from surprising the
+// user with a server 400. The prompt copy still calls out "closing
+// note" specifically when the target status is terminal (the server
+// gates completion on it too), and a plainer "what changed" note
+// otherwise.
+//
+// Deliberately does NOT treat task.notes (the legacy single field)
+// as already satisfying this — that field is sticky across every
+// future edit once anything has ever been typed into it, so trusting
+// it here would make every status change after the first one skip
+// the prompt entirely, which is exactly the bug this used to have.
+// Each transition needs its own fresh note.
 //
 // task.notes stays the legacy single field the server gates status
 // changes on (no server-side change needed), but a freshly-prompted
@@ -59,8 +66,7 @@ function formatDuration(totalSeconds) {
 export function ensureStatusChangeNotes({ statuses, task, patch, t, onNewNote }) {
   if (!patch || !patch.statusKey || patch.statusKey === task?.status_key) return patch;
   const incoming = String(patch.notes || '').trim();
-  const existing = String(task?.notes || '').trim();
-  if (incoming || existing) return patch;
+  if (incoming) return patch;
   const target = (statuses || []).find(s => s.key === patch.statusKey);
   const promptKey = target?.is_terminal ? 'owner.tasks.completeNotesPrompt' : 'owner.tasks.statusChangeNotesPrompt';
   const note = typeof window !== 'undefined'
