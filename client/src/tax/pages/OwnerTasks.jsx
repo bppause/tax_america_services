@@ -1573,7 +1573,7 @@ function TaskFormModal({
             )}
           </div>
         )}
-        <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0 }}>
+        <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0, gap: 10 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
             <input type="text" value={title} onChange={e => { setTitle(e.target.value); scheduleAutoSave({ title: e.target.value }); }}
@@ -1651,17 +1651,14 @@ function TaskFormModal({
             </div>
             <div>
               <label>{t('owner.tasks.field.status')}</label>
-              <select value={statusKey} title={t('owner.tasks.field.statusHint')}
+              <select value={statusKey}
+                      title={(isEdit ? (task.requires_review && !task.reviewed_at) : true)
+                        ? t('owner.tasks.field.statusReviewHint') : t('owner.tasks.field.statusHint')}
                       onChange={e => onProgressSetStatus(e.target.value)}>
                 {statusSelectOptions(statuses, isEdit ? task : { requires_review: true, reviewed_at: null }, t, locale).map(opt => (
                   <option key={opt.id} value={opt.key}>{opt.label}</option>
                 ))}
               </select>
-              {(isEdit ? (task.requires_review && !task.reviewed_at) : true) && (
-                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
-                  {t('owner.tasks.field.statusReviewHint')}
-                </p>
-              )}
             </div>
           </div>
 
@@ -1868,8 +1865,8 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
 
   return (
     <div style={{
-      marginTop: 8, padding: 14, borderRadius: 10,
-      background: 'var(--tax-bg-alt)', display: 'grid', gap: 16,
+      marginTop: 6, padding: 10, borderRadius: 10,
+      background: 'var(--tax-bg-alt)', display: 'grid', gap: 10,
     }}>
       <div style={{ fontWeight: 700, fontSize: 13 }}>{t('owner.tasks.progress.heading')}</div>
 
@@ -1905,11 +1902,13 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
         {blockedErr && <div className="tax-msg tax-msg--error" style={{ marginTop: 4 }}>{blockedErr}</div>}
       </CollapsibleField>
 
-      {/* Review — collapsed by default; opens on its own once there's
-          something to act on (awaiting sign-off, or changes came back). */}
+      {/* Review — open by default whenever review is actually required
+          (true for virtually every task), since that's exactly the
+          state an operator needs visible, not tucked behind a toggle.
+          Only collapses for a task that genuinely doesn't need it. */}
       <CollapsibleField
         title={t('owner.tasks.progress.review')}
-        defaultOpen={pendingReview || changesRequested}
+        defaultOpen={requiresReview || pendingReview || changesRequested}
         badge={
           (approved && <span style={badgeStyle('#dcfce7', '#166534')}>{t('owner.tasks.progress.reviewApproved')}</span>) ||
           (pendingReview && <span style={badgeStyle('#fffbeb', '#92400e')}>{t('owner.tasks.progress.reviewPending')}</span>) ||
@@ -1925,11 +1924,6 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
                      onChange={e => onSetRequiresReview(e.target.checked)} />
               {t('owner.tasks.progress.requiresReview')}
             </label>
-            {!reviewOverrideEnabled && (
-              <span style={{ fontSize: 11, color: 'var(--tax-muted)' }}>
-                {t('owner.tasks.progress.requiresReviewLocked')}
-              </span>
-            )}
           </div>
         )}
         {/* No reviewer picker — review always goes to the owner, never a
