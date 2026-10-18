@@ -999,8 +999,12 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   const prCol = priorityColorOf(task.priority, community);
 
   const update = async (patch) => {
+    // Rather than just refusing and leaving the operator to go find
+    // the fields themselves, open the task straight into the edit
+    // modal — the Not-started checklist there shows exactly what's
+    // missing and lets them fill it in on the spot.
     const fieldsMsg = notStartedFieldsMissing({ task, patch, t });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    if (fieldsMsg) { window.alert(fieldsMsg); onEdit(); return; }
     // Any status change requires a note — see the server-side
     // notes_required_on_status_change check. Prompt the owner inline
     // when the row's status is being changed and there's no note yet,
@@ -3056,7 +3060,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     const task = tasks.find(tt => tt.id === id);
     if (!task || task.status_key === targetKey) return;
     const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: targetKey }, t });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    if (fieldsMsg) { window.alert(fieldsMsg); onEdit(task); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
