@@ -1296,6 +1296,11 @@ function TaskFormModal({
   onCustomersChanged, onClose, onSaved,
 }) {
   const isEdit = mode === 'edit';
+  // Owner-editable per-community override (Settings → Priority
+  // definitions); falls back to the platform default copy when the
+  // community hasn't set one for this locale/priority.
+  const priorityDef = (p) => community?.tax_task_priority_definitions?.[locale]?.[p]
+    || t(`owner.tasks.priority.${p}Def`);
   const [title, setTitle] = useState(isEdit ? (task.title || '') : '');
   const [customerId, setCustomerId] = useState(isEdit ? (task.customer_id || '') : '');
   const [productId, setProductId] = useState(isEdit ? (task.product_id || '') : '');
@@ -1642,10 +1647,10 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.priority')}</label>
-              <select value={priority} title={t(`owner.tasks.priority.${priority}Def`)}
+              <select value={priority} title={priorityDef(priority)}
                       onChange={e => { setPriority(e.target.value); saveNow({ priority: e.target.value }); }}>
                 {PRIORITY_OPTIONS.map(p => (
-                  <option key={p} value={p} title={t(`owner.tasks.priority.${p}Def`)}>{t(`owner.tasks.priority.${p}`)}</option>
+                  <option key={p} value={p} title={priorityDef(p)}>{t(`owner.tasks.priority.${p}`)}</option>
                 ))}
               </select>
             </div>
