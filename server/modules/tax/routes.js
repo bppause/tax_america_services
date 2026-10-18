@@ -7770,7 +7770,7 @@ ${closingHtml}
       .select(`
         id, community_id, customer_id, product_id, title, title_i18n, status_key, priority,
         assigned_employee_id, created_by_employee_id, service_auto_task_id,
-        due_date, notes, completed_at, created_at, updated_at,
+        due_date, notes, completed_at, created_at, updated_at, status_changed_at,
         blocked_by_task_id, requires_review, reviewer_employee_id,
         pending_review_at, reviewed_at, reviewed_by_employee_id, review_note,
         last_viewed_at, last_viewed_by_employee_id,
@@ -8201,6 +8201,20 @@ ${closingHtml}
     const assignedTo  = trim(body.assignedEmployeeId || '', 200) || null;
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
     const notes       = trim(body.notes || '', MAX_TEXT_LEN);
+    // Same rule as PATCH: a task can't be created already sitting
+    // beyond "Not started" without an owner, priority, and due date.
+    if (statusKey !== 'not_started') {
+      const missing = [];
+      if (!assignedTo) missing.push('an owner');
+      if (!priority) missing.push('a priority');
+      if (!dueDate) missing.push('a due date');
+      if (missing.length) {
+        return res.status(400).json({
+          error: 'fields_required_beyond_not_started',
+          message: `Add ${missing.join(', ')} before creating this task in a status beyond Not started.`,
+        });
+      }
+    }
     // activeLocale tells us which language the user typed in — translate
     // from that to keep both EN and ES stored and in sync.
     const activeLocale = body.activeLocale === 'en' ? 'en' : 'es';
@@ -8269,7 +8283,7 @@ ${closingHtml}
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at')
+      .select('id, community_id, customer_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -8352,6 +8366,27 @@ ${closingHtml}
           message: 'Add a note describing this status change before saving it.',
         });
       }
+      // A task can't move beyond "Not started" without an owner,
+      // priority, and due date already in place — those are what make
+      // it actually actionable. Checked against whichever value is
+      // effective after this request (an update field, or the task's
+      // existing one).
+      if (update.status_key !== 'not_started') {
+        const effAssignee = update.assigned_employee_id !== undefined ? update.assigned_employee_id : cur.assigned_employee_id;
+        const effPriority = update.priority !== undefined ? update.priority : cur.priority;
+        const effDue = update.due_date !== undefined ? update.due_date : cur.due_date;
+        const missing = [];
+        if (!effAssignee) missing.push('an owner');
+        if (!effPriority) missing.push('a priority');
+        if (!effDue) missing.push('a due date');
+        if (missing.length) {
+          return res.status(400).json({
+            error: 'fields_required_beyond_not_started',
+            message: `Add ${missing.join(', ')} before moving this task beyond Not started.`,
+          });
+        }
+      }
+      update.status_changed_at = new Date().toISOString();
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
       if (opt?.is_terminal) {
@@ -8525,7 +8560,7 @@ ${closingHtml}
       return res.status(409).json({ error: 'This task is not awaiting review.' });
     }
     const nowIso = new Date().toISOString();
-    const update = { updated_at: nowIso, review_note: note, review_target_status_key: null };
+    const update = { updated_at: nowIso, review_note: note, review_target_status_key: null, status_changed_at: nowIso };
     if (decision === 'approve') {
       update.reviewed_at = nowIso;
       update.reviewed_by_employee_id = emp.id;
@@ -8610,7 +8645,10 @@ ${closingHtml}
     const patch = body.patch || {};
 
     const update = { updated_at: new Date().toISOString() };
-    if (patch.statusKey !== undefined) update.status_key = trim(patch.statusKey, 60);
+    if (patch.statusKey !== undefined) {
+      update.status_key = trim(patch.statusKey, 60);
+      update.status_changed_at = update.updated_at;
+    }
     if (patch.priority !== undefined && ['urgent','high','normal','low'].includes(patch.priority)) {
       update.priority = patch.priority;
     }

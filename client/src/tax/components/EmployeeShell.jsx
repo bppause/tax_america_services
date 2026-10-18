@@ -141,32 +141,6 @@ export default function EmployeeShell({ community, active, children }) {
     }
   };
 
-  // Persistent "timer running" reminder so an assignee always knows a
-  // task is being tracked, even on pages away from Tasks. Re-checked on
-  // every page nav (the `active` dep) so stopping it from the task
-  // modal clears the banner on the next click within a page or two.
-  const [runningTimer, setRunningTimer] = useState(null);
-  const [stoppingTimer, setStoppingTimer] = useState(false);
-  const timerAuth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
-  useEffect(() => {
-    if (!fbUser || !community) return;
-    let cancelled = false;
-    taxApi.adminGetRunningTimer(timerAuth)
-      .then(d => { if (!cancelled) setRunningTimer(d.running || null); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community, active]);
-  const onStopRunningTimer = async () => {
-    if (!runningTimer) return;
-    setStoppingTimer(true);
-    try {
-      await taxApi.adminStopTaskTimer(timerAuth, runningTimer.task_id);
-      setRunningTimer(null);
-    } catch (_e) { /* leave the banner up — the task modal's own stop button still works */ }
-    finally { setStoppingTimer(false); }
-  };
-
   const initials = (community?.name || 'TAX')
     .split(/\s+/).map(w => w[0] || '').join('').slice(0, 3).toUpperCase();
 
@@ -399,21 +373,6 @@ export default function EmployeeShell({ community, active, children }) {
             {employee && (
               <div style={{ color: 'var(--tax-muted)', fontSize: 14, marginBottom: 16 }}>
                 {t('employee.greeting', { name: firstNameOf(employee) || displayPersonName(employee) || employee.email })}
-              </div>
-            )}
-            {runningTimer && (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                background: 'color-mix(in srgb, var(--tax-brand-primary) 8%, #fff)',
-                border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 25%, #fff)',
-                borderRadius: 8, padding: '8px 12px', marginBottom: 16, fontSize: 13,
-              }}>
-                <span>⏱ {t('employee.runningTimer', { title: runningTimer.task?.title || '' })}</span>
-                <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                        onClick={onStopRunningTimer} disabled={stoppingTimer}
-                        style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}>
-                  {stoppingTimer ? t('lead.submitting') : t('employee.stopTimer')}
-                </button>
               </div>
             )}
             {children}
