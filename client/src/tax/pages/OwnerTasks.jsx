@@ -1642,10 +1642,10 @@ function TaskFormModal({
           <div className="tax-form__row2">
             <div>
               <label>{t('owner.tasks.field.priority')}</label>
-              <select value={priority} title={t('owner.tasks.field.priorityHint')}
+              <select value={priority} title={t(`owner.tasks.priority.${priority}Def`)}
                       onChange={e => { setPriority(e.target.value); saveNow({ priority: e.target.value }); }}>
                 {PRIORITY_OPTIONS.map(p => (
-                  <option key={p} value={p}>{t(`owner.tasks.priority.${p}`)}</option>
+                  <option key={p} value={p} title={t(`owner.tasks.priority.${p}Def`)}>{t(`owner.tasks.priority.${p}`)}</option>
                 ))}
               </select>
             </div>
