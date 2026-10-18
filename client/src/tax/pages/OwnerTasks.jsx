@@ -1590,11 +1590,15 @@ function TaskFormModal({
               isAdmin={isAdmin} onAddNew={() => setShowInlineCreate(true)}
               locale={locale} t={t}
             />
-            {defaultProductHint?.relationshipName_i18n && productId === defaultProductHint.productId && (
+            {defaultProductHint?.relationshipName_i18n && productId === defaultProductHint.productId ? (
               <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
                 {t('owner.tasks.field.serviceAutoFilled', {
                   relationship: pickI18n(defaultProductHint.relationshipName_i18n, locale).value || ''
                 })}
+              </p>
+            ) : !isEdit && (
+              <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                {t('owner.tasks.field.customerValueHint')}
               </p>
             )}
           </div>
@@ -1613,6 +1617,11 @@ function TaskFormModal({
                   <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
                 ))}
               </select>
+              {!isEdit && (
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.serviceValueHint')}
+                </p>
+              )}
             </div>
             <div>
               <label>{t('owner.tasks.field.owner')}</label>
@@ -1651,6 +1660,32 @@ function TaskFormModal({
               )}
             </div>
           </div>
+
+          {/* Visible up front, not just as a block-on-attempt — shows
+              exactly what's missing before the operator tries to move
+              the status and gets stopped. Drops away once the task has
+              actually moved past Not started. */}
+          {statusKey === 'not_started' && (
+            <div style={{
+              padding: '8px 10px', borderRadius: 8,
+              background: 'var(--tax-bg-alt)', fontSize: 12,
+            }}>
+              <div style={{ fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
+                {t('owner.tasks.notStartedChecklist.heading')}
+              </div>
+              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                <span style={{ color: assignedTo ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                  {assignedTo ? '✓' : '○'} {t('owner.tasks.field.owner')}
+                </span>
+                <span style={{ color: priority ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                  {priority ? '✓' : '○'} {t('owner.tasks.field.priority')}
+                </span>
+                <span style={{ color: dueDate ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                  {dueDate ? '✓' : '○'} {t('owner.tasks.field.due')}
+                </span>
+              </div>
+            </div>
+          )}
 
           <div>
             <label>{t('owner.tasks.field.due')}</label>
