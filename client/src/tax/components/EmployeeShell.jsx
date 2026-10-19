@@ -130,6 +130,8 @@ export default function EmployeeShell({ community, active, children }) {
     }
     if (n.payload?.taskId && community) {
       window.location.href = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(n.payload.taskId)}`;
+    } else if (n.payload?.leadId && community) {
+      window.location.href = `/tax/${community.id}/employee/leads?lead=${encodeURIComponent(n.payload.leadId)}`;
     } else if (n.payload?.threadId && community) {
       // Inbox has no per-thread deep link yet — land on the inbox and
       // let the operator pick the thread from the list.

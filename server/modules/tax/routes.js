@@ -68,6 +68,7 @@ module.exports = function createTaxRouter(deps) {
     isSupabaseConfigured,
     auditLog,
     sendTaxLeadEmail,
+    sendTaxLeadAssignedEmail,
     sendTaxTaskAssignedEmail,
     sendTaxTaskStatusChangedEmail,
     sendTaxTaskPendingReviewEmail,
@@ -929,6 +930,11 @@ module.exports = function createTaxRouter(deps) {
     if (cErr) return sendSupabaseError(res, cErr);
     if (!community) return res.status(404).json({ error: 'Tax community not found.' });
 
+    // Every lead gets an owner from the moment it lands, so a fresh
+    // inquiry is never just sitting unclaimed — see
+    // resolveLeadDefaultAssignee above.
+    const defaultAssigneeId = await resolveLeadDefaultAssignee(community.id);
+
     const lead = {
       id: 'lead_' + uuidv4().slice(0, 12),
       community_id: community.id,
@@ -948,6 +954,7 @@ module.exports = function createTaxRouter(deps) {
       source: aiConversation ? 'ai_chat' : 'landing',
       user_agent: userAgent,
       ip,
+      assigned_employee_id: defaultAssigneeId,
     };
 
     const { data: inserted, error: iErr } = await supabase
@@ -958,7 +965,7 @@ module.exports = function createTaxRouter(deps) {
       await auditLog({
         entity: 'tax.lead', entityId: inserted.id,
         action: 'create', actorEmail: email, actorName: name,
-        after: { communityId: community.id, productSlugs, preferredLocale },
+        after: { communityId: community.id, productSlugs, preferredLocale, assignedEmployeeId: defaultAssigneeId },
       });
     } catch (e) { warn('[tax] audit log failed', e?.message || e); }
 
@@ -967,6 +974,7 @@ module.exports = function createTaxRouter(deps) {
       try { await sendTaxLeadEmail({ community, lead: inserted }); }
       catch (e) { warn('[tax] lead notification email failed', e?.message || e); }
     }
+    await notifyLeadAssignee({ leadId: inserted.id, newAssigneeId: defaultAssigneeId, prevAssigneeId: null, actor: null });
 
     res.json({ ok: true, id: inserted.id });
   });
@@ -2490,6 +2498,111 @@ ${closingHtml}
     return { deleted: dropIds.length };
   }
 
+  // Who a new lead should be routed to when nothing picks an assignee
+  // explicitly (POST /leads, the public contact-form submission). The
+  // owner can override this per-community in Settings
+  // (tax_lead_default_assignee_id); when unset — or when the override
+  // points at an employee who's since been archived or removed — this
+  // falls back to the community's seed owner (is_seed_owner: the one
+  // account whose owner status can never be revoked, so it's always
+  // safe to route to). Returns null only if a community somehow has
+  // neither (shouldn't happen — every community is seeded with one).
+  async function resolveLeadDefaultAssignee(communityId) {
+    try {
+      const { data: community } = await supabase.from('communities')
+        .select('tax_lead_default_assignee_id').eq('id', communityId).maybeSingle();
+      const overrideId = community?.tax_lead_default_assignee_id;
+      if (overrideId) {
+        const { data: emp } = await supabase.from('tax_employees')
+          .select('id').eq('id', overrideId).eq('community_id', communityId)
+          .neq('status', 'archived').maybeSingle();
+        if (emp) return emp.id;
+      }
+      const { data: seedOwner } = await supabase.from('tax_employees')
+        .select('id').eq('community_id', communityId).eq('is_seed_owner', true)
+        .neq('status', 'archived').maybeSingle();
+      return seedOwner?.id || null;
+    } catch (e) {
+      warn('[tax-lead-assign] resolveLeadDefaultAssignee failed', e?.message || e);
+      return null;
+    }
+  }
+
+  // Append-only lead note, used both by the dedicated notes endpoint
+  // and by the note-on-status-change gate below (PUT /admin/leads/:id,
+  // POST /admin/leads/:id/convert) so a status change always leaves a
+  // record of why, same rule as tax_tasks.
+  async function addLeadNote({ leadId, communityId, actor, body }) {
+    let authorName = '';
+    if (actor?.source === 'employee' && actor.employee?.id) {
+      const { data: empRow } = await supabase.from('tax_employees')
+        .select('name').eq('id', actor.employee.id).maybeSingle();
+      authorName = empRow?.name || '';
+    }
+    const row = {
+      id: 'lnote_' + uuidv4().slice(0, 12), community_id: communityId, lead_id: leadId,
+      body, author_email: actor?.email || '', author_name: authorName || actor?.email || '',
+      author_role: 'admin',
+    };
+    const { error } = await supabase.from('tax_lead_notes').insert(row);
+    if (error) throw error;
+    return row;
+  }
+
+  // Fire a lead-assigned notification to the new assignee — in-app
+  // always (unless the employee turned that off), email when both the
+  // employee's own preference and the community's staff-email toggle
+  // allow it. Same shape as notifyTaskAssignee below; a null actor
+  // (the public contact-form submission has no acting employee) just
+  // means the "actor === assignee" self-skip never applies.
+  async function notifyLeadAssignee({ leadId, newAssigneeId, prevAssigneeId, actor }) {
+    if (!newAssigneeId) return;
+    if (newAssigneeId === prevAssigneeId) return;
+    if (actor && newAssigneeId === actor.id) return;
+    try {
+      const { data: lead } = await supabase.from('tax_leads')
+        .select('id, community_id, name, first_name, email, phone, product_slugs, product_slug, assigned_employee_id')
+        .eq('id', leadId).maybeSingle();
+      if (!lead || lead.assigned_employee_id !== newAssigneeId) return;
+      const [{ data: assignee }, { data: community }] = await Promise.all([
+        supabase.from('tax_employees')
+          .select('id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs')
+          .eq('id', newAssigneeId).maybeSingle(),
+        supabase.from('communities')
+          .select('id, name').eq('id', lead.community_id).maybeSingle(),
+      ]);
+      if (!assignee || !assignee.email || assignee.status === 'archived') return;
+      const channels = getEmployeeChannels(assignee, 'lead_assigned');
+      if (channels.includes('in_app')) {
+        const leadName = lead.first_name || lead.name || lead.email;
+        await supabase.from('tax_employee_notifications').insert({
+          id: 'tenot_' + uuidv4().slice(0, 12),
+          community_id: lead.community_id,
+          employee_id: assignee.id,
+          type: 'lead_assigned',
+          title_i18n: {
+            es: `Lead asignado: ${leadName}`,
+            en: `Lead assigned: ${leadName}`,
+          },
+          body_i18n: {
+            es: 'Un nuevo lead necesita su seguimiento.',
+            en: 'A new lead needs your follow-up.',
+          },
+          payload: { leadId },
+        });
+      }
+      if (channels.includes('email') && typeof sendTaxLeadAssignedEmail === 'function'
+          && await communityStaffEmailFlag(lead.community_id, 'tax_staff_email_lead_assigned_enabled')) {
+        await sendTaxLeadAssignedEmail({
+          community: community || { id: lead.community_id, name: '' },
+          lead, assignee, actor,
+        });
+      }
+    } catch (e) {
+      warn('[tax-lead-assign] notify failed', e?.message || e);
+    }
+  }
+
   // Fire a task-assigned notification email to the new assignee. Safe
   // to call from anywhere — silently no-ops when the assignee can't
   // be resolved, has no email, or matches the actor (no need to email
@@ -3900,6 +4013,7 @@ ${closingHtml}
   // from Settings → Team email notifications.
   const STAFF_EMAIL_TYPE_COLUMNS = {
     lead:              'tax_staff_email_lead_enabled',
+    lead_assigned:     'tax_staff_email_lead_assigned_enabled',
     task_assigned:     'tax_staff_email_task_assigned_enabled',
     task_status_changed: 'tax_staff_email_task_status_changed_enabled',
     task_pending_review: 'tax_staff_email_task_pending_review_enabled',
@@ -3950,6 +4064,38 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, enabled });
+  });
+
+  // PUT /admin/community-settings/lead-default-assignee — body
+  // { communitySlug, employeeId }. Overrides who new leads from the
+  // public contact form get routed to (POST /leads). An empty/null
+  // employeeId clears the override, falling back to the community's
+  // seed owner (is_seed_owner) at assignment time — see
+  // resolveLeadDefaultAssignee below.
+  router.put('/admin/community-settings/lead-default-assignee', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res, 'manage_settings'))) return;
+    const communitySlug = trim(req.body?.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const employeeId = trim(req.body?.employeeId || '', 200);
+    if (employeeId) {
+      const { data: emp } = await supabase.from('tax_employees')
+        .select('id, status').eq('id', employeeId).eq('community_id', communitySlug).maybeSingle();
+      if (!emp) return res.status(400).json({ error: 'Employee not found in this community.' });
+      if (emp.status === 'archived') return res.status(400).json({ error: 'That staff member is archived.' });
+    }
+    const { error } = await supabase.from('communities')
+      .update({ tax_lead_default_assignee_id: employeeId || null, updated_at: new Date().toISOString() })
+      .eq('id', communitySlug).eq('business_type', TAX_BUSINESS_TYPE);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.community.settings', entityId: communitySlug,
+        action: 'lead_default_assignee_set',
+        actorEmail: trim(req.get('x-firebase-email') || req.get('x-admin-email') || '', 200).toLowerCase(),
+        after: { employeeId: employeeId || null },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, employeeId: employeeId || null });
   });
 
   // Daily-digest schedule. Accepts an hour (0–23), a comma-delimited
@@ -4137,10 +4283,11 @@ ${closingHtml}
         tax_email_welcome_enabled, tax_email_document_enabled,
         tax_email_message_enabled, tax_email_signature_enabled,
         tax_staff_emails_master_enabled,
-        tax_staff_email_lead_enabled, tax_staff_email_task_assigned_enabled,
+        tax_staff_email_lead_enabled, tax_staff_email_lead_assigned_enabled, tax_staff_email_task_assigned_enabled,
         tax_staff_email_task_status_changed_enabled, tax_staff_email_task_pending_review_enabled,
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
+        tax_lead_default_assignee_id,
         tax_digest_send_hour, tax_digest_send_timezone, tax_digest_send_days,
         tax_calendar_horizon_months, tax_testimonials_display_limit,
         tax_news_topics, tax_news_display_limit, tax_news_auto_refresh, tax_news_last_refreshed_at,
@@ -5261,7 +5408,7 @@ ${closingHtml}
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     let q = supabase.from('tax_leads')
-      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at, updated_at')
+      .select('id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slug, product_slugs, message, preferred_locale, status, notes, contacted_at, converted_customer_id, close_reason, close_reason_note, closed_at, created_at, updated_at, assigned_employee_id')
       .eq('community_id', communitySlug)
       .order('created_at', { ascending: false }).limit(500);
     const statusFilter = trim(req.query.status, 40);
@@ -5315,26 +5462,38 @@ ${closingHtml}
     sendXlsxWorkbook(res, `leads-${communitySlug}.xlsx`, 'Leads', rows);
   });
 
-  // PUT /admin/leads/:id — body { status?, notes? }. Setting status to
-  // 'contacted' for the first time stamps contacted_at; transitioning to
-  // any other status leaves the existing stamp in place.
+  // PUT /admin/leads/:id — body { status?, note?, notes?, assignedEmployeeId? }.
+  // Setting status to 'contacted' for the first time stamps contacted_at;
+  // transitioning to any other status leaves the existing stamp in place.
+  // Every status change requires a fresh `note` (written to the
+  // collaborative tax_lead_notes log, same rule tax_tasks enforces on
+  // status changes) — a lead's history shouldn't depend on the owner
+  // happening to also write something in the legacy notes field.
   router.put('/admin/leads/:id', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res, 'manage_leads'))) return;
+    const actor = await requireOwnerAdmin(req, res, 'manage_leads');
+    if (!actor) return;
     const leadId = trim(req.params.id, 200);
     const body = req.body || {};
+
+    const { data: cur, error: cErr } = await supabase.from('tax_leads')
+      .select('id, community_id, status, assigned_employee_id, contacted_at')
+      .eq('id', leadId).maybeSingle();
+    if (cErr) return sendSupabaseError(res, cErr);
+    if (!cur) return res.status(404).json({ error: 'Lead not found.' });
+
     const update = { updated_at: new Date().toISOString() };
+    let statusChanged = false;
 
     if (body.status !== undefined) {
       const s = String(body.status);
       if (!['new', 'contacted', 'converted', 'closed'].includes(s)) {
         return res.status(400).json({ error: 'status must be new|contacted|converted|closed.' });
       }
+      statusChanged = s !== cur.status;
       update.status = s;
       if (s === 'contacted') {
         // Only stamp the first transition to contacted; preserve later edits.
-        const { data: cur } = await supabase.from('tax_leads')
-          .select('contacted_at').eq('id', leadId).maybeSingle();
-        if (cur && !cur.contacted_at) update.contacted_at = new Date().toISOString();
+        if (!cur.contacted_at) update.contacted_at = new Date().toISOString();
       }
       if (s === 'closed') {
         update.closed_at = new Date().toISOString();
@@ -5363,12 +5522,39 @@ ${closingHtml}
       }
     }
     if (body.notes !== undefined) update.notes = trim(body.notes, MAX_TEXT_LEN);
+    if (body.assignedEmployeeId !== undefined) {
+      update.assigned_employee_id = trim(body.assignedEmployeeId || '', 200) || null;
+    }
+
+    // Must be a note freshly supplied with THIS request — same reasoning
+    // as the task status-change gate: falling back to any pre-existing
+    // text would let every status change after the first one through
+    // silently.
+    const note = trim(body.note || '', MAX_TEXT_LEN);
+    if (statusChanged && !note) {
+      return res.status(400).json({
+        error: 'note_required_on_status_change',
+        message: 'Add a note describing this status change before saving it.',
+      });
+    }
 
     if (Object.keys(update).length === 1) {
       return res.status(400).json({ error: 'Nothing to update.' });
     }
     const { error } = await supabase.from('tax_leads').update(update).eq('id', leadId);
     if (error) return sendSupabaseError(res, error);
+    if (statusChanged && note) {
+      try { await addLeadNote({ leadId, communityId: cur.community_id, actor, body: note }); }
+      catch (e) { warn('[tax-lead] status-change note failed', e?.message || e); }
+    }
+    if (Object.prototype.hasOwnProperty.call(update, 'assigned_employee_id')) {
+      await notifyLeadAssignee({
+        leadId,
+        newAssigneeId: update.assigned_employee_id,
+        prevAssigneeId: cur.assigned_employee_id,
+        actor: actor.employee || null,
+      });
+    }
     res.json({ ok: true });
   });
 
@@ -5444,8 +5630,18 @@ ${closingHtml}
   // Idempotency: if a customer with the same email already exists in this
   // community, we re-link the lead to that customer instead of erroring.
   router.post('/admin/leads/:id/convert', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res, 'manage_leads'))) return;
+    const actor = await requireOwnerAdmin(req, res, 'manage_leads');
+    if (!actor) return;
     const leadId = trim(req.params.id, 200);
+    // Converting moves status to 'converted' — same note-on-status-change
+    // rule as PUT /admin/leads/:id applies here too.
+    const note = trim(req.body?.note || '', MAX_TEXT_LEN);
+    if (!note) {
+      return res.status(400).json({
+        error: 'note_required_on_status_change',
+        message: 'Add a note before converting this lead.',
+      });
+    }
 
     const { data: lead, error: lErr } = await supabase.from('tax_leads')
       .select('id, community_id, name, first_name, middle_name, last_name, email, phone, whatsapp, company, customer_type, product_slugs, product_slug, message, preferred_locale, status, converted_customer_id')
@@ -5568,6 +5764,9 @@ ${closingHtml}
       updated_at: new Date().toISOString(),
     }).eq('id', leadId);
     if (updErr) return sendSupabaseError(res, updErr);
+
+    try { await addLeadNote({ leadId, communityId: lead.community_id, actor, body: note }); }
+    catch (e) { warn('[tax-lead-convert] status-change note failed', e?.message || e); }
 
     try {
       await auditLog({
@@ -11797,6 +11996,19 @@ ${closingHtml}
       // default to in_app only) — a task sits stuck until the owner
       // acts, so this one shouldn't rely on them happening to check
       // the portal's bell.
+      default_channels: ['in_app', 'email'],
+    },
+    {
+      key: 'lead_assigned',
+      label_i18n: { en: 'Lead assigned to you', es: 'Lead asignado a usted' },
+      description_i18n: {
+        en: 'When a new lead is routed to you (by default, or reassigned by an admin) and needs follow-up.',
+        es: 'Cuando se le asigna un lead (por defecto, o reasignado por un administrador) y necesita seguimiento.',
+      },
+      // Same reasoning as task_pending_review — a lead sitting
+      // unassigned-in-spirit until someone happens to check the bell
+      // defeats the whole point of assigning it, so this defaults to
+      // both channels.
       default_channels: ['in_app', 'email'],
     },
   ];

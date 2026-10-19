@@ -3677,3 +3677,44 @@ update public.tax_tasks set status_changed_at = created_at;
 -- ═══════════════════════════════════════════════════════════════════════════════
 alter table public.communities
   add column if not exists tax_task_priority_definitions jsonb not null default '{}'::jsonb;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Lead assignment + notes-required-on-status-change
+--
+-- Leads had no owner at all — nothing routed a fresh inquiry to a
+-- specific staff member, so one could sit untouched indefinitely with
+-- the "stale" badge as the only (purely visual) signal. assigned_employee_id
+-- gives every lead an owner; a community can pick a default assignee in
+-- Settings, falling back to the seed owner (is_seed_owner — the one
+-- account whose owner status can never be revoked) when no override is
+-- set. tax_staff_email_lead_assigned_enabled mirrors the existing
+-- per-type staff-email toggle columns (task_assigned, etc.) and defaults
+-- ON so an owner who never opens Settings still gets notified.
+--
+-- Backfill assigns every still-open (new/contacted) lead with no
+-- assignee to its community's seed owner — new leads from here on get
+-- this at creation time (POST /leads), but existing open leads
+-- shouldn't stay orphaned just because they predate the column.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_leads
+  add column if not exists assigned_employee_id text references public.tax_employees(id) on delete set null;
+create index if not exists idx_tax_leads_assigned
+  on public.tax_leads(community_id, assigned_employee_id);
+
+alter table public.communities
+  add column if not exists tax_lead_default_assignee_id text;
+alter table public.communities
+  add column if not exists tax_staff_email_lead_assigned_enabled boolean not null default true;
+
+update public.tax_leads l
+set assigned_employee_id = (
+  select e.id from public.tax_employees e
+  where e.community_id = l.community_id and e.is_seed_owner = true
+  limit 1
+)
+where l.assigned_employee_id is null
+  and l.status in ('new', 'contacted')
+  and exists (
+    select 1 from public.tax_employees e
+    where e.community_id = l.community_id and e.is_seed_owner = true
+  );

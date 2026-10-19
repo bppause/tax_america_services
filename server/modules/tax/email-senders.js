@@ -1840,6 +1840,88 @@ module.exports = function createTaxSenders(deps) {
     });
   };
 
+  // Notification to a lead's assignee when a lead is routed to them —
+  // either the default assignment on a fresh public-site submission, or
+  // an admin's manual reassignment. Mirrors sendTaxTaskAssignedEmail:
+  // deep-links into the lead inbox so the recipient can act immediately.
+  const sendTaxLeadAssignedEmail = async ({ community, lead, assignee, actor }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(assignee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Assignee has no email.' };
+
+    const lang = (assignee && assignee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const leadInboxUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/leads?lead=${encodeURIComponent(lead.id)}`;
+    const actorLabel = (actor && (actor.name || actor.email)) || '';
+    const assigneeFirst = firstNameOf(assignee) || '';
+    const leadName = lead.first_name || lead.name || lead.email || '';
+    const services = (Array.isArray(lead.product_slugs) && lead.product_slugs.length)
+      ? lead.product_slugs.join(', ')
+      : (lead.product_slug || '');
+
+    const subjectDefault = lang === 'en'
+      ? `New lead assigned: ${leadName}`
+      : `Nuevo lead asignado: ${leadName}`;
+    const greeting = lang === 'en'
+      ? (assigneeFirst ? `Hi ${assigneeFirst},` : 'Hi,')
+      : (assigneeFirst ? `Hola ${assigneeFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? (actorLabel
+          ? `${actorLabel} assigned a lead to you on ${community.name}.`
+          : `A new lead was routed to you on ${community.name}.`)
+      : (actorLabel
+          ? `${actorLabel} te asignó un lead en ${community.name}.`
+          : `Se te asignó un nuevo lead en ${community.name}.`);
+    const cta = lang === 'en' ? 'Open this lead →' : 'Abrir este lead →';
+    const emailLabel = lang === 'en' ? 'Email' : 'Correo';
+    const servicesLabel = lang === 'en' ? 'Interested in' : 'Interesado en';
+
+    const textLines = [
+      greeting, '', intro, '',
+      leadName,
+      lead.email ? `${emailLabel}: ${lead.email}` : '',
+      services ? `${servicesLabel}: ${services}` : '',
+      '', `${cta} ${leadInboxUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#f7f7f7;padding:14px 16px;border-radius:8px;margin:14px 0">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(leadName)}</div>
+          ${lead.email ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(emailLabel)}:</strong> ${escapeHtml(lead.email)}</div>` : ''}
+          ${services ? `<div style="margin-top:4px;color:#555"><strong>${escapeHtml(servicesLabel)}:</strong> ${escapeHtml(services)}</div>` : ''}
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(leadInboxUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      assignee_name: displayNameOf(assignee) || assignee.email || '',
+      assignee_first_name: assigneeFirst,
+      actor_name: actorLabel,
+      lead_name: leadName,
+      lead_email: lead.email || '',
+      lead_services: services,
+      lead_url: leadInboxUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'lead_assigned', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    return sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+  };
+
   // Notification to a task's assignee when its status changes — e.g. an
   // admin reassigns it to a terminal/non-terminal bucket, or another
   // teammate moves it along. Email is opt-in per employee (default
@@ -2425,6 +2507,7 @@ module.exports = function createTaxSenders(deps) {
 
   return {
     sendTaxLeadEmail,
+    sendTaxLeadAssignedEmail,
     sendTaxLeadConfirmationEmail,
     sendTaxTaskAssignedEmail,
     sendTaxTaskStatusChangedEmail,

@@ -17,6 +17,7 @@ export default function OwnerSettings() {
 
   const [settings, setSettings] = useState(null);
   const [platformDefaults, setPlatformDefaults] = useState(null);
+  const [staff, setStaff] = useState([]);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
@@ -28,6 +29,16 @@ export default function OwnerSettings() {
       .catch(e => setErr(e?.message || t('error.loadFailed')));
   };
   useEffect(load, [fbUser, community]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Staff list for the lead-assignment picker — active employees only;
+  // an archived one can't be picked as the default assignee.
+  useEffect(() => {
+    if (!employee || !community) return;
+    taxApi.adminListEmployees(auth, community.id)
+      .then(d => setStaff((d.employees || []).filter(e => e.status !== 'archived')))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community]);
 
   if (employee && employee.role !== 'admin') {
     return <EmployeeShell community={community}>
@@ -174,6 +185,17 @@ export default function OwnerSettings() {
     setBusy(true); setMsg({ kind: 'idle', text: '' });
     try {
       await taxApi.adminSetStaffEmailsMaster(auth, { communitySlug: community.id, enabled });
+      setMsg({ kind: 'success', text: t('owner.settings.saved') });
+      load();
+    } catch (e) {
+      setMsg({ kind: 'error', text: e?.message || t('respond.error.generic') });
+    } finally { setBusy(false); }
+  };
+
+  const onSaveLeadDefaultAssignee = async (employeeId) => {
+    setBusy(true); setMsg({ kind: 'idle', text: '' });
+    try {
+      await taxApi.adminSetLeadDefaultAssignee(auth, { communitySlug: community.id, employeeId });
       setMsg({ kind: 'success', text: t('owner.settings.saved') });
       load();
     } catch (e) {
@@ -546,6 +568,21 @@ export default function OwnerSettings() {
         </div>
       </CollapsibleSection>
 
+      {/* Group 2b — Leads. Who a fresh inquiry gets routed to. */}
+      <SettingsGroupHeader
+        label={t('owner.settings.group.leads.label')}
+        hint={t('owner.settings.group.leads.hint')} />
+
+      <CollapsibleSection
+        storageKey="leadAssignment"
+        defaultOpen={true}
+        title={t('owner.settings.leadAssignment.title')}
+        subtitle={t('owner.settings.leadAssignment.subtitle')}>
+        <LeadDefaultAssigneeEditor
+          staff={staff} initial={settings.tax_lead_default_assignee_id || ''}
+          busy={busy} onSave={onSaveLeadDefaultAssignee} t={t} />
+      </CollapsibleSection>
+
       {/* Group 3 — Tasks & workflow. Everything that shapes how the
           team's task board behaves. */}
       <SettingsGroupHeader
@@ -833,6 +870,9 @@ const STAFF_EMAIL_TYPES = [
   { type: 'lead',             column: 'tax_staff_email_lead_enabled',
     labelKey: 'owner.settings.staffEmails.lead.label',
     descKey:  'owner.settings.staffEmails.lead.desc' },
+  { type: 'lead_assigned',    column: 'tax_staff_email_lead_assigned_enabled',
+    labelKey: 'owner.settings.staffEmails.leadAssigned.label',
+    descKey:  'owner.settings.staffEmails.leadAssigned.desc' },
   { type: 'task_assigned',    column: 'tax_staff_email_task_assigned_enabled',
     labelKey: 'owner.settings.staffEmails.taskAssigned.label',
     descKey:  'owner.settings.staffEmails.taskAssigned.desc' },
@@ -1925,6 +1965,33 @@ function LookaheadEditor({ initial, busy, onSave, onRefresh, t }) {
 // Calendar pips, and Kanban card borders. Server clamps + enforces
 // urgent < soon < upcoming, but we surface a friendly warning on
 // the client too so the owner sees it before submitting.
+// Who a fresh public-site lead gets routed to by default. Leaving it
+// on "Seed owner (default)" (empty value) falls back server-side to
+// the community's is_seed_owner employee — see
+// resolveLeadDefaultAssignee in routes.js — so the picker never needs
+// to know who that is or handle it being unset.
+function LeadDefaultAssigneeEditor({ staff, initial, busy, onSave, t }) {
+  return (
+    <div style={{ display: 'grid', gap: 8, maxWidth: 420 }}>
+      <select value={initial} disabled={busy}
+              onChange={e => onSave(e.target.value)}
+              style={{
+                padding: '8px 10px', border: '1px solid var(--tax-border)',
+                borderRadius: 8, font: 'inherit', fontSize: 14,
+              }}>
+        <option value="">{t('owner.settings.leadAssignment.seedOwnerOption')}</option>
+        {staff.map(s => (
+          <option key={s.id} value={s.id}>
+            {s.name || s.email}{s.is_seed_owner ? ` — ${t('owner.settings.leadAssignment.seedOwnerTag')}` : ''}
+          </option>
+        ))}
+      </select>
+      <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+        {t('owner.settings.leadAssignment.hint')}
+      </span>
+    </div>
+  );
+}
 function ThresholdEditor({ initial, busy, onSave, t }) {
   const [draft, setDraft] = useState({
     urgent: String(initial.urgent ?? 2),

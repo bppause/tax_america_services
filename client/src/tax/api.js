@@ -444,6 +444,9 @@ export const taxApi = {
   adminSetStaffEmailsMaster(auth, payload) {
     return request('PUT', '/admin/community-settings/staff-emails-master', payload, auth, { admin: true });
   },
+  adminSetLeadDefaultAssignee(auth, payload) {
+    return request('PUT', '/admin/community-settings/lead-default-assignee', payload, auth, { admin: true });
+  },
   adminSetDigestSchedule(auth, payload) {
     return request('PUT', '/admin/community-settings/digest-schedule', payload, auth, { admin: true });
   },
