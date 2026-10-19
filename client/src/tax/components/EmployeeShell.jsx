@@ -5,6 +5,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import { firstNameOf, displayPersonName } from '../lib/personName';
 import ImpersonationBanner from './ImpersonationBanner';
+import VersionTag from './VersionTag';
 
 // One icon per nav key, shared by every group a link can appear in
 // (several keys — tasks, customers, staff, settings, service-catalog,
@@ -355,6 +356,9 @@ export default function EmployeeShell({ community, active, children }) {
               <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={signOut}>
                 {t('portal.signout')}
               </button>
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 8 }}>
+              <VersionTag />
             </div>
           </div>
         </aside>

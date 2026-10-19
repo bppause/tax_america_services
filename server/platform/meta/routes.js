@@ -56,13 +56,19 @@ module.exports = function createMetaRouter(deps) {
     res.json(result);
   });
 
-  // GET /version — build timestamp from client/dist/build-meta.json
+  // GET /version — build timestamp from client/dist/build-meta.json, plus
+  // the deployed commit when available. Render auto-injects
+  // RENDER_GIT_COMMIT (full SHA) into the running service's environment
+  // on every deploy — no render.yaml change needed; it's just unset in
+  // local dev. Surfaced in the employee portal, customer portal, and
+  // public site footers so support can tell which deploy someone is on.
   router.get('/version', (req, res) => {
+    const commit = String(process.env.RENDER_GIT_COMMIT || '').slice(0, 7);
     try {
       const meta = JSON.parse(fs.readFileSync(path.join(distPath, 'build-meta.json'), 'utf8'));
-      res.json({ buildTime: meta.buildTime || '' });
+      res.json({ buildTime: meta.buildTime || '', commit });
     } catch(e) {
-      res.json({ buildTime: '' });
+      res.json({ buildTime: '', commit });
     }
   });
 
