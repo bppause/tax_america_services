@@ -45,6 +45,7 @@ export default function OwnerLeads() {
   const [businessName, setBusinessName] = useState('');
   const [products, setProducts] = useState([]);
   const [relTypes, setRelTypes] = useState([]);
+  const [staff, setStaff] = useState([]);
   const [err, setErr] = useState('');
   const [busyExport, setBusyExport] = useState(false);
 
@@ -93,6 +94,17 @@ export default function OwnerLeads() {
       setProducts(p.products || []);
       setRelTypes((r.types || []).filter(rt => rt.active !== false));
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community]);
+
+  // Active staff — for the assignee picker on each lead. Every lead
+  // gets routed to someone (the seed owner by default, see Settings →
+  // Lead assignment), so admins need to be able to see and change who.
+  useEffect(() => {
+    if (!employee || !community) return;
+    taxApi.adminListEmployees(auth, community.id)
+      .then(d => setStaff((d.employees || []).filter(e => e.status !== 'archived')))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
 
@@ -185,7 +197,7 @@ export default function OwnerLeads() {
               {shown.map(lead => (
                 <LeadRow key={lead.id} lead={lead} auth={auth} onChange={load}
                          communitySlug={community.id} community={community}
-                         products={products} relTypes={relTypes}
+                         products={products} relTypes={relTypes} staff={staff}
                          focused={lead.id === focusLeadId}
                          locale={locale} t={t} />
               ))}
@@ -218,7 +230,7 @@ function staleDays(lead) {
   return days >= STALE_DAYS ? days : 0;
 }
 
-function LeadRow({ lead, auth, onChange, communitySlug, community, products, relTypes, focused, locale, t }) {
+function LeadRow({ lead, auth, onChange, communitySlug, community, products, relTypes, staff, focused, locale, t }) {
   const [expanded, setExpanded] = useState(!!focused);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -227,6 +239,9 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
   // closing immediately, so the owner is forced to record why this
   // lead didn't pan out (the simplified flow is convert-or-close).
   const [closing, setClosing] = useState(false);
+  // Same reasoning for reopening — a status change (new ↔ closed is
+  // the only other direction) needs its own fresh note too.
+  const [reopening, setReopening] = useState(false);
   const b = statusBadge(lead.status);
 
   // When the user lands here from the new-lead notification email
@@ -254,6 +269,17 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
   // customer, attaches relationships, and kicks off task generation
   // in a single request.
   const onConvert = () => setConvertOpen(true);
+
+  // Reassignment is not a status change, so it skips the
+  // note-on-status-change gate entirely — no `note` in the payload.
+  const onReassign = async (employeeId) => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminUpdateLead(auth, lead.id, { assignedEmployeeId: employeeId || null });
+      onChange();
+    } catch (e) { setErr(e?.message || ''); }
+    finally { setBusy(false); }
+  };
 
   return (
     <div ref={rowRef} className="tax-contact-item"
@@ -325,6 +351,11 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               }}>🤖 AI chat</span>
             )}
             <> • {new Date(lead.created_at).toLocaleDateString()}</>
+            <> • {t('owner.leads.assignedTo')}: <strong style={{ color: 'var(--tax-text)' }}>
+              {staff.find(s => s.id === lead.assigned_employee_id)?.name
+                || staff.find(s => s.id === lead.assigned_employee_id)?.email
+                || t('owner.leads.unassigned')}
+            </strong></>
           </div>
           {/* Services as chips — own row so they're scannable */}
           {(() => {
@@ -362,6 +393,22 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
 
       {expanded && (
         <div style={{ marginTop: 12, padding: 12, background: 'var(--tax-bg-alt)', borderRadius: 8 }}>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)', display: 'block', marginBottom: 4 }}>
+              {t('owner.leads.assignedTo')}
+            </label>
+            <select value={lead.assigned_employee_id || ''} disabled={busy}
+                    onChange={e => onReassign(e.target.value)}
+                    style={{
+                      padding: '6px 10px', border: '1px solid var(--tax-border)',
+                      borderRadius: 8, font: 'inherit', fontSize: 13, minWidth: 220,
+                    }}>
+              <option value="">{t('owner.leads.unassigned')}</option>
+              {staff.map(s => (
+                <option key={s.id} value={s.id}>{s.name || s.email}</option>
+              ))}
+            </select>
+          </div>
           {lead.source === 'returning_customer' && (
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8,
@@ -498,12 +545,21 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
             <CloseReasonForm busy={busy} t={t}
                              onCancel={() => setClosing(false)}
                              onSubmit={async ({ reason, note }) => {
-                               await setStatus('closed', { closeReason: reason, closeReasonNote: note });
+                               await setStatus('closed', { closeReason: reason, closeReasonNote: note, note });
                                setClosing(false);
                              }} />
           )}
 
-          {!closing && (
+          {reopening && (
+            <ReopenNoteForm busy={busy} t={t}
+                            onCancel={() => setReopening(false)}
+                            onSubmit={async (note) => {
+                              await setStatus('new', { note });
+                              setReopening(false);
+                            }} />
+          )}
+
+          {!closing && !reopening && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {lead.status !== 'converted' && (
                 <button type="button" onClick={onConvert} disabled={busy}
@@ -555,7 +611,7 @@ function LeadRow({ lead, auth, onChange, communitySlug, community, products, rel
               )}
               {lead.status === 'closed' && (
                 <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-                        onClick={() => setStatus('new')} disabled={busy}
+                        onClick={() => setReopening(true)} disabled={busy}
                         style={{ color: 'var(--tax-muted)' }}>
                   {t('owner.leads.action.reopen')}
                 </button>
@@ -704,6 +760,7 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
     .map(p => p.id);
 
   const [selected, setSelected] = useState(new Set(initialProductIds));
+  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -730,10 +787,15 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
       setErr(t('owner.customers.errServiceRequired'));
       return;
     }
+    if (!note.trim()) {
+      setErr(t('owner.leads.convert.noteRequired'));
+      return;
+    }
     setBusy(true); setErr('');
     try {
       const r = await taxApi.adminConvertLead(auth, lead.id, {
         productIds: Array.from(selected),
+        note: note.trim(),
       });
       onDone(r.customerId);
     } catch (e) {
@@ -813,9 +875,23 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
             </div>
           </div>
 
+          <div style={{ marginTop: 14 }}>
+            <label htmlFor="lead-convert-note" style={{ fontWeight: 600, display: 'block', marginBottom: 4 }}>
+              {t('owner.leads.convert.noteLabel')} *
+            </label>
+            <textarea id="lead-convert-note" rows={2} value={note}
+                      onChange={e => setNote(e.target.value)} maxLength={4000}
+                      disabled={busy}
+                      placeholder={t('owner.leads.convert.notePlaceholder')}
+                      style={{
+                        width: '100%', padding: 8, border: '1px solid var(--tax-border)',
+                        borderRadius: 6, font: 'inherit', fontSize: 13,
+                      }} />
+          </div>
+
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button type="submit" className="tax-btn tax-btn--primary" disabled={busy}>
               {busy ? t('lead.submitting') : t('owner.leads.convert.submit')}
             </button>
@@ -832,13 +908,12 @@ function ConvertLeadModal({ lead, auth, communitySlug, products, relTypes, local
 
 // Inline reason picker shown when the owner clicks Close. Forces a
 // reason selection so we have a record of why this lead didn't convert.
-// "Other" turns the note field required-ish on the client; the server
-// stores whatever comes through but the standard set keeps the data tidy.
+// The note is always required now (not just for "other") — it doubles
+// as the fresh note the status-change-requires-a-note server gate needs.
 function CloseReasonForm({ busy, t, onCancel, onSubmit }) {
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
-  const requireNote = reason === 'other';
-  const canSubmit = !!reason && (!requireNote || note.trim().length > 0);
+  const canSubmit = !!reason && note.trim().length > 0;
 
   const submit = (e) => {
     e?.preventDefault?.();
@@ -881,9 +956,7 @@ function CloseReasonForm({ busy, t, onCancel, onSubmit }) {
       </div>
       <div>
         <label htmlFor="lead-close-note" style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
-          {requireNote
-            ? t('owner.leads.closeReason.noteRequired')
-            : t('owner.leads.closeReason.noteOptional')}
+          {t('owner.leads.closeReason.noteRequired')}
         </label>
         <textarea id="lead-close-note" rows={2} value={note}
                   onChange={e => setNote(e.target.value)} maxLength={4000}
@@ -898,6 +971,54 @@ function CloseReasonForm({ busy, t, onCancel, onSubmit }) {
         <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm"
                 disabled={!canSubmit || busy}>
           {busy ? t('lead.submitting') : t('owner.leads.closeReason.confirm')}
+        </button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                onClick={onCancel} disabled={busy}
+                style={{ color: 'var(--tax-text)' }}>
+          {t('preview.close')}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Inline note prompt shown when the owner reopens a closed lead — the
+// other status-changing action besides close/convert, so it needs the
+// same fresh-note-on-status-change record.
+function ReopenNoteForm({ busy, t, onCancel, onSubmit }) {
+  const [note, setNote] = useState('');
+  const canSubmit = note.trim().length > 0;
+
+  const submit = (e) => {
+    e?.preventDefault?.();
+    if (!canSubmit || busy) return;
+    onSubmit(note.trim());
+  };
+
+  return (
+    <form onSubmit={submit} style={{
+      marginBottom: 12, padding: 12, background: '#fff',
+      border: '1px solid var(--tax-border)', borderRadius: 8,
+      display: 'grid', gap: 10,
+    }}>
+      <div>
+        <label htmlFor="lead-reopen-note" style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {t('owner.leads.reopenNote.prompt')}
+        </label>
+        <textarea id="lead-reopen-note" rows={2} value={note}
+                  onChange={e => setNote(e.target.value)} maxLength={4000}
+                  disabled={busy}
+                  placeholder={t('owner.leads.reopenNote.placeholder')}
+                  style={{
+                    width: '100%', padding: 8, marginTop: 4,
+                    border: '1px solid var(--tax-border)', borderRadius: 6,
+                    font: 'inherit', fontSize: 13,
+                  }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm"
+                disabled={!canSubmit || busy}>
+          {busy ? t('lead.submitting') : t('owner.leads.reopenNote.confirm')}
         </button>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                 onClick={onCancel} disabled={busy}
