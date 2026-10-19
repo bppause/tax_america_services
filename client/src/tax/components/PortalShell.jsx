@@ -5,6 +5,7 @@ import { useTaxAuth } from '../auth/AuthProvider';
 import { taxApi } from '../api';
 import { firstNameOf, displayPersonName } from '../lib/personName';
 import ImpersonationBanner from './ImpersonationBanner';
+import VersionTag from './VersionTag';
 
 // Chrome shared by every portal page. Below 720px the horizontal nav
 // collapses behind a hamburger button (Phase 4o mobile pass) — customers
@@ -103,6 +104,9 @@ export default function PortalShell({ community, active, children }) {
           </div>
         )}
         {children}
+        <div style={{ textAlign: 'center', padding: '24px 0 8px' }}>
+          <VersionTag />
+        </div>
       </div>
     </>
   );
