@@ -209,6 +209,11 @@ export default function EmployeeShell({ community, active, children }) {
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
+                    {/* Services aren't just public-site content — tagging a
+                        customer with one, and the cadence that drives their
+                        recurring tasks, is day-to-day operational work. */}
+                    {isAdmin && perm('manage_services') &&
+                      navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                   </NavGroup>
                 )}
                 {isAdmin && (
@@ -238,6 +243,11 @@ export default function EmployeeShell({ community, active, children }) {
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
+                    {/* Services aren't just public-site content — tagging a
+                        customer with one, and the cadence that drives their
+                        recurring tasks, is day-to-day operational work. */}
+                    {isAdmin && perm('manage_services') &&
+                      navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                   </NavGroup>
                 )}
 

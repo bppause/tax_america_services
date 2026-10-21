@@ -184,7 +184,7 @@ function fmtDate(iso) {
 // for all the read-only data, then per-action mutations via the matching
 // /admin/* endpoints. Each section is independently re-fetched on action so
 // we don't reload unrelated chunks.
-function CustomerHeaderCard({ c, auth, community, load, t }) {
+function CustomerHeaderCard({ c, auth, community, load, t, servicesVersion, onServicesChanged }) {
   const { locale } = useT();
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef(null);
@@ -283,6 +283,13 @@ function CustomerHeaderCard({ c, auth, community, load, t }) {
             </span>
           ))}
         </div>
+
+        {/* Tagged services — surfaced here (not just in the Services
+            section further down the page) so an admin can see and
+            change what this customer is signed up for without
+            scrolling, right where they're already looking. */}
+        <HeaderServiceChips community={community} auth={auth} customerId={c.id} locale={locale} t={t}
+                             refreshKey={servicesVersion} onChanged={onServicesChanged} />
       </div>
 
       {/* Action buttons */}
@@ -316,6 +323,143 @@ function CustomerHeaderCard({ c, auth, community, load, t }) {
   );
 }
 
+// Compact tagged-services row for the header card — lets an admin see
+// and change what a customer is signed up for without scrolling down
+// to the full Services section. Same API calls as ServicesSection
+// further down the page; refreshKey/onChanged keep the two in sync
+// regardless of which one made the change.
+function HeaderServiceChips({ community, auth, customerId, locale, t, refreshKey, onChanged }) {
+  const [services, setServices] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef(null);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    const onDown = (e) => {
+      if (addRef.current && !addRef.current.contains(e.target)) setAddOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [addOpen]);
+
+  useEffect(() => {
+    if (!auth?.uid || !community?.id) return;
+    taxApi.adminListCustomerServices(auth, customerId)
+      .then(d => setServices(d.services || []))
+      .catch(e => setErr(e?.message || ''));
+    taxApi.adminListProducts(auth, community.id)
+      .then(d => setProducts((d.products || []).filter(p => p.enabled !== false)))
+      .catch(() => setProducts([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth?.uid, community?.id, customerId, refreshKey]);
+
+  const taggedIds = new Set((services || []).map(s => s.product_id));
+  const untagged = products.filter(p => !taggedIds.has(p.id));
+
+  const onAdd = async (product) => {
+    setBusyId(product.id); setErr('');
+    try {
+      await taxApi.adminAddCustomerService(auth, customerId, { productId: product.id });
+      setAddOpen(false);
+      onChanged?.();
+    } catch (e) { setErr(e?.message || ''); }
+    finally { setBusyId(null); }
+  };
+  const onRemove = async (link) => {
+    const name = pickI18n(link.product?.name_i18n, locale).value || link.product?.slug || '';
+    if (!window.confirm(t('owner.customer.services.removeConfirm', { name }))) return;
+    setBusyId(link.id); setErr('');
+    try {
+      await taxApi.adminRemoveCustomerService(auth, customerId, link.id);
+      onChanged?.();
+    } catch (e) { setErr(e?.message || ''); }
+    finally { setBusyId(null); }
+  };
+
+  if (services === null) return null;
+
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+          {t('owner.customer.section.services')}:
+        </span>
+        {services.length === 0 && (
+          <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('owner.customer.services.empty')}</span>
+        )}
+        {services.map(link => {
+          const name = pickI18n(link.product?.name_i18n, locale).value || link.product?.slug || '';
+          const isBusy = busyId === link.id;
+          return (
+            <span key={link.id} style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+              padding: '2px 2px 2px 10px', borderRadius: 999,
+              background: 'color-mix(in srgb, var(--tax-brand-primary) 14%, #fff)',
+              color: 'var(--tax-brand-primary)',
+              border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 28%, #fff)',
+              fontSize: 12, fontWeight: 600,
+              opacity: isBusy ? 0.5 : 1,
+            }}>
+              {name}
+              <button type="button"
+                      onClick={() => onRemove(link)} disabled={isBusy}
+                      aria-label={t('owner.customer.services.remove')}
+                      style={{
+                        border: 0, background: 'transparent', color: 'var(--tax-brand-primary)',
+                        cursor: isBusy ? 'wait' : 'pointer', padding: '0 5px',
+                        fontSize: 14, lineHeight: 1, fontWeight: 700,
+                      }}>×</button>
+            </span>
+          );
+        })}
+
+        <div ref={addRef} style={{ position: 'relative' }}>
+          <button type="button" onClick={() => setAddOpen(o => !o)}
+                  style={{
+                    padding: '2px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600,
+                    background: '#fff', color: 'var(--tax-text)',
+                    border: '1px dashed var(--tax-border)', cursor: 'pointer',
+                  }}>
+            + {t('owner.customer.services.addBtn')}
+          </button>
+          {addOpen && (
+            <div style={{
+              position: 'absolute', top: '120%', left: 0, zIndex: 200,
+              background: '#fff', border: '1px solid var(--tax-border)',
+              borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+              minWidth: 220, maxHeight: 260, overflowY: 'auto', padding: 6,
+            }}>
+              {untagged.length === 0 ? (
+                <div style={{ padding: 8, fontSize: 12, color: 'var(--tax-muted)' }}>
+                  {t('owner.customer.services.allTagged')}
+                </div>
+              ) : untagged.map(p => {
+                const name = pickI18n(p.name_i18n, locale).value || p.slug;
+                const isBusy = busyId === p.id;
+                return (
+                  <button key={p.id} type="button" onClick={() => onAdd(p)} disabled={isBusy}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left',
+                            padding: '7px 10px', borderRadius: 6, border: 0,
+                            background: 'transparent', cursor: isBusy ? 'wait' : 'pointer',
+                            fontSize: 13, color: 'var(--tax-text)',
+                          }}>
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      {err && <div style={{ color: 'var(--tax-error)', fontSize: 11, marginTop: 4 }}>{err}</div>}
+    </div>
+  );
+}
+
 export default function OwnerCustomerDetail({ customerId }) {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -332,6 +476,12 @@ export default function OwnerCustomerDetail({ customerId }) {
   // sibling, with its own independently-fetched task list) re-fetches
   // instead of showing stale rows for tasks that no longer exist.
   const [tasksRefreshKey, setTasksRefreshKey] = useState(0);
+  // Services can now be tagged from two places — the header card and
+  // the full Services section below — each with its own independently-
+  // fetched list. This single counter keeps both in sync regardless of
+  // which one made the change, same pattern as tasksRefreshKey above.
+  const [servicesVersion, setServicesVersion] = useState(0);
+  const bumpServices = () => { setServicesVersion(v => v + 1); setTasksRefreshKey(k => k + 1); };
 
   // Listen for "Send to customer" postMessage from the owner preview tab.
   useEffect(() => {
@@ -381,7 +531,8 @@ export default function OwnerCustomerDetail({ customerId }) {
       <a href={back} style={{ fontSize: 14, color: 'var(--tax-muted)' }}>← {t('owner.customer.back')}</a>
 
       {/* Modern header card */}
-      <CustomerHeaderCard c={c} auth={auth} community={community} load={load} t={t} />
+      <CustomerHeaderCard c={c} auth={auth} community={community} load={load} t={t}
+                          servicesVersion={servicesVersion} onServicesChanged={bumpServices} />
 
       {/* Flat section cards — ordered by how most often a staff member
           needs them while actually managing the relationship: who the
@@ -393,7 +544,7 @@ export default function OwnerCustomerDetail({ customerId }) {
 
       <SectionCard title={t('owner.customer.section.services')} icon="🏷️" storageKey="services">
         <ServicesSection community={community} auth={auth} customerId={customerId} locale={locale} t={t}
-                         onChanged={() => setTasksRefreshKey(k => k + 1)} />
+                         refreshKey={servicesVersion} onChanged={bumpServices} />
       </SectionCard>
 
       <SectionCard title={t('owner.customer.section.tasks')} icon="✅" storageKey="tasks">
@@ -2542,7 +2693,7 @@ function InlineAddTask({ auth, community, customerId, statuses, employees, produ
 // outlined chips the owner can click to add. Same data flow as the
 // dropdown variant: each toggle fires the generator immediately so
 // the team has tasks queued before the screen settles.
-function ServicesSection({ community, auth, customerId, locale, t, onChanged }) {
+function ServicesSection({ community, auth, customerId, locale, t, onChanged, refreshKey }) {
   const [services, setServices] = useState(null);
   const [products, setProducts] = useState([]);
   const [busyId, setBusyId] = useState(null);
@@ -2562,7 +2713,7 @@ function ServicesSection({ community, auth, customerId, locale, t, onChanged }) 
       .catch(() => setProducts([]));
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth?.uid, community?.id, customerId]);
+  }, [auth?.uid, community?.id, customerId, refreshKey]);
 
   const taggedByProduct = new Map((services || []).map(s => [s.product_id, s]));
   const taggedIds = new Set(taggedByProduct.keys());
