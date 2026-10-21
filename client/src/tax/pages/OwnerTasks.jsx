@@ -1464,6 +1464,33 @@ function TaskFormModal({
   // created) so editing it doesn't silently blank the field.
   const visibleProducts = products.filter(p => p.enabled !== false || p.id === productId);
 
+  // A task very often just starts with the service's own name ("Sales
+  // Tax Filing - Q3 reconciliation", "IFTA quarterly report for Acme").
+  // Longest name first so e.g. a future "Sales Tax" service (if one
+  // existed) wouldn't out-match "Sales Tax Filing" for the same prefix.
+  const productNamePrefixes = useMemo(() => {
+    return visibleProducts
+      .map(p => ({ name: pickI18n(p.name_i18n, locale).value || p.slug, product: p }))
+      .filter(entry => entry.name)
+      .sort((a, b) => b.name.length - a.name.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, productId, locale]);
+
+  // Finds the service whose name the typed title starts with, if any —
+  // a word boundary after the name (space/punctuation/end-of-string)
+  // keeps "IFTA" from matching a title that just happens to start with
+  // "IFTA..." as part of a longer, unrelated word.
+  function matchProductByTitlePrefix(val) {
+    const lower = val.toLowerCase();
+    for (const { name, product } of productNamePrefixes) {
+      const nameLower = name.toLowerCase();
+      if (!lower.startsWith(nameLower)) continue;
+      const next = val[name.length];
+      if (next === undefined || /[^a-z0-9]/i.test(next)) return product;
+    }
+    return null;
+  }
+
   // Picking a service the customer isn't tagged with yet offers to tag
   // it right here instead of forcing a trip to the customer page and
   // back — same tag-and-generate-tasks endpoint the customer detail
@@ -1677,13 +1704,21 @@ function TaskFormModal({
                    onChange={e => {
                      const val = e.target.value;
                      setTitle(val);
-                     // Picking a suggestion before any service is chosen
-                     // also fills in the service that suggestion belongs
-                     // to — one less field the preparer has to set by
-                     // hand. Never overrides a service already picked.
-                     const matchedSlug = !productId ? titleToProductSlug.get(val) : null;
-                     const matchedProduct = matchedSlug
-                       ? visibleProducts.find(p => p.slug === matchedSlug) : null;
+                     // Picking a suggestion, or just typing a title that
+                     // starts with a service's own name ("Sales Tax
+                     // Filing - Q3 reconciliation"), before any service is
+                     // chosen also fills in that service — one less field
+                     // the preparer has to set by hand. Never overrides a
+                     // service already picked.
+                     let matchedProduct = null;
+                     if (!productId) {
+                       matchedProduct = matchProductByTitlePrefix(val);
+                       if (!matchedProduct) {
+                         const matchedSlug = titleToProductSlug.get(val);
+                         matchedProduct = matchedSlug
+                           ? visibleProducts.find(p => p.slug === matchedSlug) : null;
+                       }
+                     }
                      if (matchedProduct) {
                        setProductId(matchedProduct.id);
                        scheduleAutoSave({ title: val, productId: matchedProduct.id });
