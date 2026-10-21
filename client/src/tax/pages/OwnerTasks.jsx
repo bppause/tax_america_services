@@ -1341,6 +1341,11 @@ function TaskFormModal({
   const savedTimerRef = useRef(null);
   useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
   const [suggestions, setSuggestions] = useState([]);
+  // Every service's suggestions, slug-tagged, fetched once regardless of
+  // which service (if any) is selected — lets the title field offer rich
+  // autocomplete before a service is picked, and auto-fill the matching
+  // service once the typed title lands on one of these exactly.
+  const [allTaggedSuggestions, setAllTaggedSuggestions] = useState([]);
   const [showInlineCreate, setShowInlineCreate] = useState(false);
   const [defaultProductHint, setDefaultProductHint] = useState(null);
   // Only close on a genuine backdrop click — i.e. the mousedown AND the
@@ -1360,10 +1365,42 @@ function TaskFormModal({
   useEffect(() => {
     const product = products.find(p => p.id === productId);
     taxApi.adminTaskSuggestions(auth, product?.slug || '')
-      .then(d => setSuggestions(d.suggestions || []))
+      .then(d => {
+        setSuggestions(d.suggestions || []);
+        // Only needed once — it's the same full catalog regardless of
+        // which service is currently selected — but harmless to let it
+        // refresh along with the per-service fetch.
+        setAllTaggedSuggestions(d.allTagged || []);
+      })
       .catch(() => setSuggestions([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [productId]);
+
+  // title (current locale) -> productSlug, for the auto-fill-service-
+  // from-title-match below. A title that happens to match more than one
+  // service's suggestions is dropped from the map (ambiguous) rather
+  // than guessing; it still appears in the datalist either way.
+  const titleToProductSlug = useMemo(() => {
+    const map = new Map();
+    const dupes = new Set();
+    for (const s of allTaggedSuggestions) {
+      const label = pickI18n(s, locale).value || s.en || s.es;
+      if (!label) continue;
+      if (map.has(label) && map.get(label) !== s.productSlug) dupes.add(label);
+      map.set(label, s.productSlug);
+    }
+    for (const label of dupes) map.delete(label);
+    return map;
+  }, [allTaggedSuggestions, locale]);
+
+  // Title suggestions shown in the datalist: once a service is picked,
+  // its own suggestions (plus the cross-service common pack) — same as
+  // before. Before that, the full tagged catalog instead of just the
+  // common pack, so typing the title first (at least as common a flow
+  // as picking the service first) still gets useful autocomplete.
+  const titleSuggestions = productId
+    ? suggestions
+    : [...new Map(allTaggedSuggestions.map(s => [pickI18n(s, locale).value || s.en || s.es, s])).values()];
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -1420,6 +1457,12 @@ function TaskFormModal({
       .catch(() => setCustomerServiceIds(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId, isAdmin]);
+
+  // Owner-disabled services shouldn't be offered on a task — they're
+  // retired from the catalog. Still shown if this task is ALREADY
+  // pointed at one (e.g. a service disabled after the task was
+  // created) so editing it doesn't silently blank the field.
+  const visibleProducts = products.filter(p => p.enabled !== false || p.id === productId);
 
   // Picking a service the customer isn't tagged with yet offers to tag
   // it right here instead of forcing a trip to the customer page and
@@ -1630,11 +1673,28 @@ function TaskFormModal({
         <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0, gap: 10 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
-            <input type="text" value={title} onChange={e => { setTitle(e.target.value); scheduleAutoSave({ title: e.target.value }); }}
+            <input type="text" value={title}
+                   onChange={e => {
+                     const val = e.target.value;
+                     setTitle(val);
+                     // Picking a suggestion before any service is chosen
+                     // also fills in the service that suggestion belongs
+                     // to — one less field the preparer has to set by
+                     // hand. Never overrides a service already picked.
+                     const matchedSlug = !productId ? titleToProductSlug.get(val) : null;
+                     const matchedProduct = matchedSlug
+                       ? visibleProducts.find(p => p.slug === matchedSlug) : null;
+                     if (matchedProduct) {
+                       setProductId(matchedProduct.id);
+                       scheduleAutoSave({ title: val, productId: matchedProduct.id });
+                     } else {
+                       scheduleAutoSave({ title: val });
+                     }
+                   }}
                    title={t('owner.tasks.field.titleHint')}
                    maxLength={300} list="task-suggestions" required autoFocus />
             <datalist id="task-suggestions">
-              {suggestions.map((s, i) => (
+              {titleSuggestions.map((s, i) => (
                 <option key={i} value={pickI18n(s, locale).value || s.en || s.es} />
               ))}
             </datalist>
@@ -1684,16 +1744,16 @@ function TaskFormModal({
                 <option value="">{t('owner.tasks.field.servicePractice')}</option>
                 {customerId && customerServiceIds ? (
                   <>
-                    {products.filter(p => customerServiceIds.has(p.id)).length > 0 && (
+                    {visibleProducts.filter(p => customerServiceIds.has(p.id)).length > 0 && (
                       <optgroup label={t('owner.tasks.field.serviceGroupCustomer')}>
-                        {products.filter(p => customerServiceIds.has(p.id)).map(p => (
+                        {visibleProducts.filter(p => customerServiceIds.has(p.id)).map(p => (
                           <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
                         ))}
                       </optgroup>
                     )}
-                    {products.filter(p => !customerServiceIds.has(p.id)).length > 0 && (
+                    {visibleProducts.filter(p => !customerServiceIds.has(p.id)).length > 0 && (
                       <optgroup label={t('owner.tasks.field.serviceGroupOther')}>
-                        {products.filter(p => !customerServiceIds.has(p.id)).map(p => (
+                        {visibleProducts.filter(p => !customerServiceIds.has(p.id)).map(p => (
                           <option key={p.id} value={p.id} style={{ color: '#9ca3af' }}>
                             {pickI18n(p.name_i18n, locale).value || p.slug}
                           </option>
@@ -1702,7 +1762,7 @@ function TaskFormModal({
                     )}
                   </>
                 ) : (
-                  products.map(p => (
+                  visibleProducts.map(p => (
                     <option key={p.id} value={p.id}>{pickI18n(p.name_i18n, locale).value || p.slug}</option>
                   ))
                 )}

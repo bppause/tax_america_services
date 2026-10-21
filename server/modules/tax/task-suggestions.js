@@ -223,4 +223,19 @@ function suggestionsForSlug(slug) {
   return [...specific, ...COMMON_SUGGESTIONS];
 }
 
-module.exports = { suggestionsForSlug, COMMON_SUGGESTIONS };
+// Flattened, slug-tagged view of every service's suggestions — lets the
+// client offer title autocomplete BEFORE a service is picked (typing the
+// title first is at least as common as picking the service first), and
+// auto-fill the matching service once the typed title lands on one of
+// these exactly. Not deduplicated across slugs — a title that happens to
+// match two services' lists just won't trigger the auto-fill (ambiguous),
+// which is fine; it still shows as a suggestion either way.
+function allSuggestionsTagged() {
+  const out = [];
+  for (const slug of Object.keys(SUGGESTIONS_BY_SLUG)) {
+    for (const s of SUGGESTIONS_BY_SLUG[slug]) out.push({ ...s, productSlug: slug });
+  }
+  return out;
+}
+
+module.exports = { suggestionsForSlug, allSuggestionsTagged, COMMON_SUGGESTIONS };

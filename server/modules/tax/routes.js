@@ -26,7 +26,7 @@ const {
   parsePersonName, normalizeNameParts, composePersonName,
   resolveNamePayload, firstNameOf, displayNameOf,
 } = require('./names');
-const { suggestionsForSlug } = require('./task-suggestions');
+const { suggestionsForSlug, allSuggestionsTagged } = require('./task-suggestions');
 const { TEMPLATES_BY_SLUG } = require('./auto-task-templates');
 const {
   PERMISSIONS: TAX_PERMISSIONS,
@@ -8024,7 +8024,10 @@ ${closingHtml}
   router.get('/admin/task-suggestions', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res))) return;
     const slug = trim(req.query.productSlug || '', 200);
-    res.json({ suggestions: suggestionsForSlug(slug) });
+    // allTagged lets the client autocomplete a task title before a
+    // service is even picked, and auto-fill the matching service once
+    // the typed title lands on one of these exactly.
+    res.json({ suggestions: suggestionsForSlug(slug), allTagged: allSuggestionsTagged() });
   });
 
   // GET /admin/tasks — list tasks with filters.
