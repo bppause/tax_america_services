@@ -81,6 +81,11 @@ export default function OwnerCustomers() {
     catch { /* ignore */ }
   }, [includeArchived]);
   const [allTypes, setAllTypes] = useState([]);
+  // Service catalog — needed for the "add a service" picker on each row.
+  // Admin-only endpoint; staff just won't get the add control (they can
+  // still see each customer's already-tagged services, which ride along
+  // on the customer rows themselves).
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
@@ -153,6 +158,21 @@ export default function OwnerCustomers() {
       .catch(() => setAllTypes([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community]);
+
+  useEffect(() => {
+    if (!employee || !community || !isAdmin) return;
+    taxApi.adminListProducts(auth, community.id)
+      .then(d => setProducts((d.products || []).filter(p => p.enabled !== false)))
+      .catch(() => setProducts([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community, isAdmin]);
+
+  // Lets a row patch its own `services` list in place after an
+  // add/remove, instead of reloading the whole (potentially long,
+  // scroll-grouped) list for a one-row change.
+  const patchCustomerServices = (customerId, nextServices) => {
+    setCustomers(prev => prev && prev.map(c => c.id === customerId ? { ...c, services: nextServices } : c));
+  };
 
   const groupedTypes = useMemo(() => groupByCategory(allTypes), [allTypes]);
 
@@ -717,7 +737,9 @@ export default function OwnerCustomers() {
               <div style={{ display: 'grid', gap: 14, opacity: loading ? 0.6 : 1 }}>
                 {grouping.mode === 'flat'
                   ? grouping.rows.map(c =>
-                      <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t} />)
+                      <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t}
+                                   auth={auth} isAdmin={isAdmin} products={products}
+                                   onServicesChanged={patchCustomerServices} />)
                   : grouping.sections.map(({ letter, rows }) => {
                       const collapsed = !expandedLetters.has(letter);
                       return (
@@ -745,7 +767,9 @@ export default function OwnerCustomers() {
                             </span>
                           </button>
                           {!collapsed && rows.map(c =>
-                            <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t} />
+                            <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t}
+                                         auth={auth} isAdmin={isAdmin} products={products}
+                                         onServicesChanged={patchCustomerServices} />
                           )}
                         </div>
                       );
@@ -759,7 +783,7 @@ export default function OwnerCustomers() {
 // One row of the customer list, used by both the flat (search-results)
 // path and the grouped-by-letter path. Kept identical to the prior
 // inline markup so existing visual + interaction patterns survive.
-function CustomerRow({ c, base, locale, t }) {
+function CustomerRow({ c, base, locale, t, auth, isAdmin, products, onServicesChanged }) {
   const isArchived = c.status === 'archived';
   return (
     <a href={`${base}/${encodeURIComponent(c.id)}`}
@@ -822,6 +846,8 @@ function CustomerRow({ c, base, locale, t }) {
               ))}
             </div>
           )}
+          <RowServiceChips c={c} locale={locale} t={t} auth={auth} isAdmin={isAdmin}
+                            products={products} onChanged={onServicesChanged} />
         </div>
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--tax-muted)', textAlign: 'right' }}>
           <div>{c.locale === 'en' ? 'EN' : 'ES'}</div>
@@ -831,6 +857,136 @@ function CustomerRow({ c, base, locale, t }) {
         </div>
       </div>
     </a>
+  );
+}
+
+// Tagged-services row inside each customer list row — mirrors the
+// customer detail header's HeaderServiceChips, but reads its initial
+// list off the customer object (already hydrated server-side in the
+// same list query, so no per-row fetch) and reports changes back up
+// to the parent's patchCustomerServices instead of holding its own
+// copy of the list. The whole row is a navigation <a>, so every
+// interactive control here stops the click from also following it.
+function RowServiceChips({ c, locale, t, auth, isAdmin, products, onChanged }) {
+  const [busyId, setBusyId] = useState(null);
+  const [err, setErr] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const addRef = useRef(null);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    const onDown = (e) => {
+      if (addRef.current && !addRef.current.contains(e.target)) setAddOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [addOpen]);
+
+  const services = Array.isArray(c.services) ? c.services : [];
+  const taggedIds = new Set(services.map(s => s.product_id));
+  const untagged = (products || []).filter(p => !taggedIds.has(p.id));
+
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
+
+  const onAdd = async (e, product) => {
+    stop(e);
+    setBusyId(product.id); setErr('');
+    try {
+      await taxApi.adminAddCustomerService(auth, c.id, { productId: product.id });
+      setAddOpen(false);
+      // Re-fetch this one customer's services rather than fabricating a
+      // local row — the add response doesn't include the new link's real
+      // id, and a made-up one would 404 if immediately removed again.
+      const d = await taxApi.adminListCustomerServices(auth, c.id);
+      onChanged?.(c.id, d.services || []);
+    } catch (ex) { setErr(ex?.message || ''); }
+    finally { setBusyId(null); }
+  };
+  const onRemove = async (e, link) => {
+    stop(e);
+    const name = pickI18n(link.product?.name_i18n, locale).value || link.product?.slug || '';
+    if (!window.confirm(t('owner.customer.services.removeConfirm', { name }))) return;
+    setBusyId(link.id); setErr('');
+    try {
+      await taxApi.adminRemoveCustomerService(auth, c.id, link.id);
+      onChanged?.(c.id, services.filter(s => s.id !== link.id));
+    } catch (ex) { setErr(ex?.message || ''); }
+    finally { setBusyId(null); }
+  };
+
+  if (!services.length && !isAdmin) return null;
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4, marginTop: 6 }}>
+      {services.map(link => {
+        const name = pickI18n(link.product?.name_i18n, locale).value || link.product?.slug || '';
+        const isBusy = busyId === link.id;
+        return (
+          <span key={link.id} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 3,
+            padding: '1px 1px 1px 8px', borderRadius: 999,
+            background: 'color-mix(in srgb, var(--tax-brand-primary) 14%, #fff)',
+            color: 'var(--tax-brand-primary)',
+            border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 28%, #fff)',
+            fontSize: 11, fontWeight: 600,
+            opacity: isBusy ? 0.5 : 1,
+          }}>
+            {name}
+            {isAdmin && (
+              <button type="button"
+                      onClick={(e) => onRemove(e, link)} disabled={isBusy}
+                      aria-label={t('owner.customer.services.remove')}
+                      style={{
+                        border: 0, background: 'transparent', color: 'var(--tax-brand-primary)',
+                        cursor: isBusy ? 'wait' : 'pointer', padding: '0 4px',
+                        fontSize: 13, lineHeight: 1, fontWeight: 700,
+                      }}>×</button>
+            )}
+          </span>
+        );
+      })}
+      {isAdmin && (
+        <div ref={addRef} style={{ position: 'relative' }} onClick={stop}>
+          <button type="button" onClick={(e) => { stop(e); setAddOpen(o => !o); }}
+                  style={{
+                    padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                    background: '#fff', color: 'var(--tax-text)',
+                    border: '1px dashed var(--tax-border)', cursor: 'pointer',
+                  }}>
+            + {t('owner.customer.services.addBtn')}
+          </button>
+          {addOpen && (
+            <div style={{
+              position: 'absolute', top: '120%', left: 0, zIndex: 200,
+              background: '#fff', border: '1px solid var(--tax-border)',
+              borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+              minWidth: 220, maxHeight: 260, overflowY: 'auto', padding: 6,
+            }}>
+              {untagged.length === 0 ? (
+                <div style={{ padding: 8, fontSize: 12, color: 'var(--tax-muted)' }}>
+                  {t('owner.customer.services.allTagged')}
+                </div>
+              ) : untagged.map(p => {
+                const name = pickI18n(p.name_i18n, locale).value || p.slug;
+                const isBusy = busyId === p.id;
+                return (
+                  <button key={p.id} type="button" onClick={(e) => onAdd(e, p)} disabled={isBusy}
+                          style={{
+                            display: 'block', width: '100%', textAlign: 'left',
+                            padding: '7px 10px', borderRadius: 6, border: 0,
+                            background: 'transparent', cursor: isBusy ? 'wait' : 'pointer',
+                            fontSize: 13, color: 'var(--tax-text)',
+                          }}>
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+      {err && <span style={{ color: 'var(--tax-error)', fontSize: 11 }}>{err}</span>}
+    </div>
   );
 }
 
