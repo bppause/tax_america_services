@@ -26,7 +26,7 @@ const {
   parsePersonName, normalizeNameParts, composePersonName,
   resolveNamePayload, firstNameOf, displayNameOf,
 } = require('./names');
-const { suggestionsForSlug } = require('./task-suggestions');
+const { suggestionsForSlug, allSuggestionsTagged } = require('./task-suggestions');
 const { TEMPLATES_BY_SLUG } = require('./auto-task-templates');
 const {
   PERMISSIONS: TAX_PERMISSIONS,
@@ -1341,8 +1341,8 @@ module.exports = function createTaxRouter(deps) {
         State: c.address?.state || '',
         'Postal code': c.address?.postal_code || '',
         Country: c.address?.country || '',
-        Services: (c.relationships || [])
-          .map(r => r.type?.name_i18n?.en || r.type?.name_i18n?.es || r.type?.slug || '')
+        Services: (c.services || [])
+          .map(s => s.product?.name_i18n?.en || s.product?.name_i18n?.es || s.product?.slug || '')
           .filter(Boolean).join(', '),
         Status: c.status || '',
         'Created at': c.created_at ? c.created_at.slice(0, 10) : '',
@@ -1462,6 +1462,24 @@ module.exports = function createTaxRouter(deps) {
       byCustomer.set(r.customer_id, arr);
     }
 
+    // Hydrate tagged services (tax_customer_services — the live direct
+    // customer<->product tagging that drives auto-task generation,
+    // same table the customer detail page's Services section and
+    // header chips manage) so the list can show and let an admin
+    // change them without opening each customer individually.
+    const { data: svcLinks } = await supabase.from('tax_customer_services')
+      .select(`
+        id, customer_id, product_id, active,
+        product:tax_products ( id, slug, name_i18n, enabled )
+      `)
+      .in('customer_id', ids).eq('active', true);
+    const servicesByCustomer = new Map();
+    for (const s of svcLinks || []) {
+      const arr = servicesByCustomer.get(s.customer_id) || [];
+      arr.push(s);
+      servicesByCustomer.set(s.customer_id, arr);
+    }
+
     // Phase 4n.44: per-customer task health. Counts open + overdue
     // tasks so the customer list can show a small chip at a glance.
     // Done in one extra query keyed by customer_id; the counts are
@@ -1492,6 +1510,7 @@ module.exports = function createTaxRouter(deps) {
     return (customers || []).map(c => ({
       ...c,
       relationships: byCustomer.get(c.id) || [],
+      services: servicesByCustomer.get(c.id) || [],
       health: healthByCustomer.get(c.id) || { open: 0, overdue: 0, in_progress: 0 },
     }));
   }
@@ -8005,7 +8024,10 @@ ${closingHtml}
   router.get('/admin/task-suggestions', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res))) return;
     const slug = trim(req.query.productSlug || '', 200);
-    res.json({ suggestions: suggestionsForSlug(slug) });
+    // allTagged lets the client autocomplete a task title before a
+    // service is even picked, and auto-fill the matching service once
+    // the typed title lands on one of these exactly.
+    res.json({ suggestions: suggestionsForSlug(slug), allTagged: allSuggestionsTagged() });
   });
 
   // GET /admin/tasks — list tasks with filters.
