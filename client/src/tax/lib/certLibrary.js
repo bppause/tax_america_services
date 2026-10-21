@@ -23,7 +23,7 @@ export const CERT_LIBRARY = [
   },
   {
     label: 'CPA – Certified Public Accountant',
-    slugs: ['individual-tax', 'business-tax', 'bookkeeping', 'sales-tax', 'workers-comp-audit'],
+    slugs: ['individual-tax', 'business-tax', 'bookkeeping', 'sales-tax-monthly', 'sales-tax-quarterly', 'sales-tax-annual', 'workers-comp-audit'],
     categories: ['tax_prep', 'recurring'],
     note: 'State-licensed accounting credential with audit and attest rights.',
   },
@@ -74,7 +74,7 @@ export const CERT_LIBRARY = [
   // ── Sales tax / compliance ───────────────────────────────────────────────
   {
     label: 'CMI – Certified Member of the Institute (IPT)',
-    slugs: ['sales-tax'],
+    slugs: ['sales-tax-monthly', 'sales-tax-quarterly', 'sales-tax-annual'],
     categories: ['recurring'],
     note: 'Institute for Professionals in Taxation — sales & use tax specialty.',
   },

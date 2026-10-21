@@ -3718,3 +3718,86 @@ where l.assigned_employee_id is null
     select 1 from public.tax_employees e
     where e.community_id = l.community_id and e.is_seed_owner = true
   );
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Split Sales Tax into 3 cadence-specific services; add two trucking-
+-- industry filings (IFTA, NY Highway Use Tax)
+--
+-- A business's sales-tax filing frequency is assigned by the state based
+-- on volume, not chosen freely — so one generic "Sales Tax Filing"
+-- service lumped monthly/quarterly/annual filers together under a
+-- single cadence. Splitting into 3 services means a customer is tagged
+-- with exactly the one that matches their actual filing frequency, and
+-- only that cadence's tasks get generated for them.
+--
+-- The old sales-tax product is disabled, not deleted — any existing
+-- tax_customer_services links, tax_tasks, or tax_subscriptions rows
+-- that still reference it keep working; it just drops out of the
+-- public catalog and the "add service" picker.
+--
+-- IFTA (International Fuel Tax Agreement) and NY HUT (Highway Use Tax,
+-- Form MT-903) are both trucking-industry filings, both quarterly, but
+-- on different quarter boundaries: IFTA follows calendar quarters (due
+-- the last day of the month after quarter end — Apr 30/Jul 31/Oct
+-- 31/Jan 31), NY HUT uses its own quarters (Dec-Feb/Mar-May/Jun-Aug/
+-- Sep-Nov, due Mar 31/Jun 30/Sep 30/Dec 31) — hence fixed_quarterly
+-- with explicit dates for HUT instead of the generic quarterly_following
+-- rule. These are the standard statutory due dates; verify against the
+-- specific customer's filing requirements before relying on the
+-- generated task dates for anything unusual (e.g., a trucking company
+-- that holds an annual HUT permit instead of standard quarterly).
+--
+-- Each new product gets a tax_service_auto_tasks row so it generates
+-- recurring staff tasks the same way every other recurring service
+-- does (generateTasksDirectFromProduct — no tax_relationship_types row
+-- needed, see routes.js generateTasksForService). No
+-- tax_filing_schedules rows are added — customer-facing reminder
+-- emails are a separate, opt-in, off-by-default mechanism
+-- (tax_customer_reminders_enabled) this community doesn't use; it
+-- manages recurring work through the task board instead.
+-- ═══════════════════════════════════════════════════════════════════════════════
+update public.tax_products
+  set enabled = false, updated_at = now()
+  where id = 'tax-america-services:sales-tax';
+
+insert into public.tax_products (id, community_id, slug, category, display_order, name_i18n, description_i18n, icon) values
+  ('tax-america-services:sales-tax-monthly', 'tax-america-services', 'sales-tax-monthly', 'recurring', 100,
+    '{"en":"Monthly Sales Tax Filing","es":"Declaración Mensual de Impuesto sobre Ventas"}'::jsonb,
+    '{"en":"State and local sales tax registration, collection, and monthly filing for high-volume sellers.","es":"Registro, recolección y declaración mensual de impuestos sobre ventas estatales y locales para vendedores de alto volumen."}'::jsonb,
+    'calculator'),
+  ('tax-america-services:sales-tax-quarterly', 'tax-america-services', 'sales-tax-quarterly', 'recurring', 101,
+    '{"en":"Quarterly Sales Tax Filing","es":"Declaración Trimestral de Impuesto sobre Ventas"}'::jsonb,
+    '{"en":"State and local sales tax registration, collection, and quarterly filing.","es":"Registro, recolección y declaración trimestral de impuestos sobre ventas estatales y locales."}'::jsonb,
+    'calculator'),
+  ('tax-america-services:sales-tax-annual', 'tax-america-services', 'sales-tax-annual', 'recurring', 102,
+    '{"en":"Annual Sales Tax Filing","es":"Declaración Anual de Impuesto sobre Ventas"}'::jsonb,
+    '{"en":"State and local sales tax registration, collection, and annual filing for low-volume sellers.","es":"Registro, recolección y declaración anual de impuestos sobre ventas estatales y locales para vendedores de bajo volumen."}'::jsonb,
+    'calculator'),
+  ('tax-america-services:ifta', 'tax-america-services', 'ifta', 'recurring', 140,
+    '{"en":"IFTA Fuel Tax Filing","es":"Declaración de Impuesto sobre Combustible IFTA"}'::jsonb,
+    '{"en":"Quarterly International Fuel Tax Agreement (IFTA) reporting for interstate trucking fleets — mileage and fuel-purchase reconciliation by jurisdiction.","es":"Declaración trimestral del Acuerdo Internacional de Impuesto sobre Combustible (IFTA) para flotas de transporte interestatal — conciliación de millaje y compras de combustible por jurisdicción."}'::jsonb,
+    'fuel'),
+  ('tax-america-services:hut', 'tax-america-services', 'hut', 'recurring', 141,
+    '{"en":"NY Highway Use Tax (HUT)","es":"Impuesto sobre Uso de Carreteras de NY (HUT)"}'::jsonb,
+    '{"en":"New York State Highway Use Tax (Form MT-903) filing for trucking companies operating heavy vehicles on NY highways.","es":"Declaración del Impuesto sobre Uso de Carreteras del Estado de Nueva York (Formulario MT-903) para empresas de transporte que operan vehículos pesados en las carreteras de NY."}'::jsonb,
+    'truck')
+on conflict (id) do nothing;
+
+insert into public.tax_service_auto_tasks
+  (id, community_id, product_id, title_i18n, description_i18n, cadence_kind, anchor_rule, default_priority, display_order, active) values
+  ('sat_sales_tax_monthly', 'tax-america-services', 'tax-america-services:sales-tax-monthly',
+    '{"en":"Monthly sales tax filing","es":"Declaración mensual de impuesto sobre ventas"}'::jsonb,
+    '{}'::jsonb, 'monthly', '{"type":"monthly_following","day":20}'::jsonb, 'normal', 10, true),
+  ('sat_sales_tax_quarterly', 'tax-america-services', 'tax-america-services:sales-tax-quarterly',
+    '{"en":"Quarterly sales tax filing","es":"Declaración trimestral de impuesto sobre ventas"}'::jsonb,
+    '{}'::jsonb, 'quarterly', '{"type":"quarterly_following","day":31}'::jsonb, 'normal', 10, true),
+  ('sat_sales_tax_annual', 'tax-america-services', 'tax-america-services:sales-tax-annual',
+    '{"en":"Annual sales tax filing","es":"Declaración anual de impuesto sobre ventas"}'::jsonb,
+    '{}'::jsonb, 'annual', '{"type":"annual","month":1,"day":31,"taxYearOffset":-1}'::jsonb, 'normal', 10, true),
+  ('sat_ifta', 'tax-america-services', 'tax-america-services:ifta',
+    '{"en":"IFTA quarterly fuel tax report","es":"Declaración trimestral de impuesto sobre combustible IFTA"}'::jsonb,
+    '{}'::jsonb, 'quarterly', '{"type":"quarterly_following","day":31}'::jsonb, 'normal', 10, true),
+  ('sat_hut', 'tax-america-services', 'tax-america-services:hut',
+    '{"en":"NY HUT quarterly filing","es":"Declaración trimestral de HUT de NY"}'::jsonb,
+    '{}'::jsonb, 'quarterly', '{"type":"fixed_quarterly","dates":["03-31","06-30","09-30","12-31"]}'::jsonb, 'normal', 10, true)
+on conflict (id) do nothing;

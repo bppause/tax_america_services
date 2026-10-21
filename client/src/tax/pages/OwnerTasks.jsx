@@ -1711,6 +1711,14 @@ function TaskFormModal({
                 <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
                   {t('owner.tasks.field.servicePracticeNotice')}
                 </p>
+              ) : !customerId ? (
+                // A service picked with no customer is a perfectly normal
+                // combination (practice-wide work on a specific service
+                // line, e.g. "Q3 sales tax filings") — called out explicitly
+                // so it doesn't read as a half-finished task.
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
+                  {t('owner.tasks.field.servicePracticeWithService')}
+                </p>
               ) : !isEdit && (
                 <p style={{ margin: '4px 0 0', fontSize: 11, color: 'var(--tax-muted)' }}>
                   {t('owner.tasks.field.serviceValueHint')}
