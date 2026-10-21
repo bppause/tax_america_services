@@ -365,6 +365,7 @@
   "owner.customer.services.availableHeading": "Available services",
   "owner.customer.services.allTagged": "Every active service is already tagged.",
   "owner.customer.services.remove": "Remove",
+  "owner.customer.services.addBtn": "Add service",
   "owner.customer.services.empty": "No services tagged yet. Click one of the chips below to start.",
   "owner.customer.services.addedNamed": "{{name}} tagged.",
   "owner.customer.services.addedWithTasks": "{{name}} tagged. {{count}} new tasks queued.",

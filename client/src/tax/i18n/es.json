@@ -365,6 +365,7 @@
   "owner.customer.services.availableHeading": "Servicios disponibles",
   "owner.customer.services.allTagged": "Todos los servicios activos ya están etiquetados.",
   "owner.customer.services.remove": "Quitar",
+  "owner.customer.services.addBtn": "Agregar servicio",
   "owner.customer.services.empty": "Aún no hay servicios etiquetados. Haz clic en una etiqueta de abajo para empezar.",
   "owner.customer.services.addedNamed": "{{name}} etiquetado.",
   "owner.customer.services.addedWithTasks": "{{name}} etiquetado. {{count}} tareas nuevas en cola.",
