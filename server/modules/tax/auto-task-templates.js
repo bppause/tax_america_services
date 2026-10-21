@@ -209,6 +209,10 @@ const TEMPLATES_BY_SLUG = {
     },
   ],
 
+  // Retired — kept so any customer still tagged with the disabled
+  // 'sales-tax' product keeps its suggestion picker working. New
+  // customers get tagged with one of the three cadence-specific
+  // services below instead.
   'sales-tax': [
     {
       key: 'monthly-sales-tax',
@@ -222,6 +226,61 @@ const TEMPLATES_BY_SLUG = {
       title:       { en: 'Quarterly sales tax return',                          es: 'Declaración trimestral de impuestos sobre ventas' },
       cadence_kind: 'quarterly',
       anchor_rule:  { type: 'quarterly_following', day: 20 },
+      default_priority: 'high',
+    },
+  ],
+
+  'sales-tax-monthly': [
+    {
+      key: 'monthly-sales-tax',
+      title:       { en: 'Monthly sales tax return',                            es: 'Declaración mensual de impuestos sobre ventas' },
+      cadence_kind: 'monthly',
+      anchor_rule:  { type: 'monthly_following', day: 20 },
+      default_priority: 'high',
+    },
+  ],
+
+  'sales-tax-quarterly': [
+    {
+      key: 'quarterly-sales-tax',
+      title:       { en: 'Quarterly sales tax return',                          es: 'Declaración trimestral de impuestos sobre ventas' },
+      cadence_kind: 'quarterly',
+      anchor_rule:  { type: 'quarterly_following', day: 31 },
+      default_priority: 'high',
+    },
+  ],
+
+  'sales-tax-annual': [
+    {
+      key: 'annual-sales-tax',
+      title:       { en: 'Annual sales tax return',                             es: 'Declaración anual de impuestos sobre ventas' },
+      cadence_kind: 'annual',
+      anchor_rule:  { type: 'annual', month: 1, day: 31 },
+      default_priority: 'high',
+    },
+  ],
+
+  // Both trucking-industry filings — quarterly, but on different
+  // quarter boundaries (see the schema.sql migration comment for why
+  // IFTA uses quarterly_following while HUT uses fixed_quarterly).
+  'ifta': [
+    {
+      key: 'ifta-quarterly',
+      title:       { en: 'File IFTA quarterly fuel tax report',                  es: 'Presentar declaración trimestral de impuesto sobre combustible IFTA' },
+      description: { en: 'Reconcile mileage and fuel purchases by jurisdiction, then file with the base state.',
+                     es: 'Conciliar millaje y compras de combustible por jurisdicción, luego presentar ante el estado base.' },
+      cadence_kind: 'quarterly',
+      anchor_rule:  { type: 'quarterly_following', day: 31 },
+      default_priority: 'high',
+    },
+  ],
+
+  'hut': [
+    {
+      key: 'hut-quarterly',
+      title:       { en: 'File NY Highway Use Tax (Form MT-903)',                es: 'Presentar Impuesto sobre Uso de Carreteras de NY (Formulario MT-903)' },
+      cadence_kind: 'quarterly',
+      anchor_rule:  { type: 'fixed_quarterly', dates: ['03-31', '06-30', '09-30', '12-31'] },
       default_priority: 'high',
     },
   ],

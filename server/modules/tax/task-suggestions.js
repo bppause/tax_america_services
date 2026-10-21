@@ -136,6 +136,8 @@ const SUGGESTIONS_BY_SLUG = {
     { en: 'Request penalty abatement',              es: 'Solicitar reducción de multas' },
     { en: 'Schedule audit-monitoring follow-up',    es: 'Agendar seguimiento de monitoreo de auditoría' },
   ],
+  // Retired slug — kept so any customer still tagged with the disabled
+  // 'sales-tax' product keeps its suggestion list.
   'sales-tax': [
     { en: 'Confirm filing jurisdictions',           es: 'Confirmar jurisdicciones de presentación' },
     { en: 'Collect monthly sales totals',           es: 'Recopilar totales de ventas mensuales' },
@@ -146,6 +148,50 @@ const SUGGESTIONS_BY_SLUG = {
     { en: 'File annual sales tax return',           es: 'Presentar declaración anual de impuesto sobre ventas' },
     { en: 'Make sales tax payment',                 es: 'Hacer pago de impuesto sobre ventas' },
     { en: 'Send sales-tax confirmation to client',  es: 'Enviar confirmación de impuesto sobre ventas al cliente' },
+  ],
+  'sales-tax-monthly': [
+    { en: 'Confirm filing jurisdictions',           es: 'Confirmar jurisdicciones de presentación' },
+    { en: 'Collect monthly sales totals',           es: 'Recopilar totales de ventas mensuales' },
+    { en: 'Reconcile POS / e-commerce reports',     es: 'Conciliar reportes de POS / e-commerce' },
+    { en: 'Calculate use-tax adjustments',          es: 'Calcular ajustes de impuesto de uso' },
+    { en: 'File monthly sales tax return',          es: 'Presentar declaración mensual de impuesto sobre ventas' },
+    { en: 'Make sales tax payment',                 es: 'Hacer pago de impuesto sobre ventas' },
+    { en: 'Send sales-tax confirmation to client',  es: 'Enviar confirmación de impuesto sobre ventas al cliente' },
+  ],
+  'sales-tax-quarterly': [
+    { en: 'Confirm filing jurisdictions',           es: 'Confirmar jurisdicciones de presentación' },
+    { en: 'Collect quarterly sales totals',         es: 'Recopilar totales de ventas del trimestre' },
+    { en: 'Reconcile POS / e-commerce reports',     es: 'Conciliar reportes de POS / e-commerce' },
+    { en: 'Calculate use-tax adjustments',          es: 'Calcular ajustes de impuesto de uso' },
+    { en: 'File quarterly sales tax return',        es: 'Presentar declaración trimestral de impuesto sobre ventas' },
+    { en: 'Make sales tax payment',                 es: 'Hacer pago de impuesto sobre ventas' },
+    { en: 'Send sales-tax confirmation to client',  es: 'Enviar confirmación de impuesto sobre ventas al cliente' },
+  ],
+  'sales-tax-annual': [
+    { en: 'Confirm filing jurisdictions',           es: 'Confirmar jurisdicciones de presentación' },
+    { en: 'Collect annual sales totals',            es: 'Recopilar totales de ventas del año' },
+    { en: 'Reconcile POS / e-commerce reports',     es: 'Conciliar reportes de POS / e-commerce' },
+    { en: 'Calculate use-tax adjustments',          es: 'Calcular ajustes de impuesto de uso' },
+    { en: 'File annual sales tax return',           es: 'Presentar declaración anual de impuesto sobre ventas' },
+    { en: 'Make sales tax payment',                 es: 'Hacer pago de impuesto sobre ventas' },
+    { en: 'Send sales-tax confirmation to client',  es: 'Enviar confirmación de impuesto sobre ventas al cliente' },
+  ],
+  'ifta': [
+    { en: 'Collect mileage logs by jurisdiction',   es: 'Recopilar registros de millaje por jurisdicción' },
+    { en: 'Collect fuel purchase receipts',         es: 'Recopilar recibos de compra de combustible' },
+    { en: 'Reconcile mileage vs. fuel purchased',   es: 'Conciliar millaje contra combustible comprado' },
+    { en: 'Calculate per-jurisdiction fuel tax',    es: 'Calcular impuesto sobre combustible por jurisdicción' },
+    { en: 'File IFTA quarterly return',             es: 'Presentar declaración trimestral de IFTA' },
+    { en: 'Make IFTA tax payment',                  es: 'Hacer pago de impuesto IFTA' },
+    { en: 'Send IFTA confirmation to client',       es: 'Enviar confirmación de IFTA al cliente' },
+  ],
+  'hut': [
+    { en: 'Confirm vehicles subject to NY HUT',     es: 'Confirmar vehículos sujetos al HUT de NY' },
+    { en: 'Collect NY mileage by vehicle',          es: 'Recopilar millaje en NY por vehículo' },
+    { en: 'Calculate HUT owed (Form MT-903)',       es: 'Calcular HUT adeudado (Formulario MT-903)' },
+    { en: 'File NY HUT quarterly return',           es: 'Presentar declaración trimestral de HUT de NY' },
+    { en: 'Make HUT tax payment',                   es: 'Hacer pago del impuesto HUT' },
+    { en: 'Send HUT confirmation to client',        es: 'Enviar confirmación de HUT al cliente' },
   ],
 };
 

@@ -8,6 +8,7 @@ import CertBadge from './CertBadge';
 const ICON_LETTER = {
   receipt: 'IR', briefcase: 'BT', 'id-card': 'ID', book: 'BK', wallet: 'PR',
   building: 'BF', stamp: 'NT', globe: 'TR', scales: 'IRS', calculator: 'ST',
+  fuel: 'FT', truck: 'HU',
 };
 
 // Home-page service catalog. Renders short summary cards in a grid;
