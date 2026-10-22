@@ -3300,6 +3300,10 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                 const custName = tt.customer
                   ? (tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email)
                   : '';
+                const serviceName = tt.product
+                  ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
+                  : '';
+                const metaLine = [custName, serviceName].filter(Boolean).join(' · ');
                 return (
                   <TaskHover key={tt.id} task={tt} statuses={statuses}
                              community={community} locale={locale} t={t}
@@ -3316,9 +3320,9 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                               borderLeft: `4px solid ${c.bar}`,
                             }}>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>{tt.title}</div>
-                      {custName && (
+                      {metaLine && (
                         <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
-                          {custName}
+                          {metaLine}
                         </div>
                       )}
                       {tt.due_date && (
