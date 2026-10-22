@@ -1538,10 +1538,22 @@ module.exports = function createTaxRouter(deps) {
     const businessName = customerType === 'business' ? trim(body.businessName, 200) : '';
     const phone = trim(body.phone, MAX_PHONE_LEN);
     const locale = (body.locale === 'en') ? 'en' : 'es';
-    // Phase: relationships (array of type ids) + sendWelcomeEmail (bool,
-    // default true). Both are optional but the Add form sends them.
-    const requestedRels = Array.isArray(body.relationshipTypeIds)
-      ? body.relationshipTypeIds.map(s => String(s)).filter(Boolean) : [];
+    // Services this customer uses — same direct tax_customer_services
+    // tagging the customer detail page and lead-convert use (Phase
+    // 4n.48), not the older tax_customer_relationships hop. Falls back
+    // to resolving relationshipTypeIds -> their linked product, same
+    // compat shim lead-convert uses, in case a stale client still sends
+    // that shape.
+    let requestedProductIds = Array.isArray(body.productIds)
+      ? body.productIds.map(s => String(s)).filter(Boolean) : [];
+    if (!requestedProductIds.length && Array.isArray(body.relationshipTypeIds)) {
+      const relIds = body.relationshipTypeIds.map(s => String(s)).filter(Boolean);
+      if (relIds.length) {
+        const { data: rt } = await supabase.from('tax_relationship_types')
+          .select('id, product_id').in('id', relIds);
+        requestedProductIds = (rt || []).map(r => r.product_id).filter(Boolean);
+      }
+    }
     const sendWelcome = body.sendWelcomeEmail === false ? false : true;
 
     if (!communitySlug || !email) return res.status(400).json({ error: 'communitySlug and email required.' });
@@ -1550,7 +1562,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(400).json({ error: 'business_name_required',
         message: 'Business name is required for a business customer.' });
     }
-    if (requestedRels.length === 0) {
+    if (requestedProductIds.length === 0) {
       return res.status(400).json({ error: 'service_required',
         message: 'Pick at least one service so the customer\'s tasks can be generated.' });
     }
@@ -1570,40 +1582,37 @@ module.exports = function createTaxRouter(deps) {
     });
     if (error) return sendSupabaseError(res, error);
 
-    // Insert relationship tags. Unknown ids are warned but don't fail
-    // the customer create (mirrors CSV-import semantics).
-    let createdRelTypeIds = [];
-    let unknownRels = [];
-    if (requestedRels.length) {
-      const { data: types } = await supabase.from('tax_relationship_types')
-        .select('id, community_id').eq('active', true);
-      const validTypeIds = new Set((types || [])
-        .filter(t => t.community_id == null || t.community_id === communitySlug)
-        .map(t => t.id));
-      const validRels = requestedRels.filter(id => validTypeIds.has(id));
-      unknownRels = requestedRels.filter(id => !validTypeIds.has(id));
-      if (validRels.length) {
-        const relRows = validRels.map(typeId => ({
-          id: 'crel_' + uuidv4().slice(0, 12),
-          customer_id: id,
-          relationship_type_id: typeId,
-          created_by_email: 'admin_add',
-          active: true,
-        }));
-        const { error: relErr } = await supabase.from('tax_customer_relationships').insert(relRows);
-        if (!relErr) createdRelTypeIds = validRels;
-      }
+    // Tag services. Unknown/other-community ids are dropped but don't
+    // fail the customer create.
+    const { data: prods } = await supabase.from('tax_products')
+      .select('id, community_id').eq('community_id', communitySlug)
+      .in('id', requestedProductIds);
+    const validProductIds = (prods || []).map(p => p.id);
+    const unknownRels = requestedProductIds.filter(pid => !validProductIds.includes(pid));
+    let servicesAdded = [];
+    if (validProductIds.length) {
+      const svcRows = validProductIds.map(productId => ({
+        id: 'ccs_' + uuidv4().slice(0, 16),
+        community_id: communitySlug,
+        customer_id: id,
+        product_id: productId,
+        created_by_email: 'admin_add',
+        active: true,
+      }));
+      const { error: svcErr } = await supabase.from('tax_customer_services')
+        .upsert(svcRows, { onConflict: 'customer_id,product_id' });
+      if (!svcErr) servicesAdded = validProductIds;
     }
 
-    // Auto-create internal tasks for each newly-added relationship. Best-
+    // Auto-create internal tasks for each newly-tagged service. Best-
     // effort: a failure to provision tasks shouldn't roll back the
-    // customer create. Relationships with no workflow rule short-circuit
-    // and contribute zero tasks.
+    // customer create. A service with no auto-task rule short-circuits
+    // and contributes zero tasks.
     let tasksCreated = 0;
-    for (const relTypeId of createdRelTypeIds) {
+    for (const productId of servicesAdded) {
       try {
-        const r = await generateTasksForRelationship({
-          customerId: id, relationshipTypeId: relTypeId,
+        const r = await generateTasksForService({
+          customerId: id, productId,
           actorEmail: email,
         });
         tasksCreated += r.created || 0;
@@ -1627,8 +1636,8 @@ module.exports = function createTaxRouter(deps) {
 
     res.json({
       ok: true, id,
-      relationshipsAdded: createdRelTypeIds,
-      unknownRelationships: unknownRels,
+      servicesAdded,
+      unknownServices: unknownRels,
       tasksCreated,
       welcomeEmail: welcomeResult,
     });
@@ -2851,19 +2860,25 @@ ${closingHtml}
     if (!cust) return { sent: false, error: 'Customer not found.' };
     if (cust.status !== 'active') return { sent: false, error: 'Customer is not active.' };
 
-    const [{ data: community }, { data: rels }] = await Promise.all([
+    const [{ data: community }, { data: svcLinks }] = await Promise.all([
       supabase.from('communities')
         .select('id, name, contact_email').eq('id', cust.community_id).maybeSingle(),
-      supabase.from('tax_customer_relationships')
+      // tax_customer_services, not the older tax_customer_relationships
+      // hop — same live service tagging the customer detail page and
+      // customer-create use. Reshaped to the { type: {...} } wrapper
+      // sendTaxWelcomeEmail already expects, so that sender needs no
+      // changes.
+      supabase.from('tax_customer_services')
         .select(`
-          relationship_type_id, active,
-          type:tax_relationship_types ( id, name_i18n, display_order )
+          product_id, active,
+          product:tax_products ( id, name_i18n, display_order )
         `).eq('customer_id', customerId).eq('active', true),
     ]);
 
     const portalUrl = await customerLandingOrPortalUrl(cust.community_id);
-    const relationships = (rels || []).slice().sort((a, b) =>
-      (a.type?.display_order || 0) - (b.type?.display_order || 0));
+    const relationships = (svcLinks || [])
+      .map(s => ({ type: s.product }))
+      .sort((a, b) => (a.type?.display_order || 0) - (b.type?.display_order || 0));
 
     let result = { sent: false, skipped: true, reason: 'no_sender' };
     if (typeof sendTaxWelcomeEmail === 'function') {

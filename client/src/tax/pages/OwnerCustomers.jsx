@@ -97,7 +97,7 @@ export default function OwnerCustomers() {
     businessName: '',
     firstName: '', middleName: '', lastName: '',
     email: '', phone: '', whatsapp: '', locale: 'es',
-    relationshipTypeIds: [],
+    productIds: [],
     sendWelcomeEmail: true,                       // default behavior per owner spec
   });
   const [busyAdd, setBusyAdd] = useState(false);
@@ -303,7 +303,7 @@ export default function OwnerCustomers() {
   const onAdd = async (e) => {
     e.preventDefault();
     if (!form.email.trim()) { setAddMsg({ kind: 'error', text: t('owner.customers.errEmailRequired') }); return; }
-    if (form.relationshipTypeIds.length === 0) {
+    if (form.productIds.length === 0) {
       setAddMsg({ kind: 'error', text: t('owner.customers.errServiceRequired') });
       return;
     }
@@ -327,7 +327,7 @@ export default function OwnerCustomers() {
         phone: form.phone.trim(),
         whatsapp: form.whatsapp.trim(),
         locale: form.locale,
-        relationshipTypeIds: form.relationshipTypeIds,
+        productIds: form.productIds,
         sendWelcomeEmail: form.sendWelcomeEmail,
       });
       // Successful create. The welcome-email send is best-effort on the
@@ -337,7 +337,7 @@ export default function OwnerCustomers() {
       setForm({ customerType: 'individual', businessName: '',
                 firstName: '', middleName: '', lastName: '',
                 email: '', phone: '', whatsapp: '', locale: 'es',
-                relationshipTypeIds: [], sendWelcomeEmail: true });
+                productIds: [], sendWelcomeEmail: true });
       window.location.href = `/tax/${community.id}/employee/customers/${encodeURIComponent(r.id)}`;
     } catch (err) {
       setAddMsg({ kind: 'error', text: err?.message || t('respond.error.generic') });
@@ -346,12 +346,12 @@ export default function OwnerCustomers() {
     }
   };
 
-  const toggleRelOnForm = (typeId) =>
+  const toggleServiceOnForm = (productId) =>
     setForm(prev => ({
       ...prev,
-      relationshipTypeIds: prev.relationshipTypeIds.includes(typeId)
-        ? prev.relationshipTypeIds.filter(id => id !== typeId)
-        : [...prev.relationshipTypeIds, typeId],
+      productIds: prev.productIds.includes(productId)
+        ? prev.productIds.filter(id => id !== productId)
+        : [...prev.productIds, productId],
     }));
 
   const base = community ? `/tax/${community.id}/employee/customers` : '#';
@@ -488,11 +488,14 @@ export default function OwnerCustomers() {
             </select>
           </div>
 
-          {/* Service relationships — chip picker over the 13 relationship
-              types. Selected chips drive both the customer's portal-side
-              FAQ/help filtering and (when the welcome email is enabled)
-              the bulleted service list in the welcome email body. */}
-          {allTypes.length > 0 && (
+          {/* Services this customer uses — chip picker over the live
+              service catalog (tax_products), the same one the customer
+              detail page's Services section, the task picker, and
+              everywhere else in the app use. Selected chips become
+              tax_customer_services tags, generate that service's usual
+              tasks, and (when the welcome email is enabled) list in the
+              welcome email body. */}
+          {products.length > 0 && (
             <div>
               <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <span>{t('owner.customers.fieldRelationships')} *</span>
@@ -500,51 +503,39 @@ export default function OwnerCustomers() {
                     the requirement before hitting Save. */}
                 <span style={{
                   padding: '1px 8px', borderRadius: 999,
-                  background: form.relationshipTypeIds.length === 0 ? '#fee2e2' : '#dcfce7',
-                  color: form.relationshipTypeIds.length === 0 ? '#991b1b' : '#166534',
+                  background: form.productIds.length === 0 ? '#fee2e2' : '#dcfce7',
+                  color: form.productIds.length === 0 ? '#991b1b' : '#166534',
                   fontSize: 11, fontWeight: 700,
                 }}>
-                  {form.relationshipTypeIds.length === 0
+                  {form.productIds.length === 0
                     ? t('owner.customers.fieldRelationships.empty')
-                    : t('owner.customers.fieldRelationships.count', { n: form.relationshipTypeIds.length })}
+                    : t('owner.customers.fieldRelationships.count', { n: form.productIds.length })}
                 </span>
               </label>
               <p style={{ fontSize: 12, color: 'var(--tax-muted)', margin: '0 0 8px' }}>
                 {t('owner.customers.fieldRelationshipsHint')}
               </p>
-              <div style={{ display: 'grid', gap: 10 }}>
-                {groupedTypes.map(({ category, types }) => (
-                  <div key={category}>
-                    <div style={{
-                      fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
-                      textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 4,
-                    }}>
-                      {t(`owner.customers.category.${category}`, { _: category })}
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {types.map(tp => {
-                        const active = form.relationshipTypeIds.includes(tp.id);
-                        return (
-                          <button key={tp.id} type="button" onClick={() => toggleRelOnForm(tp.id)}
-                                  style={{
-                                    padding: '4px 10px', borderRadius: 999,
-                                    background: active
-                                      ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
-                                      : '#fff',
-                                    color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
-                                    border: '1px solid',
-                                    borderColor: active
-                                      ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
-                                      : 'var(--tax-border)',
-                                    fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
-                                  }}>
-                            {pickI18n(tp.name_i18n, locale).value || tp.slug}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {products.map(p => {
+                  const active = form.productIds.includes(p.id);
+                  return (
+                    <button key={p.id} type="button" onClick={() => toggleServiceOnForm(p.id)}
+                            style={{
+                              padding: '4px 10px', borderRadius: 999,
+                              background: active
+                                ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                                : '#fff',
+                              color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                              border: '1px solid',
+                              borderColor: active
+                                ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                                : 'var(--tax-border)',
+                              fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                            }}>
+                      {pickI18n(p.name_i18n, locale).value || p.slug}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
