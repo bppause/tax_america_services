@@ -190,8 +190,8 @@ export const taxApi = {
   adminListCustomers(auth, communitySlug, opts = {}) {
     const qs = new URLSearchParams({ communitySlug });
     if (opts.q) qs.set('q', opts.q);
-    if (opts.relationshipTypeIds && opts.relationshipTypeIds.length) {
-      qs.set('relationshipTypeIds', opts.relationshipTypeIds.join(','));
+    if (opts.productIds && opts.productIds.length) {
+      qs.set('productIds', opts.productIds.join(','));
     }
     if (opts.customerType) qs.set('customerType', opts.customerType);
     if (opts.includeArchived) qs.set('includeArchived', 'true');
@@ -200,7 +200,7 @@ export const taxApi = {
   adminExportCustomersXlsx(auth, communitySlug, opts = {}) {
     const qs = new URLSearchParams({ communitySlug });
     if (opts.q) qs.set('q', opts.q);
-    if (opts.relationshipTypeIds) qs.set('relationshipTypeIds', opts.relationshipTypeIds);
+    if (opts.productIds) qs.set('productIds', opts.productIds);
     if (opts.customerType) qs.set('customerType', opts.customerType);
     if (opts.includeArchived) qs.set('includeArchived', opts.includeArchived);
     return downloadAdminFile(`/admin/customers/export.xlsx?${qs.toString()}`, auth, 'customers.xlsx');
@@ -210,8 +210,8 @@ export const taxApi = {
   listEmployeeCustomers(auth, opts = {}) {
     const qs = new URLSearchParams();
     if (opts.q) qs.set('q', opts.q);
-    if (opts.relationshipTypeIds && opts.relationshipTypeIds.length) {
-      qs.set('relationshipTypeIds', opts.relationshipTypeIds.join(','));
+    if (opts.productIds && opts.productIds.length) {
+      qs.set('productIds', opts.productIds.join(','));
     }
     if (opts.customerType) qs.set('customerType', opts.customerType);
     if (opts.includeArchived) qs.set('includeArchived', 'true');

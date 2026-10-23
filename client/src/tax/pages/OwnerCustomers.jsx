@@ -12,27 +12,6 @@ function normalizeWhatsappInput(raw) {
   return '+' + trimmed.replace(/^\+/, '').replace(/\D+/g, '');
 }
 
-// Category display order — surface business / individual first since most
-// customers are tagged with one of those. The relationship types themselves
-// already carry display_order, used as a tiebreak inside each category.
-const CATEGORY_ORDER = ['business', 'individual', 'general', 'audit'];
-
-function groupByCategory(types) {
-  const buckets = new Map();
-  for (const t of types) {
-    const c = t.category || 'other';
-    if (!buckets.has(c)) buckets.set(c, []);
-    buckets.get(c).push(t);
-  }
-  for (const arr of buckets.values()) {
-    arr.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
-  }
-  const known = CATEGORY_ORDER.filter(c => buckets.has(c));
-  const extras = Array.from(buckets.keys())
-    .filter(c => !CATEGORY_ORDER.includes(c)).sort();
-  return [...known, ...extras].map(c => ({ category: c, types: buckets.get(c) }));
-}
-
 // Customer browser. Surfaced inside the staff portal at
 // /tax/{slug}/employee/customers and visible to BOTH admin and staff
 // employees:
@@ -54,7 +33,7 @@ export default function OwnerCustomers() {
   const [customers, setCustomers] = useState(null);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');                 // debounced value
-  const [relationshipFilter, setRelationshipFilter] = useState([]); // array of type ids
+  const [serviceFilter, setServiceFilter] = useState([]); // array of product ids
   // 'all' | 'individual' | 'business'. Persists so the owner's last
   // browse mode is honored across sessions.
   const [customerTypeFilter, setCustomerTypeFilter] = useState(() => {
@@ -80,7 +59,6 @@ export default function OwnerCustomers() {
     try { localStorage.setItem('tax.customers.includeArchived', includeArchived ? '1' : '0'); }
     catch { /* ignore */ }
   }, [includeArchived]);
-  const [allTypes, setAllTypes] = useState([]);
   // Service catalog — needed for the "add a service" picker on each row.
   // Admin-only endpoint; staff just won't get the add control (they can
   // still see each customer's already-tagged services, which ride along
@@ -118,7 +96,7 @@ export default function OwnerCustomers() {
     setLoading(true); setErr('');
     const opts = {
       q: search,
-      relationshipTypeIds: relationshipFilter,
+      productIds: serviceFilter,
       customerType: customerTypeFilter !== 'all' ? customerTypeFilter : undefined,
       includeArchived,
     };
@@ -131,13 +109,13 @@ export default function OwnerCustomers() {
   };
 
   // Exports the same filtered view currently on screen — same q /
-  // relationshipTypeIds / customerType / includeArchived the list uses.
+  // productIds / customerType / includeArchived the list uses.
   const onExport = async () => {
     setBusyExport(true); setExportErr('');
     try {
       await taxApi.adminExportCustomersXlsx(auth, community.id, {
         q: search,
-        relationshipTypeIds: relationshipFilter.join(','),
+        productIds: serviceFilter.join(','),
         customerType: customerTypeFilter !== 'all' ? customerTypeFilter : undefined,
         includeArchived: includeArchived ? 'true' : undefined,
       });
@@ -145,19 +123,7 @@ export default function OwnerCustomers() {
       setExportErr(e?.message || t('error.loadFailed'));
     } finally { setBusyExport(false); }
   };
-  useEffect(load, [fbUser, community, search, relationshipFilter, customerTypeFilter, includeArchived, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Load relationship-type catalog once for the chip filter. Both admin
-  // and staff need it; the endpoint sits behind requireOwnerAdmin so staff
-  // would 403. Wrap in try/catch so a 403 doesn't blow up the page —
-  // staff just won't see the chip filter (search still works fine).
-  useEffect(() => {
-    if (!employee || !community) return;
-    taxApi.adminListRelationshipTypes(auth, { communitySlug: community.id })
-      .then(d => setAllTypes(d.types || []))
-      .catch(() => setAllTypes([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community]);
+  useEffect(load, [fbUser, community, search, serviceFilter, customerTypeFilter, includeArchived, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!employee || !community || !isAdmin) return;
@@ -173,8 +139,6 @@ export default function OwnerCustomers() {
   const patchCustomerServices = (customerId, nextServices) => {
     setCustomers(prev => prev && prev.map(c => c.id === customerId ? { ...c, services: nextServices } : c));
   };
-
-  const groupedTypes = useMemo(() => groupByCategory(allTypes), [allTypes]);
 
   // Collapsible "Filter by service" section. Default = collapsed if no
   // filter is active, expanded once a chip is picked. Persists across
@@ -194,12 +158,12 @@ export default function OwnerCustomers() {
   // Auto-open the section the first time a chip is selected, so the
   // user always sees the active filter.
   useEffect(() => {
-    if (relationshipFilter.length > 0) setServiceFilterOpen(true);
-  }, [relationshipFilter.length]);
+    if (serviceFilter.length > 0) setServiceFilterOpen(true);
+  }, [serviceFilter.length]);
 
-  const toggleRelationshipFilter = (typeId) =>
-    setRelationshipFilter(prev =>
-      prev.includes(typeId) ? prev.filter(id => id !== typeId) : [...prev, typeId]);
+  const toggleServiceFilter = (productId) =>
+    setServiceFilter(prev =>
+      prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId]);
 
   // Sort controls. Default = last name ascending (the common phone-book
   // ordering owners expect when scanning a customer roster). Owner can
@@ -627,7 +591,7 @@ export default function OwnerCustomers() {
         </div>
       </div>
 
-      {allTypes.length > 0 && (
+      {products.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <button type="button"
                   onClick={() => setServiceFilterOpen(o => !o)}
@@ -645,20 +609,20 @@ export default function OwnerCustomers() {
               fontSize: 10,
             }}>▶</span>
             <span>{t('owner.customers.filterRelationships')}</span>
-            {relationshipFilter.length > 0 && (
+            {serviceFilter.length > 0 && (
               <span style={{
                 padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
                 background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
                 color: 'var(--tax-brand-primary)',
                 border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)',
-              }}>{relationshipFilter.length}</span>
+              }}>{serviceFilter.length}</span>
             )}
-            {relationshipFilter.length > 0 && (
+            {serviceFilter.length > 0 && (
               <span role="button" tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); setRelationshipFilter([]); }}
+                    onClick={(e) => { e.stopPropagation(); setServiceFilter([]); }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
-                        e.stopPropagation(); e.preventDefault(); setRelationshipFilter([]);
+                        e.stopPropagation(); e.preventDefault(); setServiceFilter([]);
                       }
                     }}
                     style={{
@@ -671,40 +635,28 @@ export default function OwnerCustomers() {
             )}
           </button>
           {serviceFilterOpen && (
-          <div style={{ display: 'grid', gap: 10 }}>
-            {groupedTypes.map(({ category, types }) => (
-              <div key={category}>
-                <div style={{
-                  fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
-                  textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 4,
-                }}>
-                  {t(`owner.customers.category.${category}`, { _: category })}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {types.map(tp => {
-                    const active = relationshipFilter.includes(tp.id);
-                    return (
-                      <button key={tp.id} type="button"
-                              onClick={() => toggleRelationshipFilter(tp.id)}
-                              style={{
-                                padding: '4px 10px', borderRadius: 999,
-                                background: active
-                                  ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
-                                  : '#fff',
-                                color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
-                                border: '1px solid',
-                                borderColor: active
-                                  ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
-                                  : 'var(--tax-border)',
-                                fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
-                              }}>
-                        {pickI18n(tp.name_i18n, locale).value || tp.slug}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {products.map(p => {
+              const active = serviceFilter.includes(p.id);
+              return (
+                <button key={p.id} type="button"
+                        onClick={() => toggleServiceFilter(p.id)}
+                        style={{
+                          padding: '4px 10px', borderRadius: 999,
+                          background: active
+                            ? 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)'
+                            : '#fff',
+                          color: active ? 'var(--tax-brand-primary)' : 'var(--tax-text)',
+                          border: '1px solid',
+                          borderColor: active
+                            ? 'color-mix(in srgb, var(--tax-brand-primary) 35%, #fff)'
+                            : 'var(--tax-border)',
+                          fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                        }}>
+                  {pickI18n(p.name_i18n, locale).value || p.slug}
+                </button>
+              );
+            })}
           </div>
           )}
         </div>
@@ -713,7 +665,7 @@ export default function OwnerCustomers() {
       {customers === null || (loading && !customers) ? <p>{t('loading')}</p>
         : customers.length === 0
           ? <p style={{ color: 'var(--tax-muted)' }}>
-              {search || relationshipFilter.length > 0
+              {search || serviceFilter.length > 0
                 ? t('owner.customers.noMatch')
                 : t('owner.customers.empty')}
             </p>

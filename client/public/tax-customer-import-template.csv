@@ -1,4 +1,4 @@
-email,name,phone,whatsapp,locale,address_line1,address_line2,city,state,postal_code,country,preferred_communication_email,notes,relationships
+email,name,phone,whatsapp,locale,address_line1,address_line2,city,state,postal_code,country,preferred_communication_email,notes,services
 # ─────────────────────────────────────────────────────────────────────────────
 # Tax customer import template
 # ─────────────────────────────────────────────────────────────────────────────
@@ -31,26 +31,34 @@ email,name,phone,whatsapp,locale,address_line1,address_line2,city,state,postal_c
 #              notifications go here instead of the sign-in email.
 # notes        Internal notes — only the practice (you and your staff) see
 #              these, never the customer.
-# relationships
-#              Comma-separated list of service tags.  Use the ids exactly
-#              as shown.  Valid values for this practice:
+# services
+#              Comma-separated list of service slugs — the same services
+#              catalog used everywhere else in the app (task board, customer
+#              detail page, etc.). The list below reflects this practice's
+#              catalog as of this template's last update; for the current,
+#              authoritative list (services get added/renamed/retired over
+#              time) check Service catalog under Practice setup in the portal.
 #
-#                business.llc
-#                business.s_corp
-#                business.partnership_1065
-#                business.sales_tax_filing
-#                business.business_formation
-#                business.payroll
-#                business.bookkeeping
-#                individual.taxes
-#                individual.itin
-#                general.notary
-#                general.translation
-#                audit.irs
-#                audit.drs
+#                individual-tax
+#                business-tax
+#                itin
+#                bookkeeping
+#                payroll
+#                business-formation
+#                notary
+#                translation
+#                irs-representation
+#                property-tax
+#                annual-report
+#                workers-comp-audit
+#                sales-tax-monthly
+#                sales-tax-quarterly
+#                sales-tax-annual
+#                ifta
+#                hut
 #
 #              Wrap the list in double quotes if it contains commas, e.g.:
-#                "business.llc,business.bookkeeping,business.payroll"
+#                "bookkeeping,payroll,sales-tax-quarterly"
 #
 # ── Import behavior ──────────────────────────────────────────────────────────
 #
@@ -60,7 +68,7 @@ email,name,phone,whatsapp,locale,address_line1,address_line2,city,state,postal_c
 #                              like; only brand-new emails get created.
 #   Update existing            Existing emails get a field-level merge —
 #                              blank cells preserve the current value, non-
-#                              blank cells overwrite.  Relationships are
+#                              blank cells overwrite.  Services are
 #                              additively merged: tags from the CSV are
 #                              added to whatever the customer already has;
 #                              tags are never removed by an import.
@@ -69,4 +77,4 @@ email,name,phone,whatsapp,locale,address_line1,address_line2,city,state,postal_c
 # plus per-row drill-down for anything that needed attention.
 #
 # ── Sample row (delete before importing your real customers) ─────────────────
-sample.customer@example.com,Sample Customer,(415) 555-1234,+14155551234,en,123 Main St,Suite 4,San Francisco,CA,94103,US,billing@example.com,New client referred by Maria,"business.llc,business.bookkeeping"
+sample.customer@example.com,Sample Customer,(415) 555-1234,+14155551234,en,123 Main St,Suite 4,San Francisco,CA,94103,US,billing@example.com,New client referred by Maria,"bookkeeping,payroll"
