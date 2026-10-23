@@ -2863,7 +2863,7 @@ ${closingHtml}
 
     const [{ data: community }, { data: svcLinks }] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, contact_email').eq('id', cust.community_id).maybeSingle(),
+        .select('id, name, contact_email, tax_customer_portal_enabled').eq('id', cust.community_id).maybeSingle(),
       // tax_customer_services, not the older tax_customer_relationships
       // hop — same live service tagging the customer detail page and
       // customer-create use. Reshaped to the { type: {...} } wrapper
@@ -2875,6 +2875,14 @@ ${closingHtml}
           product:tax_products ( id, name_i18n, display_order )
         `).eq('customer_id', customerId).eq('active', true),
     ]);
+    // The whole email is an invite to sign into the portal — nothing to
+    // send if the community doesn't have one turned on. Server-side
+    // backstop regardless of what the client requested; both callers
+    // (create-time send and the manual "Resend welcome email" button)
+    // go through this one function.
+    if (!community?.tax_customer_portal_enabled) {
+      return { sent: false, skipped: true, reason: 'portal_disabled' };
+    }
 
     const portalUrl = await customerLandingOrPortalUrl(cust.community_id);
     const relationships = (svcLinks || [])
@@ -12177,7 +12185,7 @@ ${closingHtml}
     stampLastSignIn('tax_employees', emp.id, emp.last_sign_in_at);
     const [{ data: community }, assignments, { data: companion }] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale, contact_email, phone, tax_ui_mode, tax_task_priority_colors, tax_task_urgency_colors, tax_task_priority_definitions')
+        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale, contact_email, phone, tax_ui_mode, tax_task_priority_colors, tax_task_urgency_colors, tax_task_priority_definitions, tax_customer_portal_enabled')
         .eq('id', emp.community_id).maybeSingle(),
       // Only fetch assignments for staff; for admin the list would be ALL
       // customers which is a different display ("All customers in this

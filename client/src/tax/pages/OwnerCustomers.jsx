@@ -292,7 +292,7 @@ export default function OwnerCustomers() {
         whatsapp: form.whatsapp.trim(),
         locale: form.locale,
         productIds: form.productIds,
-        sendWelcomeEmail: form.sendWelcomeEmail,
+        sendWelcomeEmail: form.sendWelcomeEmail && !!community?.tax_customer_portal_enabled,
       });
       // Successful create. The welcome-email send is best-effort on the
       // server; we just trust the response for the redirect. The detail
@@ -506,21 +506,43 @@ export default function OwnerCustomers() {
 
           {/* Welcome-email checkbox. Default on per owner spec. The email
               body summarizes the selected relationships and is rendered
-              in the customer's locale (es/en above). */}
-          <label style={{
-            display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
-            padding: '10px 12px', background: 'var(--tax-bg-alt)', borderRadius: 8,
-          }}>
-            <input type="checkbox" checked={form.sendWelcomeEmail}
-                   onChange={e => setForm(p => ({ ...p, sendWelcomeEmail: e.target.checked }))}
-                   style={{ marginTop: 2 }} />
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{t('owner.customers.sendWelcome')}</div>
-              <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-                {t('owner.customers.sendWelcomeHint')}
+              in the customer's locale (es/en above). The email's whole
+              point is inviting the customer to sign into their portal —
+              meaningless (and a dead link) when the portal itself is
+              off, so this is disabled entirely rather than letting the
+              owner send an invite to nothing. */}
+          {community?.tax_customer_portal_enabled ? (
+            <label style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+              padding: '10px 12px', background: 'var(--tax-bg-alt)', borderRadius: 8,
+            }}>
+              <input type="checkbox" checked={form.sendWelcomeEmail}
+                     onChange={e => setForm(p => ({ ...p, sendWelcomeEmail: e.target.checked }))}
+                     style={{ marginTop: 2 }} />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{t('owner.customers.sendWelcome')}</div>
+                <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
+                  {t('owner.customers.sendWelcomeHint')}
+                </div>
+              </div>
+            </label>
+          ) : (
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              padding: '10px 12px', background: 'var(--tax-bg-alt)', borderRadius: 8,
+              opacity: 0.7,
+            }}>
+              <input type="checkbox" checked={false} disabled style={{ marginTop: 2 }} />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--tax-muted)' }}>
+                  {t('owner.customers.sendWelcome')}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
+                  {t('owner.customers.sendWelcome.portalDisabled')}
+                </div>
               </div>
             </div>
-          </label>
+          )}
 
           {addMsg.text && (
             <div className={`tax-msg tax-msg--${addMsg.kind === 'error' ? 'error' : 'success'}`}>{addMsg.text}</div>

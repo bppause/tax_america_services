@@ -958,6 +958,7 @@
   "owner.customers.fieldRelationshipsHint": "Toggle the services you provide this customer. The welcome email (if enabled below) will summarize the selected services in the customer's language.",
   "owner.customers.sendWelcome": "Send the customer a welcome email",
   "owner.customers.sendWelcomeHint": "Invites them to sign in to their portal for the first time. Sent in the language you picked above. You can re-send it later from the customer's detail page.",
+  "owner.customers.sendWelcome.portalDisabled": "The customer portal is turned off for this community (Settings → Customer portal), so there's nowhere for this invite to send them. Turn the portal on first if you want to use this.",
   "owner.customer.welcome.button": "Send welcome email",
   "owner.customer.promote.button": "Add as employee",
   "owner.customer.promote.rolePrompt": "Add as staff or admin? (type 'staff' or 'admin')",
