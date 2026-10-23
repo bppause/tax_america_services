@@ -3801,3 +3801,48 @@ insert into public.tax_service_auto_tasks
     '{"en":"NY HUT quarterly filing","es":"Declaración trimestral de HUT de NY"}'::jsonb,
     '{}'::jsonb, 'quarterly', '{"type":"fixed_quarterly","dates":["03-31","06-30","09-30","12-31"]}'::jsonb, 'normal', 10, true)
 on conflict (id) do nothing;
+
+-- New relationship types for the two trucking-industry services added
+-- above (IFTA, NY HUT) so the public FAQ page's category list stays
+-- consistent with the live service catalog (Phase 4n.68). They had a
+-- tax_products row and tax_service_auto_tasks row from day one, but no
+-- tax_relationship_types row — so they never appeared as a topic on
+-- /tax/{slug}/faqs, since FaqsSection only renders a type that has at
+-- least one FAQ.
+insert into public.tax_relationship_types (id, category, slug, name_i18n, description_i18n, display_order) values
+  ('business.ifta', 'business', 'ifta', '{"en":"IFTA","es":"IFTA"}'::jsonb,
+    '{"en":"Quarterly International Fuel Tax Agreement reporting for interstate trucking fleets.","es":"Declaración trimestral del Acuerdo Internacional de Impuesto sobre Combustible (IFTA) para flotas de transporte interestatal."}'::jsonb, 96),
+  ('business.hut', 'business', 'hut', '{"en":"NY Highway Use Tax (HUT)","es":"Impuesto sobre Uso de Carreteras de NY (HUT)"}'::jsonb,
+    '{"en":"New York State Highway Use Tax filing (Form MT-903) for trucking companies operating heavy vehicles on NY highways.","es":"Declaración del Impuesto sobre Uso de Carreteras del Estado de Nueva York (Formulario MT-903) para empresas de transporte que operan vehículos pesados en las carreteras de NY."}'::jsonb, 97)
+on conflict (id) do nothing;
+
+-- ── SEED: default FAQs for IFTA and NY HUT (Phase 4n.68) ────────────────────
+insert into public.tax_relationship_default_faqs (id, relationship_type_id, display_order, question_i18n, answer_i18n, source_note) values
+  -- IFTA
+  ('business.ifta.q1', 'business.ifta', 10,
+    '{"en":"What is IFTA and who needs to file it?","es":"¿Qué es IFTA y quién debe declararlo?"}'::jsonb,
+    '{"en":"The International Fuel Tax Agreement (IFTA) is a cooperative agreement among the lower 48 U.S. states and Canadian provinces that simplifies fuel tax reporting for interstate motor carriers. Any qualified motor vehicle used in interstate commerce — generally one with three or more axles, or two axles and a gross weight over 26,000 lbs — must be registered under IFTA in its base jurisdiction.","es":"El Acuerdo Internacional de Impuesto sobre Combustible (IFTA) es un convenio entre los 48 estados contiguos de EE. UU. y las provincias canadienses que simplifica la declaración del impuesto sobre combustible para transportistas interestatales. Todo vehículo motor calificado usado en comercio interestatal — generalmente uno con tres o más ejes, o dos ejes y un peso bruto mayor a 26,000 libras — debe registrarse bajo IFTA en su jurisdicción base."}'::jsonb,
+    'CT.gov — DRS: International Fuel Tax Agreement (IFTA)'),
+  ('business.ifta.q2', 'business.ifta', 20,
+    '{"en":"How often do I file and what records do I need?","es":"¿Con qué frecuencia debo declarar y qué registros necesito?"}'::jsonb,
+    '{"en":"IFTA returns are filed quarterly — due April 30, July 31, October 31, and January 31 — reporting total miles traveled and fuel purchased in each member jurisdiction. Carriers must keep detailed trip records (origin/destination, routes, odometer readings) and fuel receipts for at least four years to support the return.","es":"Las declaraciones de IFTA se presentan trimestralmente — con vencimiento el 30 de abril, 31 de julio, 31 de octubre y 31 de enero — reportando el total de millas recorridas y combustible comprado en cada jurisdicción miembro. Los transportistas deben conservar registros detallados de viaje (origen/destino, rutas, lecturas del odómetro) y recibos de combustible por al menos cuatro años."}'::jsonb,
+    'CT.gov — DRS: IFTA recordkeeping requirements'),
+  ('business.ifta.q3', 'business.ifta', 30,
+    '{"en":"How is the IFTA tax calculated?","es":"¿Cómo se calcula el impuesto de IFTA?"}'::jsonb,
+    '{"en":"Your base jurisdiction nets the fuel tax owed in every jurisdiction you traveled through against the tax you already paid at the pump, producing a single quarterly payment or refund instead of separate filings in each state.","es":"Su jurisdicción base compensa el impuesto sobre combustible adeudado en cada jurisdicción por la que circuló contra el impuesto ya pagado en el surtidor, generando un solo pago o reembolso trimestral en lugar de declaraciones separadas en cada estado."}'::jsonb,
+    'IFTA, Inc. — About IFTA'),
+
+  -- NY HUT
+  ('business.hut.q1', 'business.hut', 10,
+    '{"en":"What is NY Highway Use Tax and which vehicles are subject to it?","es":"¿Qué es el Impuesto sobre Uso de Carreteras de NY y qué vehículos están sujetos a él?"}'::jsonb,
+    '{"en":"New York''s Highway Use Tax (HUT) applies to motor carriers operating certain heavy, self-propelled vehicles — generally trucks, tractors, or combinations with a gross weight over 18,000 lbs — on New York public highways. Carriers must obtain a HUT certificate of registration and display a decal for each qualifying vehicle.","es":"El Impuesto sobre Uso de Carreteras (HUT) de Nueva York aplica a transportistas que operan ciertos vehículos autopropulsados pesados — generalmente camiones, tractores o combinaciones con un peso bruto mayor a 18,000 libras — en las carreteras públicas de Nueva York. Los transportistas deben obtener un certificado de registro de HUT y exhibir una calcomanía por cada vehículo calificado."}'::jsonb,
+    'tax.ny.gov — Highway Use Tax (HUT)'),
+  ('business.hut.q2', 'business.hut', 20,
+    '{"en":"How is HUT calculated and filed (Form MT-903)?","es":"¿Cómo se calcula y declara el HUT (Formulario MT-903)?"}'::jsonb,
+    '{"en":"HUT is reported on Form MT-903, using either the gross weight method or the unloaded (truck mileage tax) method — whichever applies to your fleet — based on miles traveled on New York highways during the period. We determine which method minimizes your liability and prepare the quarterly filing.","es":"El HUT se declara en el Formulario MT-903, usando el método de peso bruto o el de peso sin carga (impuesto por millaje) — el que aplique a su flota — con base en las millas recorridas en carreteras de Nueva York durante el periodo. Determinamos qué método minimiza su obligación y preparamos la declaración trimestral."}'::jsonb,
+    'tax.ny.gov — Form MT-903 instructions'),
+  ('business.hut.q3', 'business.hut', 30,
+    '{"en":"When are HUT returns due?","es":"¿Cuándo vencen las declaraciones de HUT?"}'::jsonb,
+    '{"en":"HUT returns are filed quarterly on New York''s own quarter boundaries — due March 31, June 30, September 30, and December 31. Even in a quarter with no New York mileage, a zero return is still required to keep your certificate active.","es":"Las declaraciones de HUT se presentan trimestralmente según los trimestres propios de Nueva York — con vencimiento el 31 de marzo, 30 de junio, 30 de septiembre y 31 de diciembre. Incluso en un trimestre sin millaje en Nueva York, se requiere una declaración en cero para mantener activo su certificado."}'::jsonb,
+    'tax.ny.gov — Highway Use Tax filing requirements')
+on conflict (id) do nothing;
