@@ -1300,7 +1300,7 @@ module.exports = function createTaxRouter(deps) {
       const customers = await searchCustomers({
         communitySlug,
         q: req.query.q,
-        relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
+        productIds: parseCsvList(req.query.productIds),
         customerType: req.query.customerType,
         includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
         scopedCustomerIds: null,            // admin sees the whole community
@@ -1312,9 +1312,9 @@ module.exports = function createTaxRouter(deps) {
   });
 
   // GET /admin/customers/export.xlsx — same filters as the list view
-  // (q, relationshipTypeIds, customerType, includeArchived) so "export
-  // what I'm looking at" works from the same filter state; omit them to
-  // export the whole community. Admin-only, same as Import.
+  // (q, productIds, customerType, includeArchived) so "export what I'm
+  // looking at" works from the same filter state; omit them to export
+  // the whole community. Admin-only, same as Import.
   router.get('/admin/customers/export.xlsx', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'view_customers'))) return;
     const communitySlug = trim(req.query.communitySlug || '', 200);
@@ -1324,7 +1324,7 @@ module.exports = function createTaxRouter(deps) {
       const customers = await searchCustomers({
         communitySlug,
         q: req.query.q,
-        relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
+        productIds: parseCsvList(req.query.productIds),
         customerType: req.query.customerType,
         includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
         scopedCustomerIds: null,
@@ -1363,8 +1363,9 @@ module.exports = function createTaxRouter(deps) {
   //                           name, email, phone, whatsapp, preferred email,
   //                           and address subfields (line1, city, state,
   //                           postal_code)
-  //   relationshipTypeIds   — optional array; when set, only customers
-  //                           tagged with ANY of these types are returned
+  //   productIds             — optional array; when set, only customers
+  //                           tagged (tax_customer_services) with ANY of
+  //                           these products are returned
   //   scopedCustomerIds     — null (no scope filter) or array (intersect
   //                           with this set; empty array → return [])
   //
@@ -1374,10 +1375,10 @@ module.exports = function createTaxRouter(deps) {
   //   • Search-term sanitization: PostgREST's or() filter splits on commas
   //     and dots, so we strip those plus % and _ to avoid breaking the
   //     filter and producing accidental wildcards.
-  //   • Relationships are fetched as a second query keyed by customer_id
-  //     to keep the select string simple and to avoid embedded-resource
-  //     pagination quirks.
-  async function searchCustomers({ communitySlug, q, relationshipTypeIds, customerType, includeArchived, scopedCustomerIds }) {
+  //   • Relationships/services are fetched as a second query keyed by
+  //     customer_id to keep the select string simple and to avoid
+  //     embedded-resource pagination quirks.
+  async function searchCustomers({ communitySlug, q, productIds, customerType, includeArchived, scopedCustomerIds }) {
     let query = supabase.from('tax_customers')
       .select(`
         id, email, name, business_name, customer_type, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email,
@@ -1406,13 +1407,13 @@ module.exports = function createTaxRouter(deps) {
       query = query.eq('customer_type', ctNorm);
     }
 
-    if (Array.isArray(relationshipTypeIds) && relationshipTypeIds.length) {
-      const { data: relRows, error: relErr } = await supabase.from('tax_customer_relationships')
+    if (Array.isArray(productIds) && productIds.length) {
+      const { data: svcRows, error: svcErr } = await supabase.from('tax_customer_services')
         .select('customer_id')
         .eq('active', true)
-        .in('relationship_type_id', relationshipTypeIds);
-      if (relErr) throw new Error(relErr.message);
-      const matchedIds = [...new Set((relRows || []).map(r => r.customer_id))];
+        .in('product_id', productIds);
+      if (svcErr) throw new Error(svcErr.message);
+      const matchedIds = [...new Set((svcRows || []).map(r => r.customer_id))];
       if (!matchedIds.length) return [];
       query = query.in('id', matchedIds);
     }
@@ -1538,10 +1539,22 @@ module.exports = function createTaxRouter(deps) {
     const businessName = customerType === 'business' ? trim(body.businessName, 200) : '';
     const phone = trim(body.phone, MAX_PHONE_LEN);
     const locale = (body.locale === 'en') ? 'en' : 'es';
-    // Phase: relationships (array of type ids) + sendWelcomeEmail (bool,
-    // default true). Both are optional but the Add form sends them.
-    const requestedRels = Array.isArray(body.relationshipTypeIds)
-      ? body.relationshipTypeIds.map(s => String(s)).filter(Boolean) : [];
+    // Services this customer uses — same direct tax_customer_services
+    // tagging the customer detail page and lead-convert use (Phase
+    // 4n.48), not the older tax_customer_relationships hop. Falls back
+    // to resolving relationshipTypeIds -> their linked product, same
+    // compat shim lead-convert uses, in case a stale client still sends
+    // that shape.
+    let requestedProductIds = Array.isArray(body.productIds)
+      ? body.productIds.map(s => String(s)).filter(Boolean) : [];
+    if (!requestedProductIds.length && Array.isArray(body.relationshipTypeIds)) {
+      const relIds = body.relationshipTypeIds.map(s => String(s)).filter(Boolean);
+      if (relIds.length) {
+        const { data: rt } = await supabase.from('tax_relationship_types')
+          .select('id, product_id').in('id', relIds);
+        requestedProductIds = (rt || []).map(r => r.product_id).filter(Boolean);
+      }
+    }
     const sendWelcome = body.sendWelcomeEmail === false ? false : true;
 
     if (!communitySlug || !email) return res.status(400).json({ error: 'communitySlug and email required.' });
@@ -1550,7 +1563,7 @@ module.exports = function createTaxRouter(deps) {
       return res.status(400).json({ error: 'business_name_required',
         message: 'Business name is required for a business customer.' });
     }
-    if (requestedRels.length === 0) {
+    if (requestedProductIds.length === 0) {
       return res.status(400).json({ error: 'service_required',
         message: 'Pick at least one service so the customer\'s tasks can be generated.' });
     }
@@ -1570,40 +1583,37 @@ module.exports = function createTaxRouter(deps) {
     });
     if (error) return sendSupabaseError(res, error);
 
-    // Insert relationship tags. Unknown ids are warned but don't fail
-    // the customer create (mirrors CSV-import semantics).
-    let createdRelTypeIds = [];
-    let unknownRels = [];
-    if (requestedRels.length) {
-      const { data: types } = await supabase.from('tax_relationship_types')
-        .select('id, community_id').eq('active', true);
-      const validTypeIds = new Set((types || [])
-        .filter(t => t.community_id == null || t.community_id === communitySlug)
-        .map(t => t.id));
-      const validRels = requestedRels.filter(id => validTypeIds.has(id));
-      unknownRels = requestedRels.filter(id => !validTypeIds.has(id));
-      if (validRels.length) {
-        const relRows = validRels.map(typeId => ({
-          id: 'crel_' + uuidv4().slice(0, 12),
-          customer_id: id,
-          relationship_type_id: typeId,
-          created_by_email: 'admin_add',
-          active: true,
-        }));
-        const { error: relErr } = await supabase.from('tax_customer_relationships').insert(relRows);
-        if (!relErr) createdRelTypeIds = validRels;
-      }
+    // Tag services. Unknown/other-community ids are dropped but don't
+    // fail the customer create.
+    const { data: prods } = await supabase.from('tax_products')
+      .select('id, community_id').eq('community_id', communitySlug)
+      .in('id', requestedProductIds);
+    const validProductIds = (prods || []).map(p => p.id);
+    const unknownRels = requestedProductIds.filter(pid => !validProductIds.includes(pid));
+    let servicesAdded = [];
+    if (validProductIds.length) {
+      const svcRows = validProductIds.map(productId => ({
+        id: 'ccs_' + uuidv4().slice(0, 16),
+        community_id: communitySlug,
+        customer_id: id,
+        product_id: productId,
+        created_by_email: 'admin_add',
+        active: true,
+      }));
+      const { error: svcErr } = await supabase.from('tax_customer_services')
+        .upsert(svcRows, { onConflict: 'customer_id,product_id' });
+      if (!svcErr) servicesAdded = validProductIds;
     }
 
-    // Auto-create internal tasks for each newly-added relationship. Best-
+    // Auto-create internal tasks for each newly-tagged service. Best-
     // effort: a failure to provision tasks shouldn't roll back the
-    // customer create. Relationships with no workflow rule short-circuit
-    // and contribute zero tasks.
+    // customer create. A service with no auto-task rule short-circuits
+    // and contributes zero tasks.
     let tasksCreated = 0;
-    for (const relTypeId of createdRelTypeIds) {
+    for (const productId of servicesAdded) {
       try {
-        const r = await generateTasksForRelationship({
-          customerId: id, relationshipTypeId: relTypeId,
+        const r = await generateTasksForService({
+          customerId: id, productId,
           actorEmail: email,
         });
         tasksCreated += r.created || 0;
@@ -1627,8 +1637,8 @@ module.exports = function createTaxRouter(deps) {
 
     res.json({
       ok: true, id,
-      relationshipsAdded: createdRelTypeIds,
-      unknownRelationships: unknownRels,
+      servicesAdded,
+      unknownServices: unknownRels,
       tasksCreated,
       welcomeEmail: welcomeResult,
     });
@@ -2851,19 +2861,25 @@ ${closingHtml}
     if (!cust) return { sent: false, error: 'Customer not found.' };
     if (cust.status !== 'active') return { sent: false, error: 'Customer is not active.' };
 
-    const [{ data: community }, { data: rels }] = await Promise.all([
+    const [{ data: community }, { data: svcLinks }] = await Promise.all([
       supabase.from('communities')
         .select('id, name, contact_email').eq('id', cust.community_id).maybeSingle(),
-      supabase.from('tax_customer_relationships')
+      // tax_customer_services, not the older tax_customer_relationships
+      // hop — same live service tagging the customer detail page and
+      // customer-create use. Reshaped to the { type: {...} } wrapper
+      // sendTaxWelcomeEmail already expects, so that sender needs no
+      // changes.
+      supabase.from('tax_customer_services')
         .select(`
-          relationship_type_id, active,
-          type:tax_relationship_types ( id, name_i18n, display_order )
+          product_id, active,
+          product:tax_products ( id, name_i18n, display_order )
         `).eq('customer_id', customerId).eq('active', true),
     ]);
 
     const portalUrl = await customerLandingOrPortalUrl(cust.community_id);
-    const relationships = (rels || []).slice().sort((a, b) =>
-      (a.type?.display_order || 0) - (b.type?.display_order || 0));
+    const relationships = (svcLinks || [])
+      .map(s => ({ type: s.product }))
+      .sort((a, b) => (a.type?.display_order || 0) - (b.type?.display_order || 0));
 
     let result = { sent: false, skipped: true, reason: 'no_sender' };
     if (typeof sendTaxWelcomeEmail === 'function') {
@@ -2902,8 +2918,15 @@ ${closingHtml}
   //   address_line1 / address_line2 / city / state / postal_code / country
   //   preferred_communication_email
   //   notes
-  //   relationships                      comma-separated tax_relationship_types
-  //                                      ids (e.g. business.llc,individual.taxes)
+  //   services                           comma-separated tax_products slugs
+  //                                      (e.g. individual-tax,bookkeeping) —
+  //                                      tags via tax_customer_services, same
+  //                                      live catalog every other service
+  //                                      picker in the app uses
+  //   relationships                      legacy fallback, only read when
+  //                                      `services` is absent — comma-
+  //                                      separated tax_relationship_types ids,
+  //                                      resolved to their linked product
   //
   // Behavior: insert-only. Existing email in this community → skip with an
   // entry in the errors array (so the importer can see which rows were
@@ -3080,13 +3103,44 @@ ${closingHtml}
       return res.status(400).json({ error: 'csv must include an "email" column.' });
     }
 
-    // Look up valid relationship-type IDs once. Unknown IDs in a row are
-    // logged as warnings but don't fail the row.
-    const { data: types } = await supabase.from('tax_relationship_types')
-      .select('id, community_id').eq('active', true);
-    const validTypeIds = new Set((types || [])
-      .filter(t => t.community_id == null || t.community_id === communitySlug)
-      .map(t => t.id));
+    // Look up valid service slugs once (tax_products — the live catalog
+    // every other service picker in the app uses). Unknown slugs in a
+    // row are logged as warnings but don't fail the row.
+    const { data: catalogProducts } = await supabase.from('tax_products')
+      .select('id, slug').eq('community_id', communitySlug).eq('enabled', true);
+    const slugToProductId = new Map((catalogProducts || []).map(p => [p.slug.toLowerCase(), p.id]));
+
+    // `services` column is the live catalog; `relationships` is a legacy
+    // fallback (only consulted when a row has no `services` value) that
+    // resolves each relationship-type id to its linked product.
+    const hasServicesCol = headers.includes('services');
+    let relIdToProductId = new Map();
+    if (headers.includes('relationships')) {
+      const { data: types } = await supabase.from('tax_relationship_types')
+        .select('id, community_id, product_id').eq('active', true);
+      relIdToProductId = new Map((types || [])
+        .filter(t => (t.community_id == null || t.community_id === communitySlug) && t.product_id)
+        .map(t => [t.id, t.product_id]));
+    }
+    // Resolves one row's services/relationships cell to [productIds, unknownTokens].
+    function resolveRowServices(r) {
+      const productIds = [];
+      const unknown = [];
+      const servicesTokens = (r.services || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (servicesTokens.length || hasServicesCol) {
+        for (const slug of servicesTokens) {
+          const pid = slugToProductId.get(slug.toLowerCase());
+          if (pid) productIds.push(pid); else unknown.push(slug);
+        }
+      } else {
+        const relTokens = (r.relationships || '').split(',').map(s => s.trim()).filter(Boolean);
+        for (const relId of relTokens) {
+          const pid = relIdToProductId.get(relId);
+          if (pid) productIds.push(pid); else unknown.push(relId);
+        }
+      }
+      return { productIds: [...new Set(productIds)], unknown };
+    }
 
     // Pre-fetch existing customers in this community so we can detect
     // duplicates and (in update mode) merge their fields. Index by lower-
@@ -3099,17 +3153,17 @@ ${closingHtml}
       byEmail.set(String(c.email || '').toLowerCase(), c);
     }
 
-    // Pre-fetch existing relationship tags so we can additively merge.
-    let existingRels = new Map();
+    // Pre-fetch existing service tags so we can additively merge.
+    let existingServices = new Map();
     if (mode === 'update' && existing && existing.length) {
-      const { data: relRows } = await supabase.from('tax_customer_relationships')
-        .select('customer_id, relationship_type_id')
+      const { data: svcRows } = await supabase.from('tax_customer_services')
+        .select('customer_id, product_id')
         .in('customer_id', existing.map(c => c.id))
         .eq('active', true);
-      for (const r of relRows || []) {
-        const set = existingRels.get(r.customer_id) || new Set();
-        set.add(r.relationship_type_id);
-        existingRels.set(r.customer_id, set);
+      for (const s of svcRows || []) {
+        const set = existingServices.get(s.customer_id) || new Set();
+        set.add(s.product_id);
+        existingServices.set(s.customer_id, set);
       }
     }
 
@@ -3147,14 +3201,9 @@ ${closingHtml}
         continue;
       }
 
-      // Parse relationships (comma-separated). Unknown IDs warn.
-      const requestedRels = (r.relationships || '').split(',').map(s => s.trim()).filter(Boolean);
-      const validRels = [];
-      const unknownRels = [];
-      for (const id of requestedRels) {
-        if (validTypeIds.has(id)) validRels.push(id);
-        else unknownRels.push(id);
-      }
+      // Parse services (comma-separated slugs, or legacy relationship
+      // ids — see resolveRowServices above). Unknown tokens warn.
+      const { productIds: validRels, unknown: unknownRels } = resolveRowServices(r);
 
       const existingCust = byEmail.get(email);
 
@@ -3200,11 +3249,11 @@ ${closingHtml}
         }
 
         const hasFieldChanges = Object.keys(update).length > 1;
-        // Additive relationship merge — add any new ones; never remove.
-        const currentRels = existingRels.get(existingCust.id) || new Set();
-        const newRels = validRels.filter(id => !currentRels.has(id));
+        // Additive service merge — add any new ones; never remove.
+        const currentServices = existingServices.get(existingCust.id) || new Set();
+        const newServices = validRels.filter(id => !currentServices.has(id));
 
-        if (!hasFieldChanges && !newRels.length && !unknownRels.length) {
+        if (!hasFieldChanges && !newServices.length && !unknownRels.length) {
           // Nothing actually new to apply.
           skipped.push({ row: rowNum, email, message: 'No changes from existing row — skipped' });
           continue;
@@ -3219,28 +3268,34 @@ ${closingHtml}
           }
         }
 
-        if (newRels.length) {
-          const relRows = newRels.map(typeId => ({
-            id: 'crel_' + uuidv4().slice(0, 12),
+        if (newServices.length) {
+          const svcRows = newServices.map(productId => ({
+            id: 'ccs_' + uuidv4().slice(0, 16),
+            community_id: communitySlug,
             customer_id: existingCust.id,
-            relationship_type_id: typeId,
+            product_id: productId,
             created_by_email: 'import',
             active: true,
           }));
-          const { error: relErr } = await supabase.from('tax_customer_relationships').insert(relRows);
-          if (relErr) {
+          const { error: svcErr } = await supabase.from('tax_customer_services')
+            .upsert(svcRows, { onConflict: 'customer_id,product_id' });
+          if (svcErr) {
             errors.push({ row: rowNum, email,
-              message: `Updated, relationships failed: ${relErr.message}`,
+              message: `Updated, services failed: ${svcErr.message}`,
               warning: true });
           } else {
-            for (const id of newRels) currentRels.add(id);
-            existingRels.set(existingCust.id, currentRels);
+            for (const id of newServices) currentServices.add(id);
+            existingServices.set(existingCust.id, currentServices);
+            for (const productId of newServices) {
+              try { await generateTasksForService({ customerId: existingCust.id, productId, actorEmail: 'import' }); }
+              catch (e) { warn('[tax-customer-import] task gen failed', e?.message || e); }
+            }
           }
         }
 
         if (unknownRels.length) {
           errors.push({ row: rowNum, email,
-            message: `Updated; unknown relationship IDs skipped: ${unknownRels.join(', ')}`,
+            message: `Updated; unknown service(s) skipped: ${unknownRels.join(', ')}`,
             warning: true });
         }
 
@@ -3290,23 +3345,30 @@ ${closingHtml}
       }
 
       if (validRels.length) {
-        const relRows = validRels.map(typeId => ({
-          id: 'crel_' + uuidv4().slice(0, 12),
+        const svcRows = validRels.map(productId => ({
+          id: 'ccs_' + uuidv4().slice(0, 16),
+          community_id: communitySlug,
           customer_id: customerId,
-          relationship_type_id: typeId,
+          product_id: productId,
           created_by_email: 'import',
           active: true,
         }));
-        const { error: relErr } = await supabase.from('tax_customer_relationships').insert(relRows);
-        if (relErr) {
+        const { error: svcErr } = await supabase.from('tax_customer_services')
+          .upsert(svcRows, { onConflict: 'customer_id,product_id' });
+        if (svcErr) {
           errors.push({ row: rowNum, email,
-            message: `Customer created, relationships failed: ${relErr.message}`,
+            message: `Customer created, services failed: ${svcErr.message}`,
             warning: true });
+        } else {
+          for (const productId of validRels) {
+            try { await generateTasksForService({ customerId, productId, actorEmail: 'import' }); }
+            catch (e) { warn('[tax-customer-import] task gen failed', e?.message || e); }
+          }
         }
       }
       if (unknownRels.length) {
         errors.push({ row: rowNum, email,
-          message: `Customer created, unknown relationship IDs skipped: ${unknownRels.join(', ')}`,
+          message: `Customer created, unknown service(s) skipped: ${unknownRels.join(', ')}`,
           warning: true });
       }
 
@@ -3314,7 +3376,7 @@ ${closingHtml}
       // doesn't insert twice. Treat the second occurrence as either
       // skip or update depending on mode.
       byEmail.set(email, { ...customerRow });
-      existingRels.set(customerId, new Set(validRels));
+      existingServices.set(customerId, new Set(validRels));
       created.push({ id: customerId, email });
     }
 
@@ -12291,7 +12353,7 @@ ${closingHtml}
       const customers = await searchCustomers({
         communitySlug: emp.community_id,
         q: req.query.q,
-        relationshipTypeIds: parseCsvList(req.query.relationshipTypeIds),
+        productIds: parseCsvList(req.query.productIds),
         customerType: req.query.customerType,
         includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
         scopedCustomerIds: visible,         // null for admin, array for staff
