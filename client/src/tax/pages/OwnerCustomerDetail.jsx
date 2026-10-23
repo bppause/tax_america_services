@@ -295,7 +295,8 @@ function CustomerHeaderCard({ c, auth, community, load, t, servicesVersion, onSe
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
         <ImpersonateCustomerButton customer={c} auth={auth} community={community} t={t} />
-        <SendWelcomeButton customer={c} auth={auth} t={t} />
+        <SendWelcomeButton customer={c} auth={auth} t={t}
+                           portalEnabled={!!community?.tax_customer_portal_enabled} />
 
         {/* ⋯ more menu */}
         <div ref={moreRef} style={{ position: 'relative' }}>
@@ -2000,7 +2001,7 @@ function ImpersonateCustomerButton({ customer, auth, community, t }) {
 // Uses the customer's current locale + current relationships (so adding
 // more services after the initial send + clicking this again will surface
 // the new services in the email body).
-function SendWelcomeButton({ customer: c, auth, t }) {
+function SendWelcomeButton({ customer: c, auth, t, portalEnabled }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
@@ -2031,7 +2032,8 @@ function SendWelcomeButton({ customer: c, auth, t }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
       <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
-              onClick={onClick} disabled={busy}
+              onClick={onClick} disabled={busy || !portalEnabled}
+              title={portalEnabled ? undefined : t('owner.customers.sendWelcome.portalDisabled')}
               style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
         {busy ? t('owner.customer.welcome.sending') : t('owner.customer.welcome.button')}
       </button>
