@@ -7384,17 +7384,25 @@ ${closingHtml}
     }
 
     // Engagement: latest sent reminder email per period + open/click stamps.
+    // sendTaxReminderEmail logs each send with relatedEntity:'tax.period',
+    // relatedId:<periodId> (see logTaxEmailDelivery) — there is no
+    // dedicated period_id/email_type/sent_at column on this table (never
+    // was), so this previously selected columns that don't exist and
+    // silently came back empty on every request: every period showed as
+    // never-sent (no engagement line, "Send now" instead of "Resend")
+    // regardless of whether a reminder had actually gone out.
     const periodIds = filtered.map(r => r.id);
     let logsByPeriod = new Map();
     if (periodIds.length) {
       const { data: logs } = await supabase.from('email_delivery_logs')
-        .select('id, period_id, email_type, status, sent_at, delivered_at, opened_at, clicked_at, bounced_at, complained_at, open_count, click_count, created_at')
-        .in('period_id', periodIds)
+        .select('id, related_id, status, created_at, delivered_at, opened_at, clicked_at, bounced_at, complained_at, open_count, click_count')
+        .eq('related_entity', 'tax.period')
+        .in('related_id', periodIds)
         .order('created_at', { ascending: false });
       for (const l of logs || []) {
-        const cur = logsByPeriod.get(l.period_id);
+        const cur = logsByPeriod.get(l.related_id);
         if (!cur || new Date(l.created_at) > new Date(cur.created_at)) {
-          logsByPeriod.set(l.period_id, l);
+          logsByPeriod.set(l.related_id, l);
         }
       }
     }
