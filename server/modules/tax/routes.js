@@ -12923,7 +12923,7 @@ ${closingHtml}
     if (!(await requireOwnerAdmin(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -13247,6 +13247,94 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true });
+  });
+
+  // PUT /admin/employees/:id/profile — admin-side edit of a staff member's
+  // own contact info. Staff already edit all of this on themselves via PUT
+  // /employee/profile (OwnerStaffDetail used to be read-only here, by
+  // design, on the theory that each employee owns their own row — but that
+  // meant a typo'd name or a wrong WhatsApp number on a staff account who
+  // hasn't signed in yet had no fix besides asking them). Mirrors that
+  // endpoint's field handling exactly, just scoped by :id instead of the
+  // caller's own row. Role/permissions/status/public-profile and
+  // notification preferences each stay on their own dedicated surface —
+  // the latter is a personal "how do you want to be pinged" choice, not
+  // contact info an admin would correct on someone else's behalf.
+  router.put('/admin/employees/:id/profile', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    if (!actor) return;
+    const empId = trim(req.params.id, 200);
+    const body = req.body || {};
+
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, community_id').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+
+    const update = { updated_at: new Date().toISOString() };
+
+    const sentName =
+      body.firstName !== undefined || body.middleName !== undefined ||
+      body.lastName  !== undefined || body.name       !== undefined;
+    if (sentName) {
+      const np = resolveNamePayload(body);
+      update.name = np.name;
+      update.first_name = np.first;
+      update.middle_name = np.middle;
+      update.last_name = np.last;
+    }
+    if (body.phone !== undefined) update.phone = trim(body.phone, MAX_PHONE_LEN);
+
+    if (body.whatsapp !== undefined) {
+      const raw = String(body.whatsapp || '').trim();
+      if (raw === '') update.whatsapp = '';
+      else {
+        const norm = normalizeWhatsapp(raw);
+        if (!norm) {
+          return res.status(400).json({ error: 'whatsapp_invalid',
+            message: 'WhatsApp must be in international format starting with + and country code, e.g., +14155551234.' });
+        }
+        update.whatsapp = norm;
+      }
+    }
+    if (body.address !== undefined) update.address = sanitizeAddress(body.address);
+
+    if (body.preferredCommunicationEmail !== undefined) {
+      const raw = String(body.preferredCommunicationEmail || '').trim().toLowerCase();
+      if (raw === '') update.preferred_communication_email = '';
+      else if (!isValidEmail(raw)) {
+        return res.status(400).json({ error: 'preferred_email_invalid',
+          message: 'Preferred communication email is not valid.' });
+      } else update.preferred_communication_email = raw.slice(0, MAX_NAME_LEN);
+    }
+
+    if (body.locale !== undefined) {
+      const v = String(body.locale || '').trim().toLowerCase();
+      if (v !== 'en' && v !== 'es') {
+        return res.status(400).json({ error: 'locale_invalid',
+          message: "locale must be 'en' or 'es'." });
+      }
+      update.locale = v;
+    }
+
+    if (Object.keys(update).length === 1) {
+      return res.status(400).json({ error: 'Nothing to update.' });
+    }
+
+    const { error } = await supabase.from('tax_employees').update(update).eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'admin_update_profile',
+        actorEmail: actor.email || '',
+        after: Object.keys(update).filter(k => k !== 'updated_at'),
+      });
+    } catch (_e) {}
+
+    const { data: refreshed } = await supabase.from('tax_employees')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at')
+      .eq('id', empId).maybeSingle();
+    res.json({ ok: true, employee: pickEmployee(refreshed) });
   });
 
   // POST /admin/employees/:id/photo/upload-url — returns a one-shot signed

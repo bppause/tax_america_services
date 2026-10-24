@@ -386,11 +386,20 @@ export default function EmployeeShell({ community, active, children }) {
             <LocaleSwitcher />
           </div>
           <main className="tax-shell__content">
-            {employee && (
-              <div style={{ color: 'var(--tax-muted)', fontSize: 14, marginBottom: 16 }}>
-                {t('employee.greeting', { name: firstNameOf(employee) || displayPersonName(employee) || employee.email })}
-              </div>
-            )}
+            {employee && (() => {
+              const name = firstNameOf(employee) || displayPersonName(employee);
+              return (
+                <div style={{ color: 'var(--tax-muted)', fontSize: 14, marginBottom: 16 }}>
+                  {t('employee.greeting', { name: name || employee.email })}
+                  {/* Only append the email when it isn't already standing
+                      in for the name above (no name on file) — avoids
+                      "Welcome, you@x.com (you@x.com)". */}
+                  {name && employee.email && (
+                    <span style={{ marginLeft: 6 }}>({employee.email})</span>
+                  )}
+                </div>
+              );
+            })()}
             {children}
           </main>
         </div>

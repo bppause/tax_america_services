@@ -6,7 +6,7 @@ import EmployeeShell from '../components/EmployeeShell';
 import { CERT_LIBRARY } from '../lib/certLibrary';
 
 import { formatLastSignIn } from '../lib/lastSignIn';
-import { displayPersonName } from '../lib/personName';
+import { displayPersonName, parsePersonName } from '../lib/personName';
 import { CollapsibleSection } from './OwnerSettings';
 
 // Category display order mirrors OwnerCustomers so the chip groups feel
@@ -36,9 +36,13 @@ function bucketLetter(name) {
   return /[A-Z]/.test(first) ? first : '#';
 }
 
-// Owner-side view of a single employee. Profile is read-only (the employee
-// edits their own profile via /employee/profile); the action surface here is
-// the customer-assignment manager.
+// Owner-side view of a single employee. Contact info (name, phone,
+// WhatsApp, address, etc.) is editable here via ContactProfileCard — the
+// employee can also edit all of it themselves via /employee/profile, this
+// just lets an admin fix it on their behalf (e.g. a typo, or a staff
+// account that hasn't signed in yet to do it themselves). Notification
+// preferences stay employee-only, since those are a personal "how do you
+// want to be pinged" choice rather than contact info.
 export default function OwnerStaffDetail({ employeeId }) {
   const { t, locale } = useT();
   const { fbUser, employee: me, community } = useEmployeeAuth();
@@ -133,6 +137,8 @@ export default function OwnerStaffDetail({ employeeId }) {
           </div>
         </div>
       )}
+
+      <ContactProfileCard emp={emp} auth={auth} onSaved={loadEmployee} t={t} />
 
       {/* Permissions card — owner can revoke specific powers from this
           employee. Self-edit is blocked server-side for manage_employees
@@ -742,6 +748,224 @@ function ProfileCertPicker({ certifications, setCertifications, certPool, certIn
         </div>
       )}
     </div>
+  );
+}
+
+const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
+function normalizeWhatsappInput(raw) {
+  const trimmed = String(raw || '').trim();
+  return '+' + trimmed.replace(/^\+/, '').replace(/\D+/g, '');
+}
+
+// Admin-side edit of a staff member's contact info — name, phone,
+// WhatsApp, preferred email, address, language. Same fields and the same
+// autosave UX as the employee's own EmployeeProfile page; this just lets
+// an admin do it on someone else's row (PUT /admin/employees/:id/profile).
+function ContactProfileCard({ emp, auth, onSaved, t }) {
+  const initial = () => {
+    const hasStructuredName = !!(emp.first_name || emp.middle_name || emp.last_name);
+    const parsedName = hasStructuredName ? null : parsePersonName(emp.name);
+    const a = emp.address || {};
+    return {
+      firstName: emp.first_name || parsedName?.first || '',
+      middleName: emp.middle_name || parsedName?.middle || '',
+      lastName: emp.last_name || parsedName?.last || '',
+      phone: emp.phone || '',
+      whatsapp: emp.whatsapp || '',
+      preferredEmail: emp.preferred_communication_email || '',
+      locale: emp.locale === 'en' ? 'en' : 'es',
+      addr: {
+        line1: a.line1 || '', line2: a.line2 || '',
+        city: a.city || '', state: a.state || '',
+        postal_code: a.postal_code || '', country: a.country || 'US',
+      },
+    };
+  };
+  const [draft, setDraft] = useState(initial);
+  // Keyed on id, not the employee object — re-syncing on every autosave's
+  // refreshed object would blow away whatever the admin is still
+  // mid-typing. See the identical note in EmployeeProfile.jsx.
+  useEffect(() => { setDraft(initial()); }, [emp.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle'|'saving'|'saved'|error
+  const debounceRef = useRef(null);
+  const savedTimerRef = useRef(null);
+  useEffect(() => () => { clearTimeout(debounceRef.current); clearTimeout(savedTimerRef.current); }, []);
+
+  const doSave = useRef(null);
+  doSave.current = async (overrides = {}) => {
+    const d = { ...draft, ...overrides };
+    const wn = d.whatsapp ? normalizeWhatsappInput(d.whatsapp) : '';
+    if (d.whatsapp && !WHATSAPP_E164.test(wn)) {
+      setSaveStatus(t('portal.profile.whatsapp.invalid'));
+      return;
+    }
+    setSaveStatus('saving');
+    try {
+      const address = {};
+      for (const k of ['line1', 'line2', 'city', 'state', 'postal_code', 'country']) {
+        const v = String((d.addr || {})[k] || '').trim();
+        if (v) address[k] = v;
+      }
+      await taxApi.adminUpdateEmployeeProfile(auth, emp.id, {
+        firstName: d.firstName.trim(),
+        middleName: d.middleName.trim(),
+        lastName: d.lastName.trim(),
+        phone: d.phone.trim(),
+        whatsapp: d.whatsapp.trim(),
+        address,
+        preferredCommunicationEmail: d.preferredEmail.trim(),
+        locale: d.locale,
+      });
+      setSaveStatus('saved');
+      onSaved?.();
+      savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
+    } catch (e) {
+      setSaveStatus(e?.message || 'Save failed');
+    }
+  };
+
+  const scheduleAutoSave = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    debounceRef.current = setTimeout(() => doSave.current(overrides), 1200);
+  };
+  const saveNow = (overrides = {}) => {
+    clearTimeout(debounceRef.current);
+    clearTimeout(savedTimerRef.current);
+    doSave.current(overrides);
+  };
+
+  const onField = (k, v, immediate = false) => {
+    setDraft(p => ({ ...p, [k]: v }));
+    if (immediate) saveNow({ [k]: v }); else scheduleAutoSave({ [k]: v });
+  };
+  const onAddr = (k, v) => {
+    setDraft(p => ({ ...p, addr: { ...p.addr, [k]: v } }));
+    scheduleAutoSave();
+  };
+
+  const whatsappNormalized = draft.whatsapp ? normalizeWhatsappInput(draft.whatsapp) : '';
+  const whatsappValid = !draft.whatsapp || WHATSAPP_E164.test(whatsappNormalized);
+
+  return (
+    <CollapsibleSection storageKey="staffDetail.contactProfile" defaultOpen
+                         title={
+                           <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 10 }}>
+                             {t('owner.staffDetail.contactProfile.heading')}
+                             {saveStatus === 'saving' && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-muted)' }}>Saving…</span>}
+                             {saveStatus === 'saved'  && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-success, #166534)' }}>✓ Saved</span>}
+                             {saveStatus !== 'idle' && saveStatus !== 'saving' && saveStatus !== 'saved' && (
+                               <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--tax-error)' }}>{saveStatus}</span>
+                             )}
+                           </span>
+                         }
+                         subtitle={t('owner.staffDetail.contactProfile.sub')}>
+      <div style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
+        <div className="tax-form__row3">
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.customers.fieldFirstName')}</label>
+            <input type="text" value={draft.firstName} maxLength={80}
+                   onChange={e => onField('firstName', e.target.value)}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.customers.fieldMiddleName')}</label>
+            <input type="text" value={draft.middleName} maxLength={80}
+                   onChange={e => onField('middleName', e.target.value)}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.customers.fieldLastName')}</label>
+            <input type="text" value={draft.lastName} maxLength={80}
+                   onChange={e => onField('lastName', e.target.value)}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          </div>
+        </div>
+
+        <div className="tax-form__row2">
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('portal.profile.phone')}</label>
+            <input type="tel" value={draft.phone} maxLength={40}
+                   placeholder="(415) 555-1234"
+                   onChange={e => onField('phone', e.target.value)}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+              {t('portal.profile.whatsapp')}
+              <span style={{ fontWeight: 400, marginLeft: 6 }}>{t('portal.profile.whatsapp.format')}</span>
+            </label>
+            <input type="tel" value={draft.whatsapp} maxLength={20}
+                   placeholder="+14155551234"
+                   onChange={e => onField('whatsapp', e.target.value)}
+                   style={{
+                     width: '100%', padding: 8, borderRadius: 6,
+                     border: draft.whatsapp && !whatsappValid ? '1px solid var(--tax-error)' : '1px solid var(--tax-border)',
+                   }} />
+            {draft.whatsapp && !whatsappValid && (
+              <div style={{ color: 'var(--tax-error)', fontSize: 12, marginTop: 4 }}>
+                {t('portal.profile.whatsapp.invalid')}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+            {t('portal.profile.preferredEmail')}
+            <span style={{ fontWeight: 400, marginLeft: 6 }}>{t('portal.profile.preferredEmail.hint')}</span>
+          </label>
+          <input type="email" value={draft.preferredEmail} maxLength={200}
+                 placeholder={emp.email || ''}
+                 onChange={e => onField('preferredEmail', e.target.value)}
+                 style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+        </div>
+
+        <div>
+          <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('portal.profile.language')}</label>
+          <select value={draft.locale} onChange={e => onField('locale', e.target.value, true)}
+                  style={{ maxWidth: 280, padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }}>
+            <option value="es">Español</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+
+        <fieldset style={{ border: '1px solid var(--tax-border)', borderRadius: 8, padding: 14, margin: 0 }}>
+          <legend style={{ padding: '0 8px', fontWeight: 600, fontSize: 13 }}>{t('portal.profile.address')}</legend>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <input type="text" value={draft.addr.line1} maxLength={200}
+                   placeholder={t('portal.profile.address.line1')}
+                   onChange={e => onAddr('line1', e.target.value)}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+            <input type="text" value={draft.addr.line2} maxLength={200}
+                   placeholder={t('portal.profile.address.line2.placeholder')}
+                   onChange={e => onAddr('line2', e.target.value)}
+                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+            <div className="tax-form__row2">
+              <input type="text" value={draft.addr.city} maxLength={120}
+                     placeholder={t('portal.profile.address.city')}
+                     onChange={e => onAddr('city', e.target.value)}
+                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+              <input type="text" value={draft.addr.state} maxLength={80}
+                     placeholder={t('portal.profile.address.state')}
+                     onChange={e => onAddr('state', e.target.value)}
+                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+            </div>
+            <div className="tax-form__row2">
+              <input type="text" value={draft.addr.postal_code} maxLength={20}
+                     placeholder={t('portal.profile.address.postal')}
+                     onChange={e => onAddr('postal_code', e.target.value)}
+                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+              <input type="text" value={draft.addr.country} maxLength={4}
+                     placeholder="US"
+                     onChange={e => onAddr('country', e.target.value)}
+                     style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6 }} />
+            </div>
+          </div>
+        </fieldset>
+      </div>
+    </CollapsibleSection>
   );
 }
 

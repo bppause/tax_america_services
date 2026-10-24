@@ -537,6 +537,8 @@
   "landing.team.subheading": "Las personas que harán tu trabajo.",
   "landing.team.experience": "Experiencia",
   "landing.team.education": "Educación",
+  "owner.staffDetail.contactProfile.heading": "Información de contacto",
+  "owner.staffDetail.contactProfile.sub": "Nombre, teléfono, WhatsApp, correo preferido, idioma y dirección. El empleado también puede editar todo esto por sí mismo — use esto para corregir algo en su nombre.",
   "owner.publicProfile.heading": "Perfil público",
   "owner.publicProfile.sub": "Opcional. Activa esto para publicar al empleado en tu página pública bajo \"Conoce al equipo\". Desactivado por defecto — nadie aparece sin que lo decidas.",
   "owner.publicProfile.showOnHomepage": "Mostrar en la página pública",
