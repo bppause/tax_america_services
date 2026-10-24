@@ -15,7 +15,7 @@ const NAV_ICON = {
   dashboard: '🏠', tasks: '✅', progress: '📈', customers: '👥', leads: '📥',
   'service-catalog': '🏷️', articles: '📰', faqs: '❓', staff: '🧑‍💼',
   'email-templates': '✉️', settings: '⚙️', audit: '🗂️', news: '📣',
-  testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔',
+  testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔', inbox: '📨',
 };
 
 // Collapsible sidebar section — remembers whether the user last left it
@@ -206,6 +206,7 @@ export default function EmployeeShell({ community, active, children }) {
                 {employee && perm('view_customers') && (
                   <NavGroup groupKey="business" label={t('employee.nav.groupBusiness')}>
                     {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
+                    {navLink('inbox',     `${base}/inbox`,     t('employee.nav.inbox'), unread)}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
@@ -239,6 +240,7 @@ export default function EmployeeShell({ community, active, children }) {
                 {employee && perm('view_customers') && (
                   <NavGroup groupKey="operations" label={t('employee.nav.groupOperations')}>
                     {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
+                    {navLink('inbox',     `${base}/inbox`,     t('employee.nav.inbox'), unread)}
                     {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&

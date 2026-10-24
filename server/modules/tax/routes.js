@@ -2658,10 +2658,26 @@ ${closingHtml}
       ]);
       if (!assignee || !assignee.email || assignee.status === 'archived') return;
       if (!await communityStaffEmailFlag(task.community_id, 'tax_staff_email_task_assigned_enabled')) return;
-      await sendTaxTaskAssignedEmail({
+      const result = await sendTaxTaskAssignedEmail({
         community: community || { id: task.community_id, name: '' },
         task, assignee, actor,
       });
+      // Every deliberate reason to skip (no email on file, archived,
+      // community toggle off) already returned above — reaching here
+      // means a send was genuinely expected, so a non-send is a real
+      // failure worth a record, not just a console line nobody reads.
+      // Mirrors the send_welcome_email audit entries that already make
+      // welcome-email failures visible in the Audit log.
+      if (!result?.sent) {
+        try {
+          await auditLog({
+            entity: 'tax.task', entityId: taskId,
+            action: 'notify_assignee_email_failed',
+            actorEmail: actor?.email || '',
+            after: { to: assignee.email, reason: result?.reason || result?.error || 'unknown' },
+          });
+        } catch (_e) {}
+      }
     } catch (e) {
       warn('[tax-task-assign] notify failed', e?.message || e);
     }
@@ -2722,12 +2738,25 @@ ${closingHtml}
           && assignee.email
           && typeof sendTaxTaskStatusChangedEmail === 'function'
           && await communityStaffEmailFlag(task.community_id, 'tax_staff_email_task_status_changed_enabled')) {
-        await sendTaxTaskStatusChangedEmail({
+        const result = await sendTaxTaskStatusChangedEmail({
           community: community || { id: task.community_id, name: '' },
           task, assignee, actor,
           oldStatusLabel: labelFor(oldStatusKey),
           newStatusLabel: labelFor(newStatusKey),
         });
+        // See the identical note in notifyTaskAssignee above — every
+        // deliberate skip already short-circuited this branch, so a
+        // non-send here is a genuine failure worth an audit record.
+        if (!result?.sent) {
+          try {
+            await auditLog({
+              entity: 'tax.task', entityId: taskId,
+              action: 'notify_status_changed_email_failed',
+              actorEmail: actor?.email || '',
+              after: { to: assignee.email, reason: result?.reason || result?.error || 'unknown' },
+            });
+          } catch (_e) {}
+        }
       }
     } catch (e) {
       warn('[tax-task-status] notify failed', e?.message || e);
@@ -3680,7 +3709,7 @@ ${closingHtml}
   // add explicit per-community filtering.
   router.get('/admin/audit', async (req, res) => {
     if (!(await requireOwnerAdmin(req, res, 'view_audit_logs'))) return;
-    const { entity, action, actor, dateFrom, dateTo, limit: limitParam, offset: offsetParam } = req.query || {};
+    const { entity, action, actor, dateFrom, dateTo, failedOnly, limit: limitParam, offset: offsetParam } = req.query || {};
 
     let q = supabase.from('audit_logs')
       .select('id, entity, entity_id, action, actor_uid, actor_email, actor_name, before_data, after_data, reason, created_at',
@@ -3693,6 +3722,16 @@ ${closingHtml}
     if (actor)  q = q.ilike('actor_email', `%${String(actor)}%`);
     if (dateFrom) q = q.gte('created_at', String(dateFrom));
     if (dateTo)   q = q.lte('created_at', String(dateTo) + 'T23:59:59Z');
+    // Two conventions cover every failed-send record emitted so far:
+    // a dedicated "..._failed" action (task-assignment/status-change
+    // notifications, which only log the failure case), or a
+    // result-always-logged action whose after_data carries sent:false
+    // (welcome emails, which log every attempt). Catches both, and
+    // any future auditLog() call that follows either convention, for
+    // free — no entity/action allowlist to keep in sync.
+    if (failedOnly === '1' || failedOnly === 'true') {
+      q = q.or("action.ilike.%_failed,after_data->>sent.eq.false");
+    }
 
     const pageLimit  = Math.min(parseInt(limitParam) || 50, 100);
     const pageOffset = parseInt(offsetParam) || 0;
