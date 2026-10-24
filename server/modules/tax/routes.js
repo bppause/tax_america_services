@@ -3532,13 +3532,16 @@ ${closingHtml}
         `)
         .eq('customer_id', id)
         .order('due_date', { ascending: false }).limit(24),
-      // Phase 4n: reminder send + open/click history. Bounded so we don't
-      // pull every email this customer ever got; the UI shows the 20 most
-      // recent reminder events.
+      // Email delivery + open/click history for this customer, across
+      // every event type tied to them (reminder, document, signature
+      // request/signed, message, welcome, bookkeeping report, and any
+      // customer-linked task notification) — was reminder-only; every
+      // other logged type existed in the table but was invisible here.
+      // Bounded so we don't pull every email this customer ever got.
       supabase.from('email_delivery_logs')
         .select('id, event_type, subject, related_id, created_at, delivered_at, opened_at, clicked_at, bounced_at, open_count, click_count')
-        .eq('customer_id', id).eq('event_type', 'reminder')
-        .order('created_at', { ascending: false }).limit(20),
+        .eq('customer_id', id)
+        .order('created_at', { ascending: false }).limit(40),
     ]);
 
     res.json({
@@ -7792,8 +7795,20 @@ ${closingHtml}
       }
     }
 
+    // Friendly label per event_type — covers every sender that logs to
+    // email_delivery_logs (see logTaxEmailDelivery call sites). Unmapped
+    // or missing types fall back to the raw value so a future sender
+    // never goes fully unlabeled, just less polished.
+    const EMAIL_EVENT_LABELS = {
+      reminder: 'Reminder', document: 'Document', signature_request: 'Signature request',
+      signature_signed: 'Signature confirmation', message: 'Message', welcome: 'Welcome email',
+      bookkeeping_report: 'Bookkeeping report', task_assigned: 'Task assignment',
+      task_status_changed: 'Task status update', task_pending_review: 'Task review request',
+      task_review_decision: 'Task review decision', message_to_practice: 'Message notification',
+      message_to_employee: 'Message notification',
+    };
     for (const e of (emailLogsQ.data || [])) {
-      const label = e.event_type === 'reminder' ? 'Reminder' : (e.event_type || 'Email');
+      const label = EMAIL_EVENT_LABELS[e.event_type] || e.event_type || 'Email';
       push(e.created_at, {
         kind: 'email_sent', tone: 'muted',
         title: `${label} sent`, detail: e.subject || '',
