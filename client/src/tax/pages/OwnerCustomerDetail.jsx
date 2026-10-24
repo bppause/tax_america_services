@@ -469,6 +469,23 @@ export default function OwnerCustomerDetail({ customerId }) {
   const [data, setData] = useState(null);
   const [types, setTypes] = useState([]);
   const [err, setErr] = useState('');
+  // Surfaces a failed create-time welcome-email send, carried over via
+  // query param from OwnerCustomers' Add form — that page redirects here
+  // almost immediately after create, so its own inline message is never
+  // actually seen. Read once on mount, then strip the param so a refresh
+  // or a shared link doesn't keep re-showing it.
+  const [welcomeFailedMsg, setWelcomeFailedMsg] = useState('');
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('welcomeFailed') === '1') {
+      const reason = params.get('reason') || '';
+      setWelcomeFailedMsg(reason
+        ? t('owner.customer.welcomeFailedBanner.withReason', { reason })
+        : t('owner.customer.welcomeFailedBanner'));
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [reportDrawer, setReportDrawer] = useState(null); // null = closed; { taskTitle, initialReportId, nonce } = open
   const [summaryRefreshKey, setSummaryRefreshKey] = useState(0);
   const [scrollToReportId, setScrollToReportId] = useState(null);
@@ -530,6 +547,15 @@ export default function OwnerCustomerDetail({ customerId }) {
   return (
     <EmployeeShell community={community} active="customers">
       <a href={back} style={{ fontSize: 14, color: 'var(--tax-muted)' }}>← {t('owner.customer.back')}</a>
+
+      {welcomeFailedMsg && (
+        <div className="tax-msg tax-msg--error" style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <span>{welcomeFailedMsg}</span>
+          <button type="button" onClick={() => setWelcomeFailedMsg('')}
+                  style={{ background: 'none', border: 0, cursor: 'pointer', color: 'inherit', fontSize: 16, lineHeight: 1, padding: 0 }}
+                  aria-label={t('owner.customer.welcomeFailedBanner.dismiss')}>×</button>
+        </div>
+      )}
 
       {/* Modern header card */}
       <CustomerHeaderCard c={c} auth={auth} community={community} load={load} t={t}
