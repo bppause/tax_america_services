@@ -119,6 +119,9 @@ export default function OwnerStaffDetail({ employeeId }) {
           {!emp.firebase_uid && emp.status === 'active' && (
             <DetailResendWelcomeButton emp={emp} auth={auth} t={t} />
           )}
+          {emp.status === 'active' && (
+            <CopyStaffPortalLinkButton emp={emp} community={community} t={t} />
+          )}
           {emp.id !== me?.id && (
             <ArchiveEmployeeButton emp={emp} auth={auth} onChanged={loadEmployee} t={t} />
           )}
@@ -1776,6 +1779,43 @@ function DetailResendWelcomeButton({ emp, auth, t }) {
         </span>
       )}
     </div>
+  );
+}
+
+// Fallback for when the welcome email itself is the problem (disabled in
+// Settings, Resend misconfigured, bounced) — gives the admin a way to hand
+// the staff portal link to a new hire directly (Slack, in person, etc.)
+// instead of being stuck waiting on an email that may never arrive. Same
+// URL shape sendWelcomeForEmployee builds server-side (routes.js), just
+// built client-side since the browser already knows its own origin.
+function CopyStaffPortalLinkButton({ emp, community, t }) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef(null);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const onClick = async () => {
+    const base = `${window.location.origin}/tax/${community.id}/employee`;
+    const params = new URLSearchParams();
+    if (emp.email) params.set('email', emp.email);
+    if (!emp.firebase_uid) params.set('mode', 'create');
+    const qs = params.toString();
+    const url = qs ? `${base}?${qs}` : base;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 2500);
+    } catch {
+      window.prompt(t('owner.staff.copyPortalLink.manualPrompt'), url);
+    }
+  };
+
+  return (
+    <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+            onClick={onClick}
+            style={{ color: 'var(--tax-brand-primary)', borderColor: 'var(--tax-brand-primary)' }}>
+      {copied ? t('owner.staff.copyPortalLink.copied') : t('owner.staff.copyPortalLink.button')}
+    </button>
   );
 }
 

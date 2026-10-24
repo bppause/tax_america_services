@@ -1358,10 +1358,24 @@ function SignatureRequestsSection({ auth, customerId, locale, t }) {
     if (!form.title.trim()) return;
     setBusy(true); setErr('');
     try {
-      await taxApi.adminCreateSignatureRequest(auth, customerId, {
+      const r = await taxApi.adminCreateSignatureRequest(auth, customerId, {
         title: form.title.trim(),
         description: form.description.trim(),
       });
+      // The request itself is created either way — the server only
+      // *attempts* the customer notification email, same best-effort
+      // shape as welcome emails. Surface a failed send instead of
+      // discarding it silently (the request would otherwise sit
+      // unnoticed until someone wonders why the customer never signed).
+      // Deliberately disabled (the community-wide signature-email toggle
+      // is off) isn't a failure worth nagging about on every request —
+      // only an unexpected non-send is.
+      if (!r?.customerEmail?.sent && r?.customerEmail?.reason !== 'signature_emails_disabled') {
+        const reason = r?.customerEmail?.reason || r?.customerEmail?.error;
+        setErr(reason
+          ? t('owner.customer.signatures.emailFailedWithReason', { reason })
+          : t('owner.customer.signatures.emailFailed'));
+      }
       setForm({ title: '', description: '' });
       setAdding(false);
       load();

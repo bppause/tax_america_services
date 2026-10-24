@@ -15,6 +15,7 @@ import EmployeeShell from '../components/EmployeeShell';
 const ENTITY_OPTIONS = [
   'tax.lead',
   'tax.filing_response',
+  'tax.task',
   'tax.customer',
   'tax.customer.contact',
   'tax.customer_note',
@@ -44,6 +45,7 @@ export default function OwnerAudit() {
     actor: '',
     dateFrom: '',
     dateTo: '',
+    failedOnly: '',
   });
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 50;
@@ -69,7 +71,7 @@ export default function OwnerAudit() {
   }
 
   const onApply = (e) => { e.preventDefault(); setPage(0); load(); };
-  const onReset = () => { setFilters({ entity: '', action: '', actor: '', dateFrom: '', dateTo: '' }); setPage(0); };
+  const onReset = () => { setFilters({ entity: '', action: '', actor: '', dateFrom: '', dateTo: '', failedOnly: '' }); setPage(0); };
   const totalPages = Math.max(1, Math.ceil((data.total || 0) / PAGE_SIZE));
 
   return (
@@ -117,7 +119,7 @@ export default function OwnerAudit() {
             </div>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button type="submit" className="tax-btn tax-btn--primary tax-btn--sm">
             {t('owner.audit.apply')}
           </button>
@@ -125,6 +127,19 @@ export default function OwnerAudit() {
                   style={{ color: 'var(--tax-text)' }}>
             {t('owner.audit.reset')}
           </button>
+          {/* Quick filter for the failed-send convention every email/
+              notification audit entry follows (see GET /admin/audit) —
+              makes delivery failures (welcome emails, task-notification
+              emails, etc.) discoverable without knowing the exact action
+              name or digging through raw JSON on every row. */}
+          <label style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            marginLeft: 'auto', fontSize: 13, color: 'var(--tax-error)', fontWeight: 600,
+          }}>
+            <input type="checkbox" checked={filters.failedOnly === '1'}
+                   onChange={e => { setFilters(f => ({ ...f, failedOnly: e.target.checked ? '1' : '' })); setPage(0); }} />
+            {t('owner.audit.failedOnly')}
+          </label>
         </div>
       </form>
 
