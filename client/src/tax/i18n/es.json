@@ -637,6 +637,8 @@
   "owner.tasks.bulk.unassign": "Quitar responsable",
   "owner.tasks.bulk.clear": "Limpiar",
   "owner.tasks.bulk.noneUpdated": "No se actualizó nada — selección fuera de alcance.",
+  "owner.tasks.bulk.completeUnsupported": "La finalización masiva está deshabilitada — complete las tareas individualmente para que cada una tenga una nota de cierre.",
+  "owner.tasks.bulk.fieldsRequired": "{count} tarea(s) seleccionada(s) no tienen propietario, prioridad o fecha límite — agréguelos individualmente antes de moverlas más allá de Sin iniciar.",
   "owner.tasks.groupBy.label": "Agrupar",
   "owner.tasks.groupBy.none": "Sin agrupar",
   "owner.tasks.groupBy.employee": "Empleado",
