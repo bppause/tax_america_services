@@ -9049,7 +9049,7 @@ ${closingHtml}
     // completed_at correctly per row when the new status is
     // terminal.
     const { data: rows, error: selErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, assigned_employee_id, status_key')
+      .select('id, community_id, customer_id, assigned_employee_id, status_key, priority, due_date')
       .in('id', ids);
     if (selErr) return sendSupabaseError(res, selErr);
 
@@ -9064,6 +9064,41 @@ ${closingHtml}
         .map(r => r.id);
     }
     if (!allowedIds.length) return res.json({ ok: true, updated: 0 });
+
+    // Same two gates PATCH /admin/tasks/:id enforces on a single task —
+    // bulk is just another way to change status, so it doesn't get a
+    // pass on either. A note is required whenever status moves, and a
+    // task can't move beyond "Not started" without an owner, priority,
+    // and due date already in place (checked per row, since the batch
+    // can mix tasks that already qualify with ones that don't).
+    if (update.status_key !== undefined) {
+      const providedNotes = String(patch.notes || '').trim();
+      if (!providedNotes) {
+        return res.status(400).json({
+          error: 'notes_required_on_status_change',
+          message: 'Add a note describing this status change before saving it.',
+        });
+      }
+      update.notes = providedNotes.slice(0, MAX_TEXT_LEN);
+
+      if (update.status_key !== 'not_started') {
+        const rowById = new Map((rows || []).map(r => [r.id, r]));
+        const blockedIds = allowedIds.filter(id => {
+          const r = rowById.get(id);
+          const assignee = update.assigned_employee_id !== undefined ? update.assigned_employee_id : r?.assigned_employee_id;
+          const priority = update.priority !== undefined ? update.priority : r?.priority;
+          const due = r?.due_date;
+          return !assignee || !priority || !due;
+        });
+        if (blockedIds.length) {
+          return res.status(400).json({
+            error: 'fields_required_beyond_not_started',
+            message: `${blockedIds.length} selected task(s) are missing an owner, priority, or due date — add those individually before moving them beyond Not started.`,
+            taskIds: blockedIds,
+          });
+        }
+      }
+    }
 
     // Resolve terminal-ness for the new status_key (single fetch
     // applied uniformly across the batch).

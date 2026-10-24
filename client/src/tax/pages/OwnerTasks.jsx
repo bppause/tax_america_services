@@ -873,6 +873,40 @@ function BulkActionBar({ selectedIds, tasks, statuses, employees, auth, onClear,
     finally { setBusy(false); }
   };
 
+  // Bulk status changes get the same two gates a single-task edit
+  // does — see PATCH /admin/tasks/bulk — checked client-side first so
+  // a blocked selection surfaces a clear message instead of a round
+  // trip that fails. Each selected task needs an owner, priority, and
+  // due date before it can move beyond Not started, and every status
+  // change needs a note (prompted once, applied to the whole batch).
+  const applyStatus = async (v) => {
+    const selected = ids.map(id => tasks.find(tt => tt.id === id)).filter(Boolean);
+    const target = statuses.find(s => s.key === v);
+    if (target?.is_terminal) {
+      setErr(t('owner.tasks.bulk.completeUnsupported'));
+      setStatusKey('');
+      return;
+    }
+    if (v !== 'not_started') {
+      const blocked = selected.filter(tt => notStartedFieldsMissing({ task: tt, patch: { statusKey: v }, t }));
+      if (blocked.length) {
+        setErr(t('owner.tasks.bulk.fieldsRequired', { count: blocked.length }));
+        setStatusKey('');
+        return;
+      }
+    }
+    const note = typeof window !== 'undefined' ? window.prompt(t('owner.tasks.statusChangeNotesPrompt')) : null;
+    if (note === null) { setStatusKey(''); return; }
+    const trimmed = String(note).trim();
+    if (!trimmed) {
+      if (typeof window !== 'undefined') window.alert(t('owner.tasks.statusChangeNotesRequired'));
+      setStatusKey('');
+      return;
+    }
+    await apply({ statusKey: v, notes: trimmed });
+    setStatusKey('');
+  };
+
   return (
     <div style={{
       position: 'sticky', top: 0, zIndex: 40,
@@ -900,7 +934,7 @@ function BulkActionBar({ selectedIds, tasks, statuses, employees, auth, onClear,
                 onChange={e => {
                   const v = e.target.value;
                   setStatusKey(v);
-                  if (v) apply({ statusKey: v });
+                  if (v) applyStatus(v);
                 }}
                 style={{ padding: '4px 6px', border: '1px solid var(--tax-border)', borderRadius: 6, fontSize: 12 }}>
           <option value="">{t('owner.tasks.bulk.chooseStatus')}</option>
@@ -3297,6 +3331,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
             <div style={{ display: 'grid', gap: 6 }}>
               {items.map(tt => {
                 const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
+                const prCol = priorityColorOf(tt.priority, community);
                 const custName = tt.customer
                   ? (tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email)
                   : '';
@@ -3304,6 +3339,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                   ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
                   : '';
                 const metaLine = [custName, serviceName].filter(Boolean).join(' · ');
+                const ownerName = tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : '';
                 return (
                   <TaskHover key={tt.id} task={tt} statuses={statuses}
                              community={community} locale={locale} t={t}
@@ -3325,9 +3361,19 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                           {metaLine}
                         </div>
                       )}
-                      {tt.due_date && (
-                        <div style={{ marginTop: 4 }}>
-                          <DuePill dueDate={tt.due_date} thresholds={thresholds} t={t} />
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                        {tt.priority && (
+                          <span style={{
+                            padding: '1px 8px', borderRadius: 999,
+                            background: prCol.bg, color: prCol.fg,
+                            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                          }}>{t(`owner.tasks.priority.${tt.priority}`)}</span>
+                        )}
+                        {tt.due_date && <DuePill dueDate={tt.due_date} thresholds={thresholds} t={t} />}
+                      </div>
+                      {ownerName && (
+                        <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 4 }}>
+                          {t('owner.tasks.owner')}: {ownerName}
                         </div>
                       )}
                     </button>

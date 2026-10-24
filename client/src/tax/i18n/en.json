@@ -637,6 +637,8 @@
   "owner.tasks.bulk.unassign": "Unassign",
   "owner.tasks.bulk.clear": "Clear",
   "owner.tasks.bulk.noneUpdated": "Nothing updated — selection was out of scope.",
+  "owner.tasks.bulk.completeUnsupported": "Bulk completion is disabled — complete tasks individually so each has a closing note.",
+  "owner.tasks.bulk.fieldsRequired": "{count} selected task(s) are missing an owner, priority, or due date — add those individually before moving them beyond Not started.",
   "owner.tasks.groupBy.label": "Group",
   "owner.tasks.groupBy.none": "None",
   "owner.tasks.groupBy.employee": "Employee",
