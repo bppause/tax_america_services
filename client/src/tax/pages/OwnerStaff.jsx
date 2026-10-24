@@ -72,10 +72,27 @@ export default function OwnerStaff() {
       // bootstrap on first visit.
       const isExisting = !!result?.isExistingUser;
       const baseKey = isExisting ? 'owner.staff.addedSuccess.existing' : 'owner.staff.addedSuccess.new';
-      const text = form.sendWelcomeEmail
-        ? t(`${baseKey}.withEmail`)
-        : t(`${baseKey}.noEmail`);
-      setMsg({ kind: 'success', text });
+      // The account is created either way — but a checked "send welcome
+      // email" box doesn't guarantee the send actually happened (staff
+      // emails disabled in Settings, Resend misconfigured, etc.). Trusting
+      // the checkbox state here told the admin an email went out when it
+      // silently didn't, which is exactly how "new employee never got
+      // their welcome email" goes unnoticed. Branch on the server's
+      // actual result instead.
+      let text;
+      let kind = 'success';
+      if (!form.sendWelcomeEmail) {
+        text = t(`${baseKey}.noEmail`);
+      } else if (result?.welcomeEmail?.sent) {
+        text = t(`${baseKey}.withEmail`);
+      } else {
+        const reason = result?.welcomeEmail?.reason || result?.welcomeEmail?.error;
+        kind = 'error';
+        text = reason
+          ? t(`${baseKey}.emailFailedWithReason`, { reason })
+          : t(`${baseKey}.emailFailed`);
+      }
+      setMsg({ kind, text });
       setForm({ firstName: '', middleName: '', lastName: '', email: '', role: 'staff', locale: 'en', sendWelcomeEmail: true });
       setAdding(false);
       load();
