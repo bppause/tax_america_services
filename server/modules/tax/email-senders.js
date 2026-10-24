@@ -306,11 +306,22 @@ module.exports = function createTaxSenders(deps) {
       lang: recipientLang,
       vars, defaults,
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to,
       subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html,
       lang: recipientLang === 'en' ? 'en' : 'es-CO',
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community?.id || '', eventType: 'lead_notify',
+          recipients: to, subject: finalCopy.subject,
+          relatedEntity: 'tax.lead', relatedId: lead?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // ── Lead confirmation email (sent to the lead/customer) ────────────────────
@@ -440,7 +451,18 @@ module.exports = function createTaxSenders(deps) {
       ? `Your inquiry has been received — ${practiceName}`
       : `Hemos recibido tu consulta — ${practiceName}`;
 
-    return sendSpanishEmail({ to, subject, text, html, lang: lang === 'en' ? 'en' : 'es-CO' });
+    const result = await sendSpanishEmail({ to, subject, text, html, lang: lang === 'en' ? 'en' : 'es-CO' });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community?.id || '', eventType: 'lead_confirmation',
+          recipients: [to], subject,
+          relatedEntity: 'tax.lead', relatedId: lead?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // ── Reminder email (Phase 1.5) ───────────────────────────────────────────
@@ -1204,9 +1226,20 @@ module.exports = function createTaxSenders(deps) {
     const finalCopy = await applyOverride({
       communityId: community?.id, key: 'signature_signed', lang, vars, defaults,
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community?.id || '', customerId: customer?.id || '',
+          eventType: 'signature_signed', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.signature_request', relatedId: request?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // ── Customer message email (Phase 2f) ────────────────────────────────────
@@ -1369,9 +1402,20 @@ module.exports = function createTaxSenders(deps) {
     const pFinal = await applyOverride({
       communityId: community?.id, key: 'message_to_practice', lang, vars: pVars, defaults: pDefaults,
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: pFinal.subject, text: pFinal.text, html: pFinal.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community?.id || '', customerId: customer?.id || '',
+          eventType: 'message_to_practice', recipients: [to], subject: pFinal.subject,
+          relatedEntity: 'tax.message_thread', relatedId: thread?.id || '', threadId: thread?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // ── Employee message email (Phase 3) ─────────────────────────────────────
@@ -1441,9 +1485,20 @@ module.exports = function createTaxSenders(deps) {
     const eFinal = await applyOverride({
       communityId: community?.id, key: 'message_to_employee', lang, vars: eVars, defaults: eDefaults,
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: eFinal.subject, text: eFinal.text, html: eFinal.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community?.id || '', customerId: customer?.id || '',
+          eventType: 'message_to_employee', recipients: [to], subject: eFinal.subject,
+          relatedEntity: 'tax.message_thread', relatedId: thread?.id || '', threadId: thread?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // ── Welcome / portal-invite email ────────────────────────────────────────
@@ -1747,9 +1802,20 @@ module.exports = function createTaxSenders(deps) {
     const sFinal = await applyOverride({
       communityId: emp.community_id, key: 'welcome_staff', lang, vars: sVars, defaults: sDefaults,
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: sFinal.subject, text: sFinal.text, html: sFinal.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: emp.community_id || '', eventType: 'staff_welcome',
+          recipients: [to], subject: sFinal.subject,
+          relatedEntity: 'tax.employee', relatedId: emp?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // Notification to a task's assignee when someone assigns work to them.
@@ -1835,9 +1901,20 @@ module.exports = function createTaxSenders(deps) {
       communityId: community.id, key: 'task_assigned', lang, vars,
       defaults: { subject: subjectDefault, text, html },
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: task?.customer?.id || '',
+          eventType: 'task_assigned', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.task', relatedId: task?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // Notification to a lead's assignee when a lead is routed to them —
@@ -1917,9 +1994,20 @@ module.exports = function createTaxSenders(deps) {
       communityId: community.id, key: 'lead_assigned', lang, vars,
       defaults: { subject: subjectDefault, text, html },
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', eventType: 'lead_assigned',
+          recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.lead', relatedId: lead?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // Notification to a task's assignee when its status changes — e.g. an
@@ -1997,9 +2085,20 @@ module.exports = function createTaxSenders(deps) {
       communityId: community.id, key: 'task_status_changed', lang, vars,
       defaults: { subject: subjectDefault, text, html },
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: task?.customer?.id || '',
+          eventType: 'task_status_changed', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.task', relatedId: task?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // Notification to a community's owner(s) when a task lands on
@@ -2078,9 +2177,20 @@ module.exports = function createTaxSenders(deps) {
       communityId: community.id, key: 'task_pending_review', lang, vars,
       defaults: { subject: subjectDefault, text, html },
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: task?.customer?.id || '',
+          eventType: 'task_pending_review', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.task', relatedId: task?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // Notification to a task's assignee once the owner acts on their
@@ -2157,9 +2267,20 @@ module.exports = function createTaxSenders(deps) {
       communityId: community.id, key: 'task_review_decision', lang, vars,
       defaults: { subject: subjectDefault, text, html },
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: task?.customer?.id || '',
+          eventType: 'task_review_decision', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.task', relatedId: task?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // Daily digest for owners + staff. Composed by the digest cron from
@@ -2314,9 +2435,20 @@ module.exports = function createTaxSenders(deps) {
       communityId: community.id, key: 'daily_digest', lang, vars,
       defaults: { subject, text, html },
     });
-    return sendSpanishEmail({
+    const result = await sendSpanishEmail({
       to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
     });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', eventType: 'daily_digest',
+          recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.employee', relatedId: employee?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
   };
 
   // ── Bookkeeping financial report (Phase 4n.70) ────────────────────────────
