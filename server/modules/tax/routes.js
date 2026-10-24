@@ -10713,7 +10713,7 @@ ${closingHtml}
         try {
           await sendTaxSignatureSignedEmail({
             emp, customer: cust || { name: '', email: customerEmail },
-            community, request: { title: titleSnippet }, customerUrl,
+            community, request: { id: requestId, title: titleSnippet }, customerUrl,
           });
         } catch (e) { warn('[tax-sig] employee email failed', e?.message || e); }
       }
