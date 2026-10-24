@@ -274,6 +274,9 @@ export const taxApi = {
   adminSetEmployeePublicProfile(auth, id, payload) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/public-profile`, payload, auth, { admin: true });
   },
+  adminUpdateEmployeeProfile(auth, id, payload) {
+    return request('PUT', `/admin/employees/${encodeURIComponent(id)}/profile`, payload, auth, { admin: true });
+  },
   adminEmployeePhotoUploadUrl(auth, id, payload) {
     return request('POST', `/admin/employees/${encodeURIComponent(id)}/photo/upload-url`, payload, auth, { admin: true });
   },

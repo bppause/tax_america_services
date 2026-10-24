@@ -537,6 +537,8 @@
   "landing.team.subheading": "The people who'll actually be doing your work.",
   "landing.team.experience": "Experience",
   "landing.team.education": "Education",
+  "owner.staffDetail.contactProfile.heading": "Contact info",
+  "owner.staffDetail.contactProfile.sub": "Name, phone, WhatsApp, preferred email, language, and address. The employee can edit all of this themselves too — use this to fix something on their behalf.",
   "owner.publicProfile.heading": "Public profile",
   "owner.publicProfile.sub": "Optional. Turn this on to publish the employee on your public landing page under \"Meet the team\". Off by default — no one is shown publicly unless you opt them in.",
   "owner.publicProfile.showOnHomepage": "Show on public homepage",
