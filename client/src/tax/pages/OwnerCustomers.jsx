@@ -294,15 +294,28 @@ export default function OwnerCustomers() {
         productIds: form.productIds,
         sendWelcomeEmail: form.sendWelcomeEmail && !!community?.tax_customer_portal_enabled,
       });
-      // Successful create. The welcome-email send is best-effort on the
-      // server; we just trust the response for the redirect. The detail
-      // page can re-send manually if needed.
+      // Successful create. The redirect below fires almost immediately, so
+      // this success message is never actually seen — the real signal the
+      // detail page needs is whether the welcome email landed. We only
+      // asked the server to send one when sendWelcomeEmail was true above;
+      // if it still came back unsent, carry the reason over as a query
+      // param so the detail page can show it (same pattern as a failed
+      // create-customer welcome email that OwnerStaff.jsx now surfaces
+      // for staff — this was the identical silent-success bug for
+      // customers).
       setAddMsg({ kind: 'success', text: t('owner.customers.addedSuccess') });
+      const attemptedSend = form.sendWelcomeEmail && !!community?.tax_customer_portal_enabled;
+      const welcomeFailed = attemptedSend && !r?.welcomeEmail?.sent;
       setForm({ customerType: 'individual', businessName: '',
                 firstName: '', middleName: '', lastName: '',
                 email: '', phone: '', whatsapp: '', locale: 'es',
                 productIds: [], sendWelcomeEmail: true });
-      window.location.href = `/tax/${community.id}/employee/customers/${encodeURIComponent(r.id)}`;
+      let dest = `/tax/${community.id}/employee/customers/${encodeURIComponent(r.id)}`;
+      if (welcomeFailed) {
+        const reason = r?.welcomeEmail?.reason || r?.welcomeEmail?.error || '';
+        dest += `?welcomeFailed=1${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`;
+      }
+      window.location.href = dest;
     } catch (err) {
       setAddMsg({ kind: 'error', text: err?.message || t('respond.error.generic') });
     } finally {
