@@ -2567,11 +2567,12 @@ function DuePill({ dueDate, thresholds, t }) {
   const u = urgencyOf(dueDate, thresholds);
   const c = colorOf(u);
   return (
-    <span style={{
-      padding: '1px 8px', borderRadius: 999,
-      background: c.bg, color: c.fg,
-      fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
-    }}>
+    <span title={t ? `${t('owner.tasks.due')}: ${dueDate}` : dueDate}
+          style={{
+            padding: '1px 8px', borderRadius: 999,
+            background: c.bg, color: c.fg,
+            fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+          }}>
       {dueDate}
     </span>
   );
@@ -3369,7 +3370,12 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                             fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
                           }}>{t(`owner.tasks.priority.${tt.priority}`)}</span>
                         )}
-                        {tt.due_date && <DuePill dueDate={tt.due_date} thresholds={thresholds} t={t} />}
+                        {tt.due_date && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--tax-muted)' }}>
+                            {t('owner.tasks.due')}:
+                            <DuePill dueDate={tt.due_date} thresholds={thresholds} t={t} />
+                          </span>
+                        )}
                       </div>
                       {ownerName && (
                         <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 4 }}>
