@@ -134,14 +134,14 @@ function TodayInbox({ auth, community, t }) {
   if (!data) return null;
 
   const pendingSignatures = data.pendingSignatures || [];
-  const total = data.overdue.length + data.dueSoon.length + data.unreadCount + data.newLeads.length + pendingSignatures.length;
+  const total = data.unreadCount + data.newLeads.length + pendingSignatures.length;
   const allCaughtUp = total === 0;
 
   return (
     <section style={{ marginBottom: 8 }}>
       <h2 style={{ marginTop: 0, marginBottom: 4 }}>{t('employee.today.title')}</h2>
       <p className="tax-section__lede" style={{ marginTop: 0 }}>
-        {t('employee.today.subtitle', { days: data.windowDays })}
+        {t('employee.today.subtitle')}
       </p>
 
       {allCaughtUp && (
@@ -163,16 +163,6 @@ function TodayInbox({ auth, community, t }) {
 
       {!allCaughtUp && (
         <div style={{ display: 'grid', gap: 12 }}>
-          <Bucket tone="danger"
-                  title={t('employee.today.overdueTitle', { count: data.overdue.length })}
-                  empty={t('employee.today.overdueEmpty')}>
-            {data.overdue.map(p => <PeriodRow key={p.id} p={p} community={community} t={t} variant="overdue" />)}
-          </Bucket>
-          <Bucket tone="warn"
-                  title={t('employee.today.dueSoonTitle', { count: data.dueSoon.length, days: data.windowDays })}
-                  empty={t('employee.today.dueSoonEmpty')}>
-            {data.dueSoon.map(p => <PeriodRow key={p.id} p={p} community={community} t={t} variant="due-soon" />)}
-          </Bucket>
           {data.unreadCount > 0 && (
             <Bucket tone="info"
                     title={t('employee.today.unreadTitle', { count: data.unreadCount })}
@@ -229,13 +219,6 @@ function TodayInbox({ auth, community, t }) {
               ))}
             </Bucket>
           )}
-          {data.recent.length > 0 && (
-            <Bucket tone="ok"
-                    title={t('employee.today.recentTitle', { count: data.recent.length, days: data.windowDays })}
-                    empty="">
-              {data.recent.map(p => <PeriodRow key={p.id} p={p} community={community} t={t} variant="recent" />)}
-            </Bucket>
-          )}
         </div>
       )}
     </section>
@@ -266,45 +249,5 @@ function Bucket({ tone, title, children, empty }) {
         )}
       </div>
     </div>
-  );
-}
-
-function PeriodRow({ p, community, t, variant }) {
-  const cust = p.customer || {};
-  const wf = p.workflow || {};
-  const sch = p.schedule || {};
-  const name = (wf.name_i18n && (wf.name_i18n.es || wf.name_i18n.en))
-            || (sch.name_i18n && (sch.name_i18n.es || sch.name_i18n.en))
-            || wf.filing_schedule_slug || sch.slug || p.period_label || 'Filing';
-  const href = `/tax/${community.id}/employee/customers/${encodeURIComponent(p.customer_id)}`;
-  const tone = variant === 'overdue' ? '#b91c1c'
-             : variant === 'due-soon' ? 'var(--tax-brand-secondary)'
-             : 'var(--tax-success)';
-  const today = new Date().toISOString().slice(0, 10);
-  let daysLabel = '';
-  try {
-    const dueMs = new Date(p.due_date + 'T00:00:00Z').getTime();
-    const todayMs = new Date(today + 'T00:00:00Z').getTime();
-    const days = Math.round((dueMs - todayMs) / 86400000);
-    if (variant === 'overdue') daysLabel = t('employee.today.overdueBy', { days: Math.abs(days) });
-    else if (variant === 'due-soon') {
-      if (days === 0) daysLabel = t('employee.today.dueToday');
-      else daysLabel = t('employee.today.dueInDays', { days });
-    } else if (variant === 'recent') daysLabel = t('employee.today.recentlyReceived');
-  } catch (_e) {}
-  return (
-    <a href={href} className="tax-contact-item"
-       style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                gap: 12, textDecoration: 'none', color: 'inherit' }}>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontWeight: 600 }}>{cust.name || cust.email}</div>
-        <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
-          {name} · {p.period_label || p.due_date}
-        </div>
-      </div>
-      <div style={{ fontSize: 12, color: tone, fontWeight: 700, whiteSpace: 'nowrap' }}>
-        {daysLabel}
-      </div>
-    </a>
   );
 }
