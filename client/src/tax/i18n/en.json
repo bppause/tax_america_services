@@ -351,6 +351,7 @@
   "employee.nav.groupPublicHomepage": "Public homepage",
   "employee.nav.groupPracticeSetup": "Practice setup",
   "owner.customers.health.open": "open",
+  "owner.customers.viewTasks": "View tasks",
   "owner.customers.health.overdue": "overdue",
   "owner.leads.convert.title": "Convert {{name}} to a customer",
   "owner.leads.convert.identity": "Identity",

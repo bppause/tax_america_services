@@ -165,12 +165,30 @@ export default function OwnerTasks() {
     q: '',
   };
   const [filters, setFilters] = useState(() => {
+    // ?customerId=<id> (from the Customers list's "View tasks" link)
+    // wins over whatever filter set was last saved — the point of
+    // following that link is a focused view of THIS customer's tasks,
+    // not last session's filters intersected with them.
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('customerId');
+      if (fromUrl) return { ...DEFAULT_FILTERS, customerId: [fromUrl] };
+    } catch { /* ignore */ }
     try {
       const saved = JSON.parse(localStorage.getItem('tax.tasks.filters'));
       if (saved && typeof saved === 'object') return { ...DEFAULT_FILTERS, ...saved };
     } catch { /* ignore */ }
     return DEFAULT_FILTERS;
   });
+  // Strip ?customerId= once it's been applied above so a later manual
+  // filter change (or just reloading the page) doesn't keep re-pinning
+  // the view back to this customer.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('customerId')) return;
+    params.delete('customerId');
+    const qs = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     try { localStorage.setItem('tax.tasks.filters', JSON.stringify(filters)); }
     catch { /* ignore */ }

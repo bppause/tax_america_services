@@ -351,6 +351,7 @@
   "employee.nav.groupPublicHomepage": "Página pública",
   "employee.nav.groupPracticeSetup": "Configuración del despacho",
   "owner.customers.health.open": "abiertas",
+  "owner.customers.viewTasks": "Ver tareas",
   "owner.customers.health.overdue": "vencidas",
   "owner.leads.convert.title": "Convertir a {{name}} en cliente",
   "owner.leads.convert.identity": "Identidad",
