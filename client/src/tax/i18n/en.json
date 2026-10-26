@@ -863,7 +863,7 @@
   "employee.login.subtitle": "Practice access. Customer-facing portal is at /portal — sign in there if you are a client.",
   "employee.inbox.title": "Message inbox",
   "employee.today.title": "Today",
-  "employee.today.subtitle": "Filings, messages, and leads needing attention in the next {days} days.",
+  "employee.today.subtitle": "Messages, leads, and signatures needing attention.",
   "employee.today.allCaughtUp": "You're all caught up.",
   "employee.today.allCaughtUpSubtitle": "No overdue filings, unread messages, or new leads to triage.",
   "employee.today.overdueTitle": "Overdue ({count})",

@@ -12641,61 +12641,17 @@ ${closingHtml}
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const windowDays = Math.max(1, Math.min(60, parseInt(req.query.windowDays, 10) || 7));
     const today = (new Date()).toISOString().slice(0, 10);
-    const windowEnd = (() => {
-      const d = new Date(today + 'T00:00:00Z');
-      d.setUTCDate(d.getUTCDate() + windowDays);
-      return d.toISOString().slice(0, 10);
-    })();
-    const recentSince = (() => {
-      const d = new Date(today + 'T00:00:00Z');
-      d.setUTCDate(d.getUTCDate() - windowDays);
-      return d.toISOString();
-    })();
 
     // Scope filter: admins see everything, staff intersect with their
-    // assigned customer ids. An empty array → staff with no assignments →
-    // short-circuit every period query.
+    // assigned customer ids.
     const visible = await getVisibleCustomerIdsForEmployee(emp);
 
-    // BUG fix: this must be synchronous so callers can chain more filters
-    // before executing. Supabase query builders are thenable, so an `await`
-    // on the builder would execute the query prematurely. Returns the
-    // chainable builder, or `null` to signal "skip" (staff with no
-    // assignments) — caller checks for null and skips the chain.
-    function periodSelect(builder) {
-      let q = builder.select(`
-        id, customer_id, due_date, status, period_label,
-        customer:tax_customers ( id, email, name, locale ),
-        workflow:tax_relationship_workflow_rules ( id, filing_schedule_slug, name_i18n ),
-        schedule:tax_filing_schedules ( id, slug, name_i18n )
-      `).eq('community_id', emp.community_id);
-      if (Array.isArray(visible)) {
-        if (!visible.length) return null;
-        q = q.in('customer_id', visible);
-      }
-      return q;
-    }
-
-    const overdueQ = periodSelect(supabase.from('tax_filing_periods'));
-    const overdueRows = !overdueQ ? []
-      : (await overdueQ.in('status', ['pending', 'info_requested'])
-                .lt('due_date', today)
-                .order('due_date', { ascending: true })
-                .limit(50)).data || [];
-
-    const dueSoonQ = periodSelect(supabase.from('tax_filing_periods'));
-    const dueSoonRows = !dueSoonQ ? []
-      : (await dueSoonQ.in('status', ['pending', 'info_requested'])
-                .gte('due_date', today).lte('due_date', windowEnd)
-                .order('due_date', { ascending: true })
-                .limit(50)).data || [];
-
-    const recentQ = periodSelect(supabase.from('tax_filing_periods'));
-    const recentRows = !recentQ ? []
-      : (await recentQ.eq('status', 'info_received')
-                .gte('info_received_at', recentSince)
-                .order('info_received_at', { ascending: false })
-                .limit(20)).data || [];
+    // tax_filing_periods (overdue/due-soon/recent) used to be queried
+    // here too, but that's a separate, largely-unused customer-facing
+    // reminder-email system this practice doesn't run work through —
+    // it manages everything via the task board instead. Those periods
+    // sat unresolved for months (genuinely stale, not real outstanding
+    // work) and just added noise to this panel, so they were dropped.
 
     // Unread thread count: staff only sees threads for assigned customers.
     let unreadCount = 0;
@@ -12748,9 +12704,6 @@ ${closingHtml}
     res.json({
       asOf: today,
       windowDays,
-      overdue: overdueRows,
-      dueSoon: dueSoonRows,
-      recent: recentRows,
       unreadCount,
       newLeads,
       pendingSignatures,

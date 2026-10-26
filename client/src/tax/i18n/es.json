@@ -862,7 +862,7 @@
   "employee.login.subtitle": "Acceso del personal de la oficina. El portal de clientes está en /portal — inicie sesión allí si es cliente.",
   "employee.inbox.title": "Bandeja de mensajes",
   "employee.today.title": "Hoy",
-  "employee.today.subtitle": "Declaraciones, mensajes y prospectos que necesitan atención en los próximos {days} días.",
+  "employee.today.subtitle": "Mensajes, prospectos y firmas que necesitan atención.",
   "employee.today.allCaughtUp": "Está al día.",
   "employee.today.allCaughtUpSubtitle": "No hay declaraciones vencidas, mensajes sin leer ni prospectos nuevos.",
   "employee.today.overdueTitle": "Vencidos ({count})",
