@@ -1647,6 +1647,11 @@ function TaskFormModal({
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
+    // Every new task needs a note explaining what it's for / why it
+    // exists — same reasoning as requiring one on every status change
+    // (see ensureStatusChangeNotes above): the task's own history should
+    // explain itself without someone having to go ask the creator.
+    if (!notes.trim()) { setErr(t('owner.tasks.errNotesRequired')); return; }
     // A task with a customer isn't practice-wide — it needs one of
     // that customer's services too, not a blank/unrelated one.
     if (customerId && !productId) {
@@ -1943,10 +1948,10 @@ function TaskFormModal({
             <TaskNotesSection auth={auth} taskId={task.id} locale={locale} t={t} refreshKey={notesRefreshKey} />
           ) : (
             <div>
-              <label>{t('owner.tasks.field.notes')}</label>
+              <label>{t('owner.tasks.field.notes')} <span style={{ color: 'var(--tax-error)', fontWeight: 400 }}>*</span></label>
               <textarea rows={4} value={notes} onChange={e => setNotes(e.target.value)} maxLength={4000}
                         placeholder={t('owner.tasks.notes.placeholder')}
-                        title={t('owner.tasks.notes.hint')} />
+                        title={t('owner.tasks.notes.hint.create')} />
             </div>
           )}
 
