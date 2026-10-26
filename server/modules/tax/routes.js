@@ -1297,15 +1297,18 @@ module.exports = function createTaxRouter(deps) {
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
 
     try {
-      const customers = await searchCustomers({
-        communitySlug,
-        q: req.query.q,
-        productIds: parseCsvList(req.query.productIds),
-        customerType: req.query.customerType,
-        includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
-        scopedCustomerIds: null,            // admin sees the whole community
-      });
-      res.json({ customers });
+      const [customers, taskStatuses] = await Promise.all([
+        searchCustomers({
+          communitySlug,
+          q: req.query.q,
+          productIds: parseCsvList(req.query.productIds),
+          customerType: req.query.customerType,
+          includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
+          scopedCustomerIds: null,            // admin sees the whole community
+        }),
+        loadTaskStatusCatalog(communitySlug),
+      ]);
+      res.json({ customers, taskStatuses });
     } catch (e) {
       return sendSupabaseError(res, e);
     }
@@ -1496,15 +1499,22 @@ module.exports = function createTaxRouter(deps) {
     const { data: statusOpts } = await supabase.from('tax_task_status_options')
       .select('key, is_terminal').eq('community_id', communitySlug);
     const terminalKeys = new Set((statusOpts || []).filter(s => s.is_terminal).map(s => s.key));
+    // byStatus keeps the raw per-status tally too — open/overdue/in_progress
+    // alone collapse everything into one chip, which doesn't tell an admin
+    // whether a customer's open tasks are stuck in "Not started" or sitting
+    // in "Pending review". GET /admin/customers and GET /employee/customers
+    // separately fetch the community's status catalog (label/color/order)
+    // so the client can render each key as a proper labeled, colored pill.
     const healthByCustomer = new Map();
     for (const t of openTasks || []) {
       if (t.completed_at) continue;
       if (terminalKeys.has(t.status_key)) continue;
       const slot = healthByCustomer.get(t.customer_id)
-                || { open: 0, overdue: 0, in_progress: 0 };
+                || { open: 0, overdue: 0, in_progress: 0, byStatus: {} };
       slot.open += 1;
       if (t.status_key === 'in_progress') slot.in_progress += 1;
       if (t.due_date && t.due_date < today) slot.overdue += 1;
+      slot.byStatus[t.status_key] = (slot.byStatus[t.status_key] || 0) + 1;
       healthByCustomer.set(t.customer_id, slot);
     }
 
@@ -1512,8 +1522,21 @@ module.exports = function createTaxRouter(deps) {
       ...c,
       relationships: byCustomer.get(c.id) || [],
       services: servicesByCustomer.get(c.id) || [],
-      health: healthByCustomer.get(c.id) || { open: 0, overdue: 0, in_progress: 0 },
+      health: healthByCustomer.get(c.id) || { open: 0, overdue: 0, in_progress: 0, byStatus: {} },
     }));
+  }
+
+  // Community-wide task-status catalog (label/color/order), for rendering
+  // the per-customer status-count pills on the Customers list without a
+  // per-row fetch. Terminal statuses are excluded — searchCustomers'
+  // health.byStatus never tallies them, so they'd never have a nonzero
+  // count to show anyway.
+  async function loadTaskStatusCatalog(communitySlug) {
+    const { data } = await supabase.from('tax_task_status_options')
+      .select('key, label_i18n, color, display_order, is_terminal')
+      .eq('community_id', communitySlug).eq('is_terminal', false)
+      .order('display_order', { ascending: true });
+    return data || [];
   }
 
   function parseCsvList(raw) {
@@ -12469,15 +12492,18 @@ ${closingHtml}
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const visible = await getVisibleCustomerIdsForEmployee(emp);
     try {
-      const customers = await searchCustomers({
-        communitySlug: emp.community_id,
-        q: req.query.q,
-        productIds: parseCsvList(req.query.productIds),
-        customerType: req.query.customerType,
-        includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
-        scopedCustomerIds: visible,         // null for admin, array for staff
-      });
-      res.json({ customers });
+      const [customers, taskStatuses] = await Promise.all([
+        searchCustomers({
+          communitySlug: emp.community_id,
+          q: req.query.q,
+          productIds: parseCsvList(req.query.productIds),
+          customerType: req.query.customerType,
+          includeArchived: String(req.query.includeArchived || '').toLowerCase() === 'true',
+          scopedCustomerIds: visible,         // null for admin, array for staff
+        }),
+        loadTaskStatusCatalog(emp.community_id),
+      ]);
+      res.json({ customers, taskStatuses });
     } catch (e) {
       return sendSupabaseError(res, e);
     }
@@ -13840,11 +13866,22 @@ ${closingHtml}
   // Phase 4e: merges platform-default help articles with per-community
   // overrides/customs, mirroring the FAQ merge pattern.
   //
-  // For audience='customer', customerRelationshipTypeIds filters defaults to
-  //   (relationship_type_id IS NULL) OR (in customer's tagged set)
-  // Community-custom articles are also filtered by the same rule (a custom
-  // article tagged with a relationship type only shows to customers who
-  // have it; null-tagged customs show to everyone).
+  // customerRelationshipTypeIds has two distinct meanings, same convention
+  // loadEffectiveFaqs already uses correctly:
+  //   null        → no specific customer (the public /community/:slug/articles
+  //                 page, and its homepage-preview caller) — don't filter by
+  //                 relationship type at all, show every customer-audience
+  //                 article regardless of tag.
+  //   array       → GET /portal/help for a signed-in customer — filters
+  //                 defaults to (relationship_type_id IS NULL) OR (in the
+  //                 customer's tagged set), same rule for customs (an empty
+  //                 array means this customer has no tagged services, so
+  //                 only untagged content shows).
+  // Getting this backwards (treating null the same as []) was a real bug:
+  // every relationship-tagged "Customer" article vanished from the public
+  // Articles page, while untagged ones still showed — the page reads as
+  // broken, not merely incomplete, whenever the owner tags a public article
+  // by service.
   //
   // Each returned article carries source: 'default'|'override'|'custom' so
   // the admin UI can show overlay badges, and id retains the row the UI
@@ -13859,8 +13896,8 @@ ${closingHtml}
         type:tax_relationship_types ( id, category, slug, name_i18n )
       `)
       .eq('audience', audience).eq('active', true);
-    if (audience === 'customer') {
-      if (customerRelationshipTypeIds && customerRelationshipTypeIds.length) {
+    if (audience === 'customer' && customerRelationshipTypeIds !== null) {
+      if (customerRelationshipTypeIds.length) {
         const inList = customerRelationshipTypeIds.map(id => `"${id}"`).join(',');
         defaultsQ = defaultsQ.or(`relationship_type_id.is.null,relationship_type_id.in.(${inList})`);
       } else {
@@ -13912,12 +13949,12 @@ ${closingHtml}
       }
     }
 
-    // Append customs (filtered by relationship for customer audience).
+    // Append customs (filtered by relationship for customer audience, only
+    // when there's an actual customer to filter against — see the null-vs-
+    // array note above).
     for (const c of customs) {
-      if (audience === 'customer') {
-        if (c.relationship_type_id) {
-          if (!customerRelationshipTypeIds || !customerRelationshipTypeIds.includes(c.relationship_type_id)) continue;
-        }
+      if (audience === 'customer' && customerRelationshipTypeIds !== null && c.relationship_type_id) {
+        if (!customerRelationshipTypeIds.includes(c.relationship_type_id)) continue;
       }
       merged.push({ ...c, source: 'custom' });
     }

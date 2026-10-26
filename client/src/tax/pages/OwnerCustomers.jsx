@@ -66,6 +66,9 @@ export default function OwnerCustomers() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+  // Community's non-terminal task statuses (label/color/order), for
+  // rendering each customer row's task-status-count pills.
+  const [taskStatuses, setTaskStatuses] = useState([]);
 
   // Add-customer form state (admin only; staff sees no Add UI)
   const [adding, setAdding] = useState(false);
@@ -103,7 +106,7 @@ export default function OwnerCustomers() {
     const p = isAdmin
       ? taxApi.adminListCustomers(auth, community.id, opts)
       : taxApi.listEmployeeCustomers(auth, opts);
-    p.then(d => setCustomers(d.customers || []))
+    p.then(d => { setCustomers(d.customers || []); setTaskStatuses(d.taskStatuses || []); })
      .catch(e => setErr(e?.message || t('error.loadFailed')))
      .finally(() => setLoading(false));
   };
@@ -717,6 +720,7 @@ export default function OwnerCustomers() {
                   ? grouping.rows.map(c =>
                       <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t}
                                    auth={auth} isAdmin={isAdmin} products={products}
+                                   taskStatuses={taskStatuses} communitySlug={community?.id}
                                    onServicesChanged={patchCustomerServices} />)
                   : grouping.sections.map(({ letter, rows }) => {
                       const collapsed = !expandedLetters.has(letter);
@@ -747,6 +751,7 @@ export default function OwnerCustomers() {
                           {!collapsed && rows.map(c =>
                             <CustomerRow key={c.id} c={c} base={base} locale={locale} t={t}
                                          auth={auth} isAdmin={isAdmin} products={products}
+                                         taskStatuses={taskStatuses} communitySlug={community?.id}
                                          onServicesChanged={patchCustomerServices} />
                           )}
                         </div>
@@ -761,7 +766,7 @@ export default function OwnerCustomers() {
 // One row of the customer list, used by both the flat (search-results)
 // path and the grouped-by-letter path. Kept identical to the prior
 // inline markup so existing visual + interaction patterns survive.
-function CustomerRow({ c, base, locale, t, auth, isAdmin, products, onServicesChanged }) {
+function CustomerRow({ c, base, locale, t, auth, isAdmin, products, taskStatuses, communitySlug, onServicesChanged }) {
   const isArchived = c.status === 'archived';
   return (
     <a href={`${base}/${encodeURIComponent(c.id)}`}
@@ -826,6 +831,9 @@ function CustomerRow({ c, base, locale, t, auth, isAdmin, products, onServicesCh
           )}
           <RowServiceChips c={c} locale={locale} t={t} auth={auth} isAdmin={isAdmin}
                             products={products} onChanged={onServicesChanged} />
+          <TaskStatusSummary health={c.health} taskStatuses={taskStatuses}
+                              communitySlug={communitySlug} customerId={c.id}
+                              locale={locale} t={t} />
         </div>
         <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--tax-muted)', textAlign: 'right' }}>
           <div>{c.locale === 'en' ? 'EN' : 'ES'}</div>
@@ -1282,6 +1290,59 @@ function SummaryCell({ label, value, color, bg }) {
     <div style={{ background: bg, color, padding: '8px 10px', borderRadius: 6, textAlign: 'center' }}>
       <div style={{ fontSize: 18, fontWeight: 700 }}>{value}</div>
       <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.4px' }}>{label}</div>
+    </div>
+  );
+}
+
+// Per-status task-count pills + a "View tasks" link, so an admin can
+// tell AT A GLANCE whether a customer's open work is stuck in "Not
+// started" or sitting in "Pending review" without opening their
+// record — HealthChip (below) only ever collapsed that down to one
+// overdue/open number. Hidden entirely when there's nothing open
+// (same as HealthChip). The link jumps to the task board pre-filtered
+// to this customer (OwnerTasks reads ?customerId= once on load).
+function TaskStatusSummary({ health, taskStatuses, communitySlug, customerId, locale, t }) {
+  const byStatus = health?.byStatus || {};
+  const open = Number(health?.open) || 0;
+  if (!open || !communitySlug) return null;
+
+  const pills = (taskStatuses || [])
+    .map(s => ({ ...s, count: byStatus[s.key] || 0 }))
+    .filter(s => s.count > 0);
+  // A status key with a count but missing from the catalog (shouldn't
+  // normally happen — same community, same request) still gets shown,
+  // just unstyled, rather than silently dropping tasks from the total.
+  const knownKeys = new Set((taskStatuses || []).map(s => s.key));
+  for (const [key, count] of Object.entries(byStatus)) {
+    if (count > 0 && !knownKeys.has(key)) pills.push({ key, count, label_i18n: null, color: null });
+  }
+
+  const onViewTasks = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    window.location.href = `/tax/${communitySlug}/employee/tasks?customerId=${encodeURIComponent(customerId)}`;
+  };
+
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 6 }}>
+      {pills.map(s => {
+        const color = s.color || '#6b7280';
+        const label = s.label_i18n ? (pickI18n(s.label_i18n, locale).value || s.key) : s.key;
+        return (
+          <span key={s.key} style={{
+            padding: '1px 8px', borderRadius: 999,
+            background: `color-mix(in srgb, ${color} 15%, #fff)`, color,
+            fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap',
+          }}>{s.count} {label}</span>
+        );
+      })}
+      <button type="button" onClick={onViewTasks}
+              style={{
+                background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                fontSize: 11, fontWeight: 700, color: 'var(--tax-brand-primary)',
+                textDecoration: 'underline',
+              }}>
+        {t('owner.customers.viewTasks')} →
+      </button>
     </div>
   );
 }
