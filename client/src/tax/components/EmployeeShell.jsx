@@ -206,7 +206,12 @@ export default function EmployeeShell({ community, active, children }) {
                 {employee && perm('view_customers') && (
                   <NavGroup groupKey="business" label={t('employee.nav.groupBusiness')}>
                     {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
-                    {navLink('inbox',     `${base}/inbox`,     t('employee.nav.inbox'), unread)}
+                    {/* Messaging needs the customer portal — every
+                        /portal/threads endpoint requires a signed-in
+                        customer, so with the portal off nobody can ever
+                        start or reply to anything here. */}
+                    {community?.tax_customer_portal_enabled &&
+                      navLink('inbox', `${base}/inbox`, t('employee.nav.inbox'), unread)}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
@@ -240,7 +245,8 @@ export default function EmployeeShell({ community, active, children }) {
                 {employee && perm('view_customers') && (
                   <NavGroup groupKey="operations" label={t('employee.nav.groupOperations')}>
                     {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
-                    {navLink('inbox',     `${base}/inbox`,     t('employee.nav.inbox'), unread)}
+                    {community?.tax_customer_portal_enabled &&
+                      navLink('inbox', `${base}/inbox`, t('employee.nav.inbox'), unread)}
                     {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
                     {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
                     {isAdmin && perm('manage_leads') &&
