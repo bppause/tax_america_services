@@ -1898,6 +1898,8 @@
   "owner.help.subtitle": "Override platform default articles with your own wording, hide articles that don't apply to your practice, or write new ones from scratch. Changes only affect this community.",
   "owner.help.audience.customer": "Customer-facing",
   "owner.help.audience.employee": "Staff-facing",
+  "owner.help.audience.customer.whereHint": "⚠️ These articles are public — anyone can read them at {path}, no sign-in required. This is not the FAQ page and not gated to customers.",
+  "owner.help.audience.employee.whereHint": "🔒 These articles are staff-only — they appear in the Help Center inside the staff portal, not on the public website.",
   "owner.help.empty": "No articles in this view.",
   "owner.help.source.default": "Default",
   "owner.help.source.override": "Overridden",

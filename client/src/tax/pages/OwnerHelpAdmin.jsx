@@ -76,7 +76,7 @@ export default function OwnerHelpAdmin() {
       </div>
       <p className="tax-section__lede">{t('owner.help.subtitle')}</p>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
         {['customer', 'employee'].map(aud => (
           <button key={aud} type="button"
                   className={`tax-btn tax-btn--sm ${audience === aud ? 'tax-btn--primary' : 'tax-btn--ghost'}`}
@@ -86,6 +86,15 @@ export default function OwnerHelpAdmin() {
           </button>
         ))}
       </div>
+      {/* The two audiences land in completely different places — this was
+          easy to miss (the toggle alone doesn't say where either one
+          shows), and the result is content authored for the wrong
+          audience silently looking "missing" from the other one. */}
+      <p style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 0, marginBottom: 16 }}>
+        {audience === 'customer'
+          ? t('owner.help.audience.customer.whereHint', { path: `/tax/${community?.id || '...'}/articles` })
+          : t('owner.help.audience.employee.whereHint')}
+      </p>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
