@@ -43,6 +43,15 @@ export default function OwnerHelpAdmin() {
   const [err, setErr] = useState('');
   const [showCustom, setShowCustom] = useState(false);
 
+  // Customer-audience articles publish straight to the public /articles
+  // page (see the hint below the toggle) — but when the practice hasn't
+  // turned on the customer portal, inviting customers to "their" content
+  // doesn't make sense yet, same reasoning as the welcome-email checkbox
+  // on the Add Customer form. Scoped to adding NEW customer articles only
+  // — existing ones (and the Employee tab) stay fully manageable either way.
+  const portalEnabled = !!community?.tax_customer_portal_enabled;
+  const canAddForAudience = audience === 'employee' || portalEnabled;
+
   const load = () => {
     if (!employee || !community) return;
     taxApi.adminListHelp(auth, community.id, audience)
@@ -70,7 +79,9 @@ export default function OwnerHelpAdmin() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{t('owner.help.title')}</h2>
         <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                onClick={() => setShowCustom(s => !s)}>
+                onClick={() => setShowCustom(s => !s)}
+                disabled={!showCustom && !canAddForAudience}
+                title={!showCustom && !canAddForAudience ? t('owner.help.custom.portalDisabled') : undefined}>
           {showCustom ? t('owner.help.custom.cancel') : t('owner.help.custom.add')}
         </button>
       </div>
@@ -90,11 +101,16 @@ export default function OwnerHelpAdmin() {
           easy to miss (the toggle alone doesn't say where either one
           shows), and the result is content authored for the wrong
           audience silently looking "missing" from the other one. */}
-      <p style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 0, marginBottom: 16 }}>
+      <p style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 0, marginBottom: audience === 'customer' && !portalEnabled ? 4 : 16 }}>
         {audience === 'customer'
           ? t('owner.help.audience.customer.whereHint', { path: `/tax/${community?.id || '...'}/articles` })
           : t('owner.help.audience.employee.whereHint')}
       </p>
+      {audience === 'customer' && !portalEnabled && (
+        <p style={{ fontSize: 13, color: 'var(--tax-error)', marginTop: 0, marginBottom: 16 }}>
+          {t('owner.help.custom.portalDisabled')}
+        </p>
+      )}
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 

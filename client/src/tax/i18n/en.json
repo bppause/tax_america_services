@@ -1900,6 +1900,7 @@
   "owner.help.audience.employee": "Staff-facing",
   "owner.help.audience.customer.whereHint": "⚠️ These articles are public — anyone can read them at {path}, no sign-in required. This is not the FAQ page and not gated to customers.",
   "owner.help.audience.employee.whereHint": "🔒 These articles are staff-only — they appear in the Help Center inside the staff portal, not on the public website.",
+  "owner.help.custom.portalDisabled": "Adding new customer-facing articles is disabled while the customer portal is off — turn it on in Settings, or switch to Staff-facing.",
   "owner.help.empty": "No articles in this view.",
   "owner.help.source.default": "Default",
   "owner.help.source.override": "Overridden",

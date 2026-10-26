@@ -1899,6 +1899,7 @@
   "owner.help.audience.employee": "Para el personal",
   "owner.help.audience.customer.whereHint": "⚠️ Estos artículos son públicos — cualquiera puede leerlos en {path}, sin iniciar sesión. Esto no es la página de FAQ y no está restringido a clientes.",
   "owner.help.audience.employee.whereHint": "🔒 Estos artículos son solo para el personal — aparecen en el Centro de Ayuda dentro del portal del personal, no en el sitio público.",
+  "owner.help.custom.portalDisabled": "Agregar nuevos artículos para clientes está deshabilitado mientras el portal del cliente esté desactivado — actívelo en Configuración, o cambie a Para el personal.",
   "owner.help.empty": "No hay artículos en esta vista.",
   "owner.help.source.default": "Predeterminado",
   "owner.help.source.override": "Reemplazado",
