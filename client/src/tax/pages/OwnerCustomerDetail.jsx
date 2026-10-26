@@ -2632,6 +2632,7 @@ function InlineAddTask({ auth, community, customerId, statuses, employees, produ
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
+    if (!notes.trim()) { setErr(t('owner.tasks.errNotesRequired')); return; }
     setBusy(true); setErr('');
     try {
       await taxApi.adminCreateTask(auth, {
@@ -2704,8 +2705,11 @@ function InlineAddTask({ auth, community, customerId, statuses, employees, produ
         </div>
       </div>
       <div>
-        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>{t('owner.tasks.field.notes')}</label>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}>
+          {t('owner.tasks.field.notes')} <span style={{ color: 'var(--tax-error)', fontWeight: 400 }}>*</span>
+        </label>
         <textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} maxLength={4000}
+                  title={t('owner.tasks.notes.hint.create')}
                   style={{ width: '100%', padding: 8, border: '1px solid var(--tax-border)', borderRadius: 6, fontFamily: 'inherit', fontSize: 13 }} />
       </div>
       {err && <div className="tax-msg tax-msg--error">{err}</div>}

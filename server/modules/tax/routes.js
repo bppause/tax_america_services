@@ -8617,6 +8617,20 @@ ${closingHtml}
     }
     const title = trim(body.title, 300);
     if (!title) return res.status(400).json({ error: 'Task title is required.' });
+    const notes = trim(body.notes || '', MAX_TEXT_LEN);
+    // A new task needs a note explaining what it's for, same as every
+    // status change already requires one (notes_required_on_status_change
+    // below) — mirrors the client-side check in both TaskFormModal and
+    // InlineAddTask, which are the only two callers of this endpoint.
+    // System-generated tasks (generateTasksDirectFromProduct — recurring
+    // auto-tasks from a service's cadence) insert directly into tax_tasks
+    // and never hit this route, so they're unaffected.
+    if (!notes) {
+      return res.status(400).json({
+        error: 'notes_required_on_create',
+        message: 'Add a note explaining what this task is for before creating it.',
+      });
+    }
 
     const customerId = trim(body.customerId || '', 200) || null;
     if (customerId && !(await canEmployeeSeeCustomer(emp, customerId))) {
@@ -8627,7 +8641,6 @@ ${closingHtml}
     const priority    = ['urgent','high','normal','low'].includes(body.priority) ? body.priority : 'normal';
     const assignedTo  = trim(body.assignedEmployeeId || '', 200) || null;
     const dueDate     = body.dueDate ? String(body.dueDate).slice(0, 10) : null;
-    const notes       = trim(body.notes || '', MAX_TEXT_LEN);
     // A task tied to a customer isn't practice-wide — it needs one of
     // that customer's own tagged services, not a blank or unrelated one.
     if (customerId) {
