@@ -882,6 +882,8 @@
   "employee.inbox.filterAll": "All",
   "employee.inbox.filterUnread": "Unread ({count})",
   "employee.inbox.empty": "No customer conversations yet.",
+  "employee.inbox.portalDisabledHint": "The customer portal is off — customers can't sign in to start or reply to a conversation here. Enable it in Settings to use messaging.",
+  "employee.inbox.emptyPortalDisabled": "No customer conversations — the customer portal is off, so customers can't sign in to start one.",
   "employee.inbox.emptyUnread": "No unread customer messages right now.",
   "employee.inbox.fromCustomer": "From customer",
   "employee.inbox.fromPractice": "From practice",

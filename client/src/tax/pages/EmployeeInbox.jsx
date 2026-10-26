@@ -64,12 +64,31 @@ export default function EmployeeInbox() {
       </div>
       <p className="tax-section__lede">{t('employee.inbox.subtitle')}</p>
 
+      {/* Messaging is a signed-in customer-portal feature (POST
+          /portal/threads etc. all require requireTaxCustomer) — while
+          the portal is off, customers can't sign in to start or reply
+          to anything here. Existing conversations from before the
+          portal was disabled still show below (real history, not
+          hidden), but the empty state otherwise reads like "nothing's
+          happened yet" when really nothing CAN happen yet. */}
+      {!community?.tax_customer_portal_enabled && (
+        <div className="tax-msg" style={{
+          background: 'color-mix(in srgb, #92400e 8%, #fff)',
+          borderLeft: '3px solid #92400e', color: '#7c2d12',
+          marginBottom: 12,
+        }}>
+          {t('employee.inbox.portalDisabledHint')}
+        </div>
+      )}
+
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
       {shown === null ? <p>{t('loading')}</p>
         : shown.length === 0
           ? <p style={{ color: 'var(--tax-muted)' }}>
-              {filter === 'unread' ? t('employee.inbox.emptyUnread') : t('employee.inbox.empty')}
+              {!community?.tax_customer_portal_enabled
+                ? t('employee.inbox.emptyPortalDisabled')
+                : filter === 'unread' ? t('employee.inbox.emptyUnread') : t('employee.inbox.empty')}
             </p>
           : <div style={{ display: 'grid', gap: 8 }}>
               {shown.map(th => (

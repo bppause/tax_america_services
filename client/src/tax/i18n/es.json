@@ -881,6 +881,8 @@
   "employee.inbox.filterAll": "Todos",
   "employee.inbox.filterUnread": "Sin leer ({count})",
   "employee.inbox.empty": "Aún no hay conversaciones con clientes.",
+  "employee.inbox.portalDisabledHint": "El portal del cliente está desactivado — los clientes no pueden iniciar sesión para comenzar o responder una conversación aquí. Actívelo en Configuración para usar la mensajería.",
+  "employee.inbox.emptyPortalDisabled": "No hay conversaciones con clientes — el portal del cliente está desactivado, así que los clientes no pueden iniciar sesión para comenzar una.",
   "employee.inbox.emptyUnread": "No hay mensajes sin leer en este momento.",
   "employee.inbox.fromCustomer": "Del cliente",
   "employee.inbox.fromPractice": "De la oficina",
