@@ -220,7 +220,6 @@ export default function EmployeeShell({ community, active, children }) {
                 {isAdmin && (
                   <NavGroup groupKey="website" label={t('employee.nav.groupWebsite')}>
                     {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
-                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                     {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
                     {/* Staff/Settings are practice-operations powers — kept out
                         of a site admin's scope even in Simple mode. */}
@@ -228,6 +227,7 @@ export default function EmployeeShell({ community, active, children }) {
                       navLink('staff',    `${base}/staff`,    t('employee.nav.staff'))}
                     {perm('view_customers') && perm('manage_settings') &&
                       navLink('settings', `${base}/settings`, t('employee.nav.settings'))}
+                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                   </NavGroup>
                 )}
               </>
@@ -275,11 +275,11 @@ export default function EmployeeShell({ community, active, children }) {
                 {isAdmin && (
                   <NavGroup groupKey="public-homepage" label={t('employee.nav.groupPublicHomepage')} defaultCollapsed>
                     {perm('manage_services') && navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
-                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
+                    {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
                     {                          navLink('news',             `${base}/news`,            t('employee.nav.news'))}
                     {                          navLink('testimonials',     `${base}/testimonials`,    t('employee.nav.testimonials'))}
-                    {                          navLink('faqs',             `${base}/faqs`,            t('employee.nav.faqsAdmin'))}
                     {perm('manage_services') && navLink('whatsapp',        `${base}/whatsapp`,        t('employee.nav.whatsapp'))}
+                    {                          navLink('articles',         `${base}/articles`,        t('employee.nav.articles'))}
                   </NavGroup>
                 )}
               </>

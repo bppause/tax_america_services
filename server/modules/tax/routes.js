@@ -11368,6 +11368,20 @@ ${closingHtml}
     if (!titleI18n.en && !titleI18n.es) return res.status(400).json({ error: 'Provide a title in at least one language.' });
     if (!bodyI18n.en && !bodyI18n.es) return res.status(400).json({ error: 'Provide a body in at least one language.' });
 
+    // Customer-audience articles publish straight to the public /articles
+    // page — same reasoning as the welcome-email checkbox on the Add
+    // Customer form: while the portal is off, don't let new customer-
+    // facing content get added. Existing ones, and the Employee audience,
+    // stay unaffected — this only gates the create path.
+    if (audience === 'customer') {
+      const { data: comm } = await supabase.from('communities')
+        .select('tax_customer_portal_enabled').eq('id', communityId).maybeSingle();
+      if (!comm?.tax_customer_portal_enabled) {
+        return res.status(400).json({ error: 'portal_disabled',
+          message: 'Enable the customer portal before adding customer-facing articles.' });
+      }
+    }
+
     const id = 'thlpcu_' + uuidv4().slice(0, 12);
     const { error } = await supabase.from('tax_community_help_articles').insert({
       id, community_id: communityId, default_help_article_id: null,
