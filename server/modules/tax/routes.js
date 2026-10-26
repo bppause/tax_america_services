@@ -13866,11 +13866,22 @@ ${closingHtml}
   // Phase 4e: merges platform-default help articles with per-community
   // overrides/customs, mirroring the FAQ merge pattern.
   //
-  // For audience='customer', customerRelationshipTypeIds filters defaults to
-  //   (relationship_type_id IS NULL) OR (in customer's tagged set)
-  // Community-custom articles are also filtered by the same rule (a custom
-  // article tagged with a relationship type only shows to customers who
-  // have it; null-tagged customs show to everyone).
+  // customerRelationshipTypeIds has two distinct meanings, same convention
+  // loadEffectiveFaqs already uses correctly:
+  //   null        → no specific customer (the public /community/:slug/articles
+  //                 page, and its homepage-preview caller) — don't filter by
+  //                 relationship type at all, show every customer-audience
+  //                 article regardless of tag.
+  //   array       → GET /portal/help for a signed-in customer — filters
+  //                 defaults to (relationship_type_id IS NULL) OR (in the
+  //                 customer's tagged set), same rule for customs (an empty
+  //                 array means this customer has no tagged services, so
+  //                 only untagged content shows).
+  // Getting this backwards (treating null the same as []) was a real bug:
+  // every relationship-tagged "Customer" article vanished from the public
+  // Articles page, while untagged ones still showed — the page reads as
+  // broken, not merely incomplete, whenever the owner tags a public article
+  // by service.
   //
   // Each returned article carries source: 'default'|'override'|'custom' so
   // the admin UI can show overlay badges, and id retains the row the UI
@@ -13885,8 +13896,8 @@ ${closingHtml}
         type:tax_relationship_types ( id, category, slug, name_i18n )
       `)
       .eq('audience', audience).eq('active', true);
-    if (audience === 'customer') {
-      if (customerRelationshipTypeIds && customerRelationshipTypeIds.length) {
+    if (audience === 'customer' && customerRelationshipTypeIds !== null) {
+      if (customerRelationshipTypeIds.length) {
         const inList = customerRelationshipTypeIds.map(id => `"${id}"`).join(',');
         defaultsQ = defaultsQ.or(`relationship_type_id.is.null,relationship_type_id.in.(${inList})`);
       } else {
@@ -13938,12 +13949,12 @@ ${closingHtml}
       }
     }
 
-    // Append customs (filtered by relationship for customer audience).
+    // Append customs (filtered by relationship for customer audience, only
+    // when there's an actual customer to filter against — see the null-vs-
+    // array note above).
     for (const c of customs) {
-      if (audience === 'customer') {
-        if (c.relationship_type_id) {
-          if (!customerRelationshipTypeIds || !customerRelationshipTypeIds.includes(c.relationship_type_id)) continue;
-        }
+      if (audience === 'customer' && customerRelationshipTypeIds !== null && c.relationship_type_id) {
+        if (!customerRelationshipTypeIds.includes(c.relationship_type_id)) continue;
       }
       merged.push({ ...c, source: 'custom' });
     }
