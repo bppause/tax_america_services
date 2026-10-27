@@ -210,8 +210,8 @@ export default function OwnerTasks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSimple]);
   const [groupBy, setGroupBy] = useState(() => {
-    try { return localStorage.getItem('tax.tasks.groupBy') || 'none'; }
-    catch { return 'none'; }
+    try { return localStorage.getItem('tax.tasks.groupBy') || 'customer'; }
+    catch { return 'customer'; }
   });
   useEffect(() => {
     try { localStorage.setItem('tax.tasks.groupBy', groupBy); } catch { /* ignore */ }
