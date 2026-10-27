@@ -494,6 +494,7 @@ export default function OwnerTasks() {
           : view === 'kanban' ? (
               <TasksKanban tasks={tasks} statuses={statuses} community={community}
                            auth={auth} onChange={load} hideCompleted={hideCompleted}
+                           groupBy={groupBy}
                            onEdit={setEditingTask} locale={locale} t={t} />
             )
           : (
@@ -2498,7 +2499,7 @@ function TaskToolbar({ mine, setMine, hideCompleted, setHideCompleted, filters, 
         ))}
       </div>
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-        {!simple && view === 'list' && (
+        {!simple && (view === 'list' || view === 'kanban') && (
           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
             <span style={{ color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700 }}>
               {t('owner.tasks.groupBy.label')}
@@ -2509,7 +2510,7 @@ function TaskToolbar({ mine, setMine, hideCompleted, setHideCompleted, filters, 
               <option value="employee">{t('owner.tasks.groupBy.employee')}</option>
               <option value="service">{t('owner.tasks.groupBy.service')}</option>
               <option value="customer">{t('owner.tasks.groupBy.customer')}</option>
-              <option value="dueBucket">{t('owner.tasks.groupBy.dueBucket')}</option>
+              {view === 'list' && <option value="dueBucket">{t('owner.tasks.groupBy.dueBucket')}</option>}
             </select>
           </label>
         )}
@@ -3280,8 +3281,28 @@ function TasksCalendar({ tasks, community, statuses, onEdit, onChange, locale, t
   );
 }
 
+// Same grouping key convention TasksGroupedList uses for the List view —
+// kept separate rather than shared, since Kanban cards already carry their
+// relations embedded (tt.customer/tt.assignee/tt.product straight off the
+// task, no customerById/employeeById/productById lookups needed here).
+function kanbanGroupKey(tt, groupBy, locale, t) {
+  if (groupBy === 'employee') {
+    const e = tt.assignee;
+    return [e?.id || '__unassigned__', e ? (displayPersonName(e) || e.email) : t('owner.tasks.groupBy.unassigned')];
+  }
+  if (groupBy === 'service') {
+    const p = tt.product;
+    return [p?.id || '__none__', p ? (pickI18n(p.name_i18n, locale).value || p.slug) : t('owner.tasks.groupBy.noService')];
+  }
+  if (groupBy === 'customer') {
+    const c = tt.customer;
+    return [c?.id || '__none__', c ? (c.business_name || displayPersonName(c) || c.email) : t('owner.tasks.groupBy.practiceWide')];
+  }
+  return ['__none__', ''];
+}
+
 // ─── Kanban view (status columns + native drag-and-drop) ─────────────────
-function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideCompleted, locale, t }) {
+function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideCompleted, groupBy, locale, t }) {
   const thresholds = resolveThresholds(community);
   const todayIso = new Date().toISOString().slice(0, 10);
   let cols = statuses.length
@@ -3317,6 +3338,65 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     } catch (_e) { /* swallow */ }
   };
 
+  // One card's markup, shared between the flat (groupBy='none') and
+  // grouped renders below — was duplicated once per render path before.
+  const renderCard = (tt) => {
+    const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
+    const prCol = priorityColorOf(tt.priority, community);
+    const custName = tt.customer
+      ? (tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email)
+      : '';
+    const serviceName = tt.product
+      ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
+      : '';
+    const metaLine = [custName, serviceName].filter(Boolean).join(' · ');
+    const ownerName = tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : '';
+    return (
+      <TaskHover key={tt.id} task={tt} statuses={statuses}
+                 community={community} locale={locale} t={t}
+                 onDeleted={onChange}>
+        <button type="button"
+                draggable
+                onDragStart={e => e.dataTransfer.setData('text/plain', tt.id)}
+                onClick={() => onEdit(tt)}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', cursor: 'grab',
+                  padding: '8px 10px',
+                  background: '#fff',
+                  borderRadius: 6, border: '1px solid var(--tax-border)',
+                  borderLeft: `4px solid ${c.bar}`,
+                }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{tt.title}</div>
+          {metaLine && (
+            <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
+              {metaLine}
+            </div>
+          )}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
+            {tt.priority && (
+              <span style={{
+                padding: '1px 8px', borderRadius: 999,
+                background: prCol.bg, color: prCol.fg,
+                fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+              }}>{t(`owner.tasks.priority.${tt.priority}`)}</span>
+            )}
+            {tt.due_date && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--tax-muted)' }}>
+                {t('owner.tasks.due')}:
+                <DuePill dueDate={tt.due_date} thresholds={thresholds} t={t} />
+              </span>
+            )}
+          </div>
+          {ownerName && (
+            <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 4 }}>
+              {t('owner.tasks.owner')}: {ownerName}
+            </div>
+          )}
+        </button>
+      </TaskHover>
+    );
+  };
+
   return (
     <div style={{
       display: 'grid', gap: 12,
@@ -3325,6 +3405,32 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     }}>
       {cols.map(col => {
         const items = tasksByStatus.get(col.key) || [];
+
+        // Sub-group the column's cards (e.g. by customer, with
+        // "Practice-wide" as its own group) when a rollup is active.
+        // Each group gets a small header with a count, same convention
+        // the List view's "Group by" uses — none/unassigned sorts last.
+        // Kanban only supports these three groupings (its dropdown never
+        // offers dueBucket) — guards against a stale groupBy value carried
+        // over from List view, which would otherwise render one
+        // blank-label group instead of the normal flat column.
+        let groupedItems = null;
+        if (['employee', 'service', 'customer'].includes(groupBy)) {
+          const groups = new Map();
+          for (const tt of items) {
+            const [key, label] = kanbanGroupKey(tt, groupBy, locale, t);
+            const slot = groups.get(key) || { label, items: [] };
+            slot.items.push(tt);
+            groups.set(key, slot);
+          }
+          const order = Array.from(groups.keys()).sort((a, b) => {
+            if (a === '__unassigned__' || a === '__none__') return 1;
+            if (b === '__unassigned__' || b === '__none__') return -1;
+            return groups.get(a).label.localeCompare(groups.get(b).label);
+          });
+          groupedItems = order.map(k => ({ key: k, ...groups.get(k) }));
+        }
+
         return (
           <div key={col.id || col.key}
                onDragOver={e => e.preventDefault()}
@@ -3352,69 +3458,38 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
               </span>
               <span style={{ fontWeight: 500 }}>· {items.length}</span>
             </div>
-            <div style={{ display: 'grid', gap: 6 }}>
-              {items.map(tt => {
-                const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
-                const prCol = priorityColorOf(tt.priority, community);
-                const custName = tt.customer
-                  ? (tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email)
-                  : '';
-                const serviceName = tt.product
-                  ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
-                  : '';
-                const metaLine = [custName, serviceName].filter(Boolean).join(' · ');
-                const ownerName = tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : '';
-                return (
-                  <TaskHover key={tt.id} task={tt} statuses={statuses}
-                             community={community} locale={locale} t={t}
-                             onDeleted={onChange}>
-                    <button type="button"
-                            draggable
-                            onDragStart={e => e.dataTransfer.setData('text/plain', tt.id)}
-                            onClick={() => onEdit(tt)}
-                            style={{
-                              display: 'block', width: '100%', textAlign: 'left', cursor: 'grab',
-                              padding: '8px 10px',
-                              background: '#fff',
-                              borderRadius: 6, border: '1px solid var(--tax-border)',
-                              borderLeft: `4px solid ${c.bar}`,
-                            }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{tt.title}</div>
-                      {metaLine && (
-                        <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
-                          {metaLine}
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                        {tt.priority && (
-                          <span style={{
-                            padding: '1px 8px', borderRadius: 999,
-                            background: prCol.bg, color: prCol.fg,
-                            fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-                          }}>{t(`owner.tasks.priority.${tt.priority}`)}</span>
-                        )}
-                        {tt.due_date && (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--tax-muted)' }}>
-                            {t('owner.tasks.due')}:
-                            <DuePill dueDate={tt.due_date} thresholds={thresholds} t={t} />
-                          </span>
-                        )}
-                      </div>
-                      {ownerName && (
-                        <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 4 }}>
-                          {t('owner.tasks.owner')}: {ownerName}
-                        </div>
-                      )}
-                    </button>
-                  </TaskHover>
-                );
-              })}
-              {items.length === 0 && (
-                <div style={{ fontSize: 11, color: 'var(--tax-muted)', textAlign: 'center', padding: 12 }}>
-                  {t('owner.tasks.kanban.empty')}
-                </div>
-              )}
-            </div>
+            {groupedItems && groupedItems.length === 0 ? (
+              <div style={{ fontSize: 11, color: 'var(--tax-muted)', textAlign: 'center', padding: 12 }}>
+                {t('owner.tasks.kanban.empty')}
+              </div>
+            ) : groupedItems ? (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {groupedItems.map(g => (
+                  <div key={g.key}>
+                    <div style={{
+                      fontSize: 10, fontWeight: 700, color: 'var(--tax-muted)',
+                      textTransform: 'uppercase', letterSpacing: '.03em',
+                      padding: '2px 2px 4px', display: 'flex', justifyContent: 'space-between',
+                    }}>
+                      <span>{g.label}</span>
+                      <span>· {g.items.length}</span>
+                    </div>
+                    <div style={{ display: 'grid', gap: 6 }}>
+                      {g.items.map(renderCard)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 6 }}>
+                {items.map(renderCard)}
+                {items.length === 0 && (
+                  <div style={{ fontSize: 11, color: 'var(--tax-muted)', textAlign: 'center', padding: 12 }}>
+                    {t('owner.tasks.kanban.empty')}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
