@@ -215,12 +215,15 @@ export default function OwnerTasks() {
     if (isSimple && view !== 'list') setView('list');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSimple]);
+  // v2: the key bumped when the default moved to 'customer', so every
+  // user picks up the new default once regardless of a 'none' (or other)
+  // choice saved under the old key — they can still change it from here.
   const [groupBy, setGroupBy] = useState(() => {
-    try { return localStorage.getItem('tax.tasks.groupBy') || 'customer'; }
+    try { return localStorage.getItem('tax.tasks.groupBy.v2') || 'customer'; }
     catch { return 'customer'; }
   });
   useEffect(() => {
-    try { localStorage.setItem('tax.tasks.groupBy', groupBy); } catch { /* ignore */ }
+    try { localStorage.setItem('tax.tasks.groupBy.v2', groupBy); } catch { /* ignore */ }
   }, [groupBy]);
   // Periods view has its own grouping toggle (period / service / month).
   // Lives separately so flipping between List and Periods doesn't
