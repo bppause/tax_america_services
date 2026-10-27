@@ -5,6 +5,7 @@ import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import { formatLastSignInCompact } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
+import CustomerTypeBadge from '../components/CustomerTypeBadge';
 
 const WHATSAPP_E164 = /^\+[1-9]\d{6,14}$/;
 function normalizeWhatsappInput(raw) {
@@ -788,15 +789,7 @@ function CustomerRow({ c, base, locale, t, auth, isAdmin, products, taskStatuses
                 fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
               }}>{t('owner.customers.archivedBadge')}</span>
             )}
-            {c.customer_type === 'business' && (
-              <span style={{
-                marginLeft: 8, padding: '1px 8px', borderRadius: 999,
-                background: 'color-mix(in srgb, var(--tax-brand-primary) 12%, #fff)',
-                color: 'var(--tax-brand-primary)',
-                border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 30%, #fff)',
-                fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em',
-              }}>{t('owner.customers.customerType.business')}</span>
-            )}
+            <CustomerTypeBadge type={c.customer_type} t={t} />
             <HealthChip health={c.health} t={t} />
           </div>
           {c.business_name && (
