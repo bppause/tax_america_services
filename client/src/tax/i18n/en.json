@@ -665,6 +665,8 @@
   "owner.tasks.kanban.empty": "Drop a task here",
   "owner.tasks.kanban.expandAll": "Expand all",
   "owner.tasks.kanban.collapseAll": "Collapse all",
+  "owner.tasks.kanban.groupExpand": "Click to expand this group",
+  "owner.tasks.kanban.groupCollapse": "Click to collapse this group",
   "owner.settings.colors.title": "Color overrides",
   "owner.settings.colors.subtitle": "Replace the platform-default color for any priority or urgency bucket. Status colors are configured per-row in the Task statuses section above. Picking a color overrides the default; \"Reset\" puts the bucket back on the default.",
   "owner.settings.colors.priority": "Priority colors",

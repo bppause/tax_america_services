@@ -154,6 +154,10 @@
 .tax-nav .tax-btn--ghost { color: var(--tax-text); border-color: var(--tax-border); }
 .tax-nav .tax-btn--ghost:hover { background: var(--tax-bg-alt); }
 
+/* Kanban board: collapsible customer/employee/service sub-group header. */
+.tax-kanban-group-toggle { background: #fff; border: 1px solid var(--tax-border); }
+.tax-kanban-group-toggle:hover { background: var(--tax-bg-alt); border-color: var(--tax-brand-primary); }
+
 /* ── Section + cards ────────────────────────────────────────────────────── */
 .tax-section { padding: 64px 0; }
 .tax-section--alt { background: var(--tax-bg-alt); }

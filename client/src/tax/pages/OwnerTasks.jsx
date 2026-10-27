@@ -3514,22 +3514,29 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                   return (
                     <div key={g.key}>
                       <button type="button" onClick={() => toggleGroup(gid)}
+                              className="tax-kanban-group-toggle"
+                              title={isCollapsed ? t('owner.tasks.kanban.groupExpand') : t('owner.tasks.kanban.groupCollapse')}
+                              aria-expanded={!isCollapsed}
                               style={{
-                                width: '100%', background: 'none', border: 'none', cursor: 'pointer',
-                                font: 'inherit', fontSize: 10, fontWeight: 700, color: 'var(--tax-muted)',
+                                width: '100%', cursor: 'pointer',
+                                font: 'inherit', fontSize: 11, fontWeight: 700, color: 'var(--tax-text)',
                                 textTransform: 'uppercase', letterSpacing: '.03em',
-                                padding: '2px 2px 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                borderRadius: 6, padding: '5px 8px',
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                               }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                           <span aria-hidden="true" style={{
-                            display: 'inline-block', fontSize: 9,
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                            width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                            background: 'color-mix(in srgb, var(--tax-brand-primary) 14%, #fff)',
+                            color: 'var(--tax-brand-primary)', fontSize: 10,
                             transform: isCollapsed ? 'rotate(-90deg)' : 'none',
                             transition: 'transform .15s',
                           }}>▾</span>
                           {g.icon && <span aria-hidden="true">{g.icon}</span>}
-                          {g.label}
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
                         </span>
-                        <span>· {g.items.length}</span>
+                        <span style={{ color: 'var(--tax-muted)', fontWeight: 500, flexShrink: 0 }}>· {g.items.length}</span>
                       </button>
                       {!isCollapsed && (
                         <div style={{ display: 'grid', gap: 6 }}>
