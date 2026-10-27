@@ -666,6 +666,8 @@
   "owner.tasks.calendar.dayEmpty": "Nada vence ese día.",
   "owner.tasks.calendar.practiceWide": "Toda la oficina",
   "owner.tasks.kanban.empty": "Suelta una tarea aquí",
+  "owner.tasks.kanban.expandAll": "Expandir todo",
+  "owner.tasks.kanban.collapseAll": "Colapsar todo",
   "owner.settings.colors.title": "Personalizar colores",
   "owner.settings.colors.subtitle": "Reemplaza el color predeterminado para cualquier prioridad o nivel de urgencia. Los colores de estado se configuran por fila en la sección Estados de tarea más arriba. Elegir un color anula el predeterminado; \"Restablecer\" vuelve al original.",
   "owner.settings.colors.priority": "Colores de prioridad",

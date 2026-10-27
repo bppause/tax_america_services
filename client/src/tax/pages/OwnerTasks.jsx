@@ -10,6 +10,7 @@ import { formatFrequency } from '../lib/taskFrequency';
 import { formatDateTime } from '../lib/lastSignIn';
 import { mailtoHref, whatsappHref, taskContactMessage } from '../lib/contactLinks';
 import TaskHover from '../components/TaskHover';
+import { customerTypeIcon } from '../components/CustomerTypeBadge';
 
 // Owner / staff task tracker. Replaces the spreadsheet workflow:
 // columns from the source CSV map onto this UI as
@@ -197,8 +198,13 @@ export default function OwnerTasks() {
   // My-tasks toggle. View + group-by persist per browser via
   // localStorage so the operator's preference sticks across sessions.
   const [view, setView] = useState(() => {
-    try { return localStorage.getItem('tax.tasks.view') || 'kanban'; }
-    catch { return 'kanban'; }
+    // 'periods' was removed as a selectable tab — fall back to the
+    // default (kanban) for anyone whose saved preference still points
+    // at it, rather than landing on a view with no way back to it.
+    try {
+      const stored = localStorage.getItem('tax.tasks.view');
+      return ['list', 'calendar', 'kanban'].includes(stored) ? stored : 'kanban';
+    } catch { return 'kanban'; }
   });
   useEffect(() => {
     try { localStorage.setItem('tax.tasks.view', view); } catch { /* ignore */ }
@@ -1115,6 +1121,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
               <span><strong>{t('owner.tasks.customer')}:</strong>{' '}
                 <a href={`/tax/${task.community_id}/employee/customers/${encodeURIComponent(customer.id)}`}
                    style={{ color: 'var(--tax-brand-primary)' }}>
+                  <span aria-hidden="true">{customerTypeIcon(customer.customer_type)}</span>{' '}
                   {customer.business_name || displayPersonName(customer) || customer.email}
                 </a>
               </span>
@@ -2546,7 +2553,7 @@ function TaskToolbar({ mine, setMine, hideCompleted, setHideCompleted, filters, 
           <div role="tablist" style={{
             display: 'inline-flex', border: '1px solid var(--tax-border)', borderRadius: 6, overflow: 'hidden',
           }}>
-            {['list', 'periods', 'calendar', 'kanban'].map(v => (
+            {['kanban', 'calendar', 'list'].map(v => (
               <button key={v} type="button" onClick={() => setView(v)}
                       style={{
                         padding: '6px 10px', border: 0, cursor: 'pointer',
@@ -2642,7 +2649,7 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
     }
     if (groupBy === 'customer') {
       const c = task.customer || (task.customer_id ? customerById.get(task.customer_id) : null);
-      return [c?.id || '__none__', c ? (c.business_name || displayPersonName(c) || c.email) : t('owner.tasks.groupBy.practiceWide')];
+      return [c?.id || '__none__', c ? (c.business_name || displayPersonName(c) || c.email) : t('owner.tasks.groupBy.practiceWide'), c ? customerTypeIcon(c.customer_type) : null];
     }
     if (groupBy === 'dueBucket') {
       const u = effectiveUrgency(task, thresholds, today);
@@ -2651,8 +2658,8 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
     return ['__none__', ''];
   };
   for (const task of tasks) {
-    const [key, label] = keyFor(task);
-    const slot = groups.get(key) || { label, items: [] };
+    const [key, label, icon] = keyFor(task);
+    const slot = groups.get(key) || { label, icon, items: [] };
     slot.items.push(task);
     groups.set(key, slot);
   }
@@ -2676,6 +2683,7 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
               margin: '0 0 8px', fontSize: 13, color: 'var(--tax-muted)',
               textTransform: 'uppercase', letterSpacing: '.04em', fontWeight: 700,
             }}>
+              {g.icon && <span aria-hidden="true">{g.icon} </span>}
               {g.label} <span style={{ marginLeft: 4, fontWeight: 500 }}>· {g.items.length}</span>
             </h3>
             <div style={{ display: 'grid', gap: 8 }}>
@@ -3296,7 +3304,7 @@ function kanbanGroupKey(tt, groupBy, locale, t) {
   }
   if (groupBy === 'customer') {
     const c = tt.customer;
-    return [c?.id || '__none__', c ? (c.business_name || displayPersonName(c) || c.email) : t('owner.tasks.groupBy.practiceWide')];
+    return [c?.id || '__none__', c ? (c.business_name || displayPersonName(c) || c.email) : t('owner.tasks.groupBy.practiceWide'), c ? customerTypeIcon(c.customer_type) : null];
   }
   return ['__none__', ''];
 }
@@ -3305,6 +3313,16 @@ function kanbanGroupKey(tt, groupBy, locale, t) {
 function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideCompleted, groupBy, locale, t }) {
   const thresholds = resolveThresholds(community);
   const todayIso = new Date().toISOString().slice(0, 10);
+  // Per-(column, group) collapse state — keyed "statusKey::groupKey" so the
+  // same customer collapsed in one status column doesn't affect its card
+  // in another. Groups default to expanded (nothing in the set).
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const showGroups = ['employee', 'service', 'customer'].includes(groupBy);
+  const toggleGroup = (gid) => setCollapsed(prev => {
+    const next = new Set(prev);
+    if (next.has(gid)) next.delete(gid); else next.add(gid);
+    return next;
+  });
   let cols = statuses.length
     ? statuses.slice().sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
     : [{ id: 'fallback', key: 'not_started', label_i18n: { en: 'Not started', es: 'Sin iniciar' } }];
@@ -3344,7 +3362,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
     const prCol = priorityColorOf(tt.priority, community);
     const custName = tt.customer
-      ? (tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email)
+      ? `${customerTypeIcon(tt.customer.customer_type)} ${tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email}`
       : '';
     const serviceName = tt.product
       ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
@@ -3397,12 +3415,38 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     );
   };
 
+  // Universe of every (column, group) id currently on screen, so Expand
+  // all / Collapse all can act on exactly what's visible without having
+  // to wait for the per-column render pass below.
+  const allGroupIds = [];
+  if (showGroups) {
+    for (const col of cols) {
+      const items = tasksByStatus.get(col.key) || [];
+      const seen = new Set();
+      for (const tt of items) seen.add(kanbanGroupKey(tt, groupBy, locale, t)[0]);
+      for (const key of seen) allGroupIds.push(`${col.key}::${key}`);
+    }
+  }
+
   return (
-    <div style={{
-      display: 'grid', gap: 12,
-      gridTemplateColumns: `repeat(${cols.length}, minmax(220px, 1fr))`,
-      overflowX: 'auto',
-    }}>
+    <div>
+      {showGroups && allGroupIds.length > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+          <button type="button" className="tax-btn tax-btn--sm tax-btn--ghost"
+                  onClick={() => setCollapsed(new Set())}>
+            {t('owner.tasks.kanban.expandAll')}
+          </button>
+          <button type="button" className="tax-btn tax-btn--sm tax-btn--ghost"
+                  onClick={() => setCollapsed(new Set(allGroupIds))}>
+            {t('owner.tasks.kanban.collapseAll')}
+          </button>
+        </div>
+      )}
+      <div style={{
+        display: 'grid', gap: 12,
+        gridTemplateColumns: `repeat(${cols.length}, minmax(220px, 1fr))`,
+        overflowX: 'auto',
+      }}>
       {cols.map(col => {
         const items = tasksByStatus.get(col.key) || [];
 
@@ -3415,11 +3459,11 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
         // over from List view, which would otherwise render one
         // blank-label group instead of the normal flat column.
         let groupedItems = null;
-        if (['employee', 'service', 'customer'].includes(groupBy)) {
+        if (showGroups) {
           const groups = new Map();
           for (const tt of items) {
-            const [key, label] = kanbanGroupKey(tt, groupBy, locale, t);
-            const slot = groups.get(key) || { label, items: [] };
+            const [key, label, icon] = kanbanGroupKey(tt, groupBy, locale, t);
+            const slot = groups.get(key) || { label, icon, items: [] };
             slot.items.push(tt);
             groups.set(key, slot);
           }
@@ -3464,21 +3508,37 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
               </div>
             ) : groupedItems ? (
               <div style={{ display: 'grid', gap: 10 }}>
-                {groupedItems.map(g => (
-                  <div key={g.key}>
-                    <div style={{
-                      fontSize: 10, fontWeight: 700, color: 'var(--tax-muted)',
-                      textTransform: 'uppercase', letterSpacing: '.03em',
-                      padding: '2px 2px 4px', display: 'flex', justifyContent: 'space-between',
-                    }}>
-                      <span>{g.label}</span>
-                      <span>· {g.items.length}</span>
+                {groupedItems.map(g => {
+                  const gid = `${col.key}::${g.key}`;
+                  const isCollapsed = collapsed.has(gid);
+                  return (
+                    <div key={g.key}>
+                      <button type="button" onClick={() => toggleGroup(gid)}
+                              style={{
+                                width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                                font: 'inherit', fontSize: 10, fontWeight: 700, color: 'var(--tax-muted)',
+                                textTransform: 'uppercase', letterSpacing: '.03em',
+                                padding: '2px 2px 4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                              }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span aria-hidden="true" style={{
+                            display: 'inline-block', fontSize: 9,
+                            transform: isCollapsed ? 'rotate(-90deg)' : 'none',
+                            transition: 'transform .15s',
+                          }}>▾</span>
+                          {g.icon && <span aria-hidden="true">{g.icon}</span>}
+                          {g.label}
+                        </span>
+                        <span>· {g.items.length}</span>
+                      </button>
+                      {!isCollapsed && (
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          {g.items.map(renderCard)}
+                        </div>
+                      )}
                     </div>
-                    <div style={{ display: 'grid', gap: 6 }}>
-                      {g.items.map(renderCard)}
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div style={{ display: 'grid', gap: 6 }}>
@@ -3493,6 +3553,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
