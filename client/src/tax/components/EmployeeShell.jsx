@@ -18,6 +18,32 @@ const NAV_ICON = {
   testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔', inbox: '📨',
 };
 
+// A plain "Staff" badge told everyone with an employee login the same
+// thing regardless of what they could actually do — an owner, a staff
+// member scoped to a handful of assigned customers, and a site admin who
+// can't see customer data at all, all saw the identical label. This maps
+// the real access tiers (role, is_owner/is_seed_owner, and the
+// view_customers revocation that "Site admin" bundles — see
+// OwnerStaffDetail's RoleSwitcher) onto one label + one plain-language
+// scope line, shown wherever the signed-in employee needs to know what
+// they're looking at.
+function employeeRoleInfo(employee, t) {
+  if (!employee) return null;
+  if (employee.is_seed_owner) {
+    return { label: t('employee.role.seedOwner'), scope: t('employee.role.scope.all'), bg: '#fef3c7', fg: '#92400e' };
+  }
+  if (employee.is_owner) {
+    return { label: t('owner.staffDetail.owner.badge'), scope: t('employee.role.scope.all'), bg: '#fef3c7', fg: '#92400e' };
+  }
+  if (employee.role === 'admin' && employee.permissions?.view_customers === false) {
+    return { label: t('owner.staffDetail.role.siteAdmin'), scope: t('employee.role.scope.none'), bg: '#ede9fe', fg: '#5b21b6' };
+  }
+  if (employee.role === 'admin') {
+    return { label: t('owner.staffDetail.role.admin'), scope: t('employee.role.scope.all'), bg: 'var(--tax-brand-primary)', fg: '#fff' };
+  }
+  return { label: t('owner.staffDetail.role.staff'), scope: t('employee.role.scope.assigned'), bg: 'var(--tax-bg-alt)', fg: 'var(--tax-muted)' };
+}
+
 // Collapsible sidebar section — remembers whether the user last left it
 // open or closed, per browser (localStorage), so returning to the app
 // keeps the menu exactly as they arranged it. `defaultCollapsed` only
@@ -177,7 +203,16 @@ export default function EmployeeShell({ community, active, children }) {
               : <span className="tax-brand__mark">{initials}</span>}
             <span className="tax-shell__brand-name">
               <span className="tax-shell__brand-title">{community?.name || ''}</span>
-              <span className="tax-shell__staff-badge">{t('employee.staffBadge')}</span>
+              {(() => {
+                const info = employeeRoleInfo(employee, t);
+                return (
+                  <span className="tax-shell__staff-badge"
+                        style={info ? { background: info.bg, color: info.fg } : undefined}
+                        title={info?.scope}>
+                    {info ? info.label : t('employee.staffBadge')}
+                  </span>
+                );
+              })()}
             </span>
           </a>
 
@@ -396,14 +431,30 @@ export default function EmployeeShell({ community, active, children }) {
           <main className="tax-shell__content">
             {employee && (() => {
               const name = firstNameOf(employee) || displayPersonName(employee);
+              const info = employeeRoleInfo(employee, t);
               return (
-                <div style={{ color: 'var(--tax-muted)', fontSize: 14, marginBottom: 16 }}>
-                  {t('employee.greeting', { name: name || employee.email })}
-                  {/* Only append the email when it isn't already standing
-                      in for the name above (no name on file) — avoids
-                      "Welcome, you@x.com (you@x.com)". */}
-                  {name && employee.email && (
-                    <span style={{ marginLeft: 6 }}>({employee.email})</span>
+                <div style={{
+                  display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8,
+                  color: 'var(--tax-muted)', fontSize: 14, marginBottom: 16,
+                }}>
+                  <span>
+                    {t('employee.greeting', { name: name || employee.email })}
+                    {/* Only append the email when it isn't already standing
+                        in for the name above (no name on file) — avoids
+                        "Welcome, you@x.com (you@x.com)". */}
+                    {name && employee.email && (
+                      <span style={{ marginLeft: 6 }}>({employee.email})</span>
+                    )}
+                  </span>
+                  {info && (
+                    <>
+                      <span style={{
+                        padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        textTransform: 'uppercase', letterSpacing: '.03em',
+                        background: info.bg, color: info.fg,
+                      }}>{info.label}</span>
+                      <span style={{ fontSize: 12 }}>· {info.scope}</span>
+                    </>
                   )}
                 </div>
               );
