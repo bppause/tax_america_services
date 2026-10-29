@@ -8872,7 +8872,7 @@ ${closingHtml}
       if (missing.length) {
         return res.status(400).json({
           error: 'fields_required_with_owner',
-          message: `Add ${missing.join(' and ')} along with the owner before saving this assignment.`,
+          message: `Assigning an owner also requires a priority and a due date. Still missing: ${missing.join(' and ')}.`,
         });
       }
       update.status_key = 'in_progress';

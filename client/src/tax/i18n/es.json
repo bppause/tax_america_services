@@ -817,6 +817,7 @@
   "owner.tasks.statusChangeNotesPrompt": "Agrega una nota breve sobre este cambio de estado:",
   "owner.tasks.statusChangeNotesRequired": "Se requiere una nota para cambiar el estado de esta tarea.",
   "owner.tasks.assignedNextStepsPrompt": "Esta tarea ya tiene un responsable y pasa a En progreso. ¿Cuáles son los próximos pasos?",
+  "owner.tasks.ownerAssignRequiresFields": "Asignar un responsable también requiere una prioridad y una fecha de vencimiento. Todavía falta: {fields}.",
   "owner.tasks.progress.heading": "Progreso",
   "owner.tasks.progress.blockedBy": "Bloqueada por",
   "owner.tasks.progress.blockedByHint": "Elige otra tarea que debe terminarse antes de que esta pueda comenzar.",
