@@ -25,6 +25,7 @@ const PERIOD_LOOKAHEAD = 6;   // how many upcoming periods per schedule to keep 
 const DEFAULT_TOKEN_VALID_DAYS_AFTER_DUE = 14;
 
 const { sendOwnerAiDigest } = require('./ai-digest');
+const { sendDailyTaskStatusDigest } = require('./task-digest');
 
 module.exports = function createTaxRemindersCron(deps) {
   const {
@@ -556,6 +557,8 @@ module.exports = function createTaxRemindersCron(deps) {
           for (const c of communities) {
             sendOwnerAiDigest(c.id, { supabase, anthropicApiKey, sendSpanishEmail })
               .catch(e => warn('[ai-digest] community', c.id, e?.message || e));
+            sendDailyTaskStatusDigest(c.id, { supabase, sendSpanishEmail, publicAppUrl })
+              .catch(e => warn('[task-digest] community', c.id, e?.message || e));
           }
         }
       }

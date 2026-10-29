@@ -9268,13 +9268,19 @@ ${closingHtml}
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const taskId = trim(req.params.id, 200);
     const { data: cur } = await supabase.from('tax_tasks')
-      .select('id, community_id, assigned_employee_id, created_by_employee_id').eq('id', taskId).maybeSingle();
+      .select('id, community_id, status_key').eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    const isAssigner = !!cur.created_by_employee_id && cur.created_by_employee_id === emp.id;
-    if (emp.role !== 'admin' && !isAssigner) {
+    // A task still in Not started has no real work recorded against it
+    // yet, so anyone on the team can clear it. Once it's moved past
+    // that — in progress, pending review, completed — deleting it
+    // destroys whatever's attached (notes, time entries, review
+    // history), so that's reserved for the seeded owner account
+    // specifically, not just any admin, so there's one throat to
+    // choke on an accidental delete.
+    if (cur.status_key !== 'not_started' && !emp.is_seed_owner) {
       return res.status(403).json({ error: 'task_delete_not_allowed',
-        message: 'Only an admin or the employee who assigned this task can delete it.' });
+        message: 'Only the seeded owner account can delete a task that has moved past Not started.' });
     }
     const { error } = await supabase.from('tax_tasks').delete().eq('id', taskId);
     if (error) return sendSupabaseError(res, error);
