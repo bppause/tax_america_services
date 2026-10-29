@@ -149,6 +149,7 @@ export default function OwnerStaff() {
         </span>
       </div>
 
+      <RolesExplainer t={t} />
       <SessionsPanel auth={auth} community={community} locale={locale} t={t} />
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
@@ -328,6 +329,70 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Quick reference for every role/badge that can show up on this page —
+// the role model has grown past what the inline "Who sees what" note
+// above can cover (Staff/Admin/Site admin, Owner/Seed owner, and the two
+// independent grants Staff Admin and Reviewer). Collapsed by default,
+// same convention as the sessions panel below — reference material, not
+// everyday UI.
+const ROLE_LEGEND = [
+  { key: 'staff',       bg: 'var(--tax-bg-alt)', fg: 'var(--tax-muted)' },
+  { key: 'admin',       bg: 'var(--tax-brand-primary)', fg: '#fff' },
+  { key: 'siteAdmin',   bg: 'color-mix(in srgb, #6b7280 10%, #fff)', fg: '#374151' },
+  { key: 'owner',       bg: '#fef3c7', fg: '#92400e' },
+  { key: 'seedOwner',   bg: '#fef3c7', fg: '#92400e' },
+  { key: 'staffAdmin',  bg: '#e0f2fe', fg: '#075985' },
+  { key: 'reviewer',    bg: '#dcfce7', fg: '#166534' },
+];
+
+function RolesExplainer({ t }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section style={{
+      marginBottom: 16, border: '1px solid var(--tax-border)', borderRadius: 10,
+      background: '#fff', overflow: 'hidden',
+    }}>
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                width: '100%', textAlign: 'left', padding: '12px 14px',
+                border: 0, background: '#fff', cursor: 'pointer',
+              }}>
+        <span aria-hidden="true" style={{
+          display: 'inline-block', transition: 'transform .15s ease',
+          transform: open ? 'none' : 'rotate(-90deg)',
+        }}>▾</span>
+        <strong>{t('owner.staff.roles.title')}</strong>
+      </button>
+      {open && (
+        <div style={{ padding: '0 14px 14px', display: 'grid', gap: 10 }}>
+          <p style={{ margin: 0, fontSize: 13, color: 'var(--tax-muted)' }}>
+            {t('owner.staff.roles.subtitle')}
+          </p>
+          {ROLE_LEGEND.map(({ key, bg, fg }) => (
+            <div key={key} style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              padding: '8px 10px', borderRadius: 8, background: 'var(--tax-bg-alt)',
+            }}>
+              <span style={{
+                flexShrink: 0, padding: '2px 9px', borderRadius: 999,
+                background: bg, color: fg, fontSize: 11, fontWeight: 700,
+                textTransform: 'uppercase', whiteSpace: 'nowrap', marginTop: 1,
+              }}>{t(`owner.staff.roles.${key}.label`)}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13 }}>{t(`owner.staff.roles.${key}.desc`)}</div>
+                <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
+                  {t(`owner.staff.roles.${key}.grant`)}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
