@@ -3952,3 +3952,24 @@ update public.tax_employees
   set is_task_reviewer = true
   where community_id = 'tax-america-services'
     and email = 'bppause@gmail.com';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Reviewer magic-link tokens — let a Reviewer approve/reject a task
+-- straight from the daily "awaiting your review" email (review-digest.js)
+-- without signing in, same trust model as tax_response_tokens for
+-- customers. One row is minted per (task, reviewer) pair each time the
+-- digest sends; token stored hashed (sha-256 hex). Single-use OR until
+-- the task leaves pending-review state (checked live against tax_tasks
+-- at decision time, not just via used_at/expires_at).
+-- ═══════════════════════════════════════════════════════════════════════════════
+create table if not exists public.tax_review_tokens (
+  id text primary key,
+  task_id text not null references public.tax_tasks(id) on delete cascade,
+  employee_id text not null references public.tax_employees(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_review_tokens_task on public.tax_review_tokens(task_id);
+alter table public.tax_review_tokens disable row level security;

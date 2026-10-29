@@ -13,6 +13,11 @@
 //   POST /admin/cron/run           — global-admin; run one reminder cron cycle
 //   GET  /admin/customers          — global-admin; list tax customers + subscriptions for a community
 //
+// Reviewer magic-link endpoints (one-click review from the daily email
+// reminder — see review-digest.js, applyTaskReviewDecision):
+//   GET  /review/:token            — public; verify token, return the task's review details
+//   POST /review/:token            — public; apply the Reviewer's approve/reject decision
+//
 // Phase 2+ will add: /auth/*, /engagements/*, /documents/*, /messages/*, /products/*.
 
 'use strict';
@@ -9064,6 +9069,63 @@ ${closingHtml}
     res.json({ ok: true, note: row });
   });
 
+  // Shared core of a review decision (approve/reject) — the DB write,
+  // audit log, and assignee notification. Used by both the authenticated
+  // POST /admin/tasks/:id/review below (owner reviewing from inside the
+  // app) and the public POST /review/:token (a Reviewer acting straight
+  // from the daily email reminder — see review-digest.js). Callers are
+  // responsible for their own auth/role/community checks and for
+  // confirming `task.pending_review_at` is set and `task.reviewed_at`
+  // isn't, before calling in; `task` must carry at least id, community_id,
+  // status_key, review_target_status_key.
+  async function applyTaskReviewDecision({ task, decision, note, actor }) {
+    const nowIso = new Date().toISOString();
+    const update = { updated_at: nowIso, review_note: note, review_target_status_key: null, status_changed_at: nowIso };
+    if (decision === 'approve') {
+      update.reviewed_at = nowIso;
+      update.reviewed_by_employee_id = actor.id;
+      update.completed_at = nowIso;
+      // Restore the terminal status the preparer actually asked for —
+      // status_key was parked on "Pending review" while this was in
+      // flight.
+      update.status_key = task.review_target_status_key || task.status_key;
+    } else {
+      update.pending_review_at = null; // back to in-flight; preparer fixes and re-completes
+      // Move explicitly back to "In progress" — rejecting means there's
+      // more work to do, not just "somewhere non-terminal". Falls back
+      // to the first other non-terminal, non-pending-review status if
+      // a community has renamed or removed that key.
+      const { data: statusOpts } = await supabase.from('tax_task_status_options')
+        .select('key, display_order, is_terminal')
+        .eq('community_id', task.community_id)
+        .order('display_order', { ascending: true });
+      const reopenStatus = (statusOpts || []).find(s => s.key === 'in_progress' && !s.is_terminal)
+        || (statusOpts || []).find(s => !s.is_terminal && s.key !== 'pending_review');
+      if (reopenStatus) update.status_key = reopenStatus.key;
+    }
+    const { error } = await supabase.from('tax_tasks').update(update).eq('id', task.id);
+    if (error) {
+      // Can't call sendSupabaseError here (no res — shared by two routes
+      // with different ones), so log + format the same way it does.
+      warn('[tax-task-review] update failed', error);
+      const parts = [error?.message, error?.details, error?.hint, error?.code].filter(Boolean);
+      return { ok: false, status: 500, error: parts.join(' | ') || 'Supabase error' };
+    }
+    try {
+      await auditLog({
+        entity: 'tax.task', entityId: task.id, action: `review_${decision}`,
+        actorEmail: actor.email || '', actorName: actor.name || '',
+        after: { note: note ? note.slice(0, 200) : '' },
+      });
+    } catch (_e) {}
+    await notifyTaskReviewDecision({
+      taskId: task.id, decision, note,
+      newStatusKey: update.status_key || task.status_key,
+      actor,
+    });
+    return { ok: true, decision };
+  }
+
   // POST /admin/tasks/:id/review
   // Body: { decision: 'approve'|'reject', note?: string }
   // Only the owner signs off on a task sitting in pending-review state —
@@ -9102,45 +9164,129 @@ ${closingHtml}
     if (!cur.pending_review_at || cur.reviewed_at) {
       return res.status(409).json({ error: 'This task is not awaiting review.' });
     }
-    const nowIso = new Date().toISOString();
-    const update = { updated_at: nowIso, review_note: note, review_target_status_key: null, status_changed_at: nowIso };
-    if (decision === 'approve') {
-      update.reviewed_at = nowIso;
-      update.reviewed_by_employee_id = emp.id;
-      update.completed_at = nowIso;
-      // Restore the terminal status the preparer actually asked for —
-      // status_key was parked on "Pending review" while this was in
-      // flight.
-      update.status_key = cur.review_target_status_key || cur.status_key;
-    } else {
-      update.pending_review_at = null; // back to in-flight; preparer fixes and re-completes
-      // Move explicitly back to "In progress" — rejecting means there's
-      // more work to do, not just "somewhere non-terminal". Falls back
-      // to the first other non-terminal, non-pending-review status if
-      // a community has renamed or removed that key.
-      const { data: statusOpts } = await supabase.from('tax_task_status_options')
-        .select('key, display_order, is_terminal')
-        .eq('community_id', cur.community_id)
-        .order('display_order', { ascending: true });
-      const reopenStatus = (statusOpts || []).find(s => s.key === 'in_progress' && !s.is_terminal)
-        || (statusOpts || []).find(s => !s.is_terminal && s.key !== 'pending_review');
-      if (reopenStatus) update.status_key = reopenStatus.key;
+    const result = await applyTaskReviewDecision({ task: cur, decision, note, actor: emp });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ ok: true, decision: result.decision });
+  });
+
+  // Internal helper — validates a Reviewer's magic-link review token
+  // (minted daily by review-digest.js, one per task per Reviewer) and
+  // returns everything the public /review/:token endpoints need. Mirrors
+  // fetchValidToken's shape for the customer /respond/:token flow, but
+  // additionally re-confirms the bound employee still holds the Reviewer
+  // role — a grant can be revoked any time after the email went out,
+  // independent of the token's own expiry.
+  async function fetchValidReviewToken(raw) {
+    const tokenHash = sha256(raw);
+    const { data: t, error: tErr } = await supabase
+      .from('tax_review_tokens')
+      .select('id, task_id, employee_id, expires_at, used_at')
+      .eq('token_hash', tokenHash)
+      .maybeSingle();
+    if (tErr) return { ok: false, status: 500, error: tErr.message };
+    if (!t) return { ok: false, status: 404, error: 'Invalid or expired link.' };
+    if (t.used_at) return { ok: false, status: 410, error: 'This link has already been used.' };
+    if (new Date(t.expires_at) < new Date()) {
+      return { ok: false, status: 410, error: 'This link has expired.' };
     }
-    const { error } = await supabase.from('tax_tasks').update(update).eq('id', taskId);
-    if (error) return sendSupabaseError(res, error);
-    try {
-      await auditLog({
-        entity: 'tax.task', entityId: taskId, action: `review_${decision}`,
-        actorEmail: emp.email || '', actorName: emp.name || '',
-        after: { note: note ? note.slice(0, 200) : '' },
-      });
-    } catch (_e) {}
-    await notifyTaskReviewDecision({
-      taskId, decision, note,
-      newStatusKey: update.status_key || cur.status_key,
-      actor: emp,
+
+    const { data: task, error: taskErr } = await supabase.from('tax_tasks')
+      .select(`
+        id, community_id, title, due_date, priority, status_key, notes,
+        pending_review_at, reviewed_at, review_target_status_key,
+        assigned_employee_id, customer_id
+      `).eq('id', t.task_id).maybeSingle();
+    if (taskErr) return { ok: false, status: 500, error: taskErr.message };
+    if (!task) return { ok: false, status: 404, error: 'Task not found.' };
+
+    const { data: reviewer } = await supabase.from('tax_employees')
+      .select('id, email, name, first_name, last_name, is_task_reviewer, is_seed_owner, status')
+      .eq('id', t.employee_id).maybeSingle();
+    if (!reviewer || reviewer.status === 'archived') {
+      return { ok: false, status: 403, error: 'This reviewer account is no longer active.' };
+    }
+    if (!isTaskReviewer(reviewer)) {
+      return { ok: false, status: 403, error: 'This account no longer holds the Reviewer role.' };
+    }
+
+    const [{ data: community }, { data: customer }, { data: assignee }] = await Promise.all([
+      supabase.from('communities')
+        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale')
+        .eq('id', task.community_id).maybeSingle(),
+      task.customer_id
+        ? supabase.from('tax_customers').select('id, name, business_name').eq('id', task.customer_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      task.assigned_employee_id
+        ? supabase.from('tax_employees').select('id, name, email, first_name, last_name').eq('id', task.assigned_employee_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    if (!community) return { ok: false, status: 404, error: 'Community not found.' };
+
+    return { ok: true, tokenId: t.id, task, reviewer, community, customer, assignee };
+  }
+
+  // ── GET /review/:token ──
+  // Public. Verifies a Reviewer's magic-link review token and returns the
+  // task's review-relevant details — lets a Reviewer act straight from
+  // the daily email reminder (review-digest.js) without signing in, same
+  // trust model as the customer /respond/:token flow, scoped to exactly
+  // one task and one of approve/reject.
+  router.get('/review/:token', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    if (!raw) return res.status(400).json({ error: 'Token required.' });
+    const tokenRow = await fetchValidReviewToken(raw);
+    if (!tokenRow.ok) return res.status(tokenRow.status).json({ error: tokenRow.error });
+    const { task, community, customer, assignee } = tokenRow;
+    res.json({
+      community,
+      task: {
+        id: task.id, title: task.title, due_date: task.due_date, priority: task.priority,
+        status_key: task.status_key, notes: task.notes,
+      },
+      customer: customer ? { id: customer.id, name: customer.name, business_name: customer.business_name } : null,
+      assignee: assignee ? { id: assignee.id, name: displayNameOf(assignee) || assignee.email, email: assignee.email } : null,
+      alreadyHandled: !task.pending_review_at || !!task.reviewed_at,
     });
-    res.json({ ok: true, decision });
+  });
+
+  // ── POST /review/:token ──
+  // Public. Body: { decision: 'approve'|'reject', note?: string }. Applies
+  // the same approve/reject transition as the authenticated
+  // POST /admin/tasks/:id/review (via applyTaskReviewDecision), using the
+  // Reviewer bound to this token as the actor — so the assignee still
+  // gets notified with the note on reject, exactly as if the Reviewer had
+  // signed in and done it from the app. Single-use: invalidated right
+  // after a successful decision, and blocked if the task was already
+  // handled by someone else in the meantime (e.g. from inside the app, or
+  // another of this Reviewer's own devices).
+  router.post('/review/:token', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    if (!raw) return res.status(400).json({ error: 'Token required.' });
+    const decision = trim(req.body?.decision, 40);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ error: 'decision must be approve or reject.' });
+    }
+    if (decision === 'reject' && !note) {
+      return res.status(400).json({
+        error: 'note_required',
+        message: 'Add a note explaining why this task still needs work before sending it back.',
+      });
+    }
+    const tokenRow = await fetchValidReviewToken(raw);
+    if (!tokenRow.ok) return res.status(tokenRow.status).json({ error: tokenRow.error });
+    const { task, reviewer } = tokenRow;
+    if (!task.pending_review_at || task.reviewed_at) {
+      return res.status(409).json({ error: 'This task is not awaiting review.' });
+    }
+    const result = await applyTaskReviewDecision({ task, decision, note, actor: reviewer });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    await supabase.from('tax_review_tokens')
+      .update({ used_at: new Date().toISOString() })
+      .eq('id', tokenRow.tokenId);
+    res.json({ ok: true, decision: result.decision });
   });
 
   // GET /admin/tasks/awaiting-review

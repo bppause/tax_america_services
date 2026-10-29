@@ -169,6 +169,8 @@ export const taxApi = {
   chatWithAi(payload)             { return request('POST', '/leads/chat', payload, null, { timeoutMs: 30000 }); },
   getResponse(token)              { return request('GET',  `/respond/${encodeURIComponent(token)}`); },
   submitResponse(token, payload)  { return request('POST', `/respond/${encodeURIComponent(token)}`, payload); },
+  getTaskReview(token)             { return request('GET',  `/review/${encodeURIComponent(token)}`); },
+  submitTaskReview(token, payload){ return request('POST', `/review/${encodeURIComponent(token)}`, payload); },
 
   // Portal (Phase 2a) — `auth = { uid, email, communitySlug }`
   authLink(payload)               { return request('POST', '/auth/link', payload); },

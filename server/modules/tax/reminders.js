@@ -26,6 +26,7 @@ const DEFAULT_TOKEN_VALID_DAYS_AFTER_DUE = 14;
 
 const { sendOwnerAiDigest } = require('./ai-digest');
 const { sendDailyTaskStatusDigest } = require('./task-digest');
+const { sendDailyReviewDigest } = require('./review-digest');
 
 module.exports = function createTaxRemindersCron(deps) {
   const {
@@ -559,6 +560,8 @@ module.exports = function createTaxRemindersCron(deps) {
               .catch(e => warn('[ai-digest] community', c.id, e?.message || e));
             sendDailyTaskStatusDigest(c.id, { supabase, sendSpanishEmail, publicAppUrl })
               .catch(e => warn('[task-digest] community', c.id, e?.message || e));
+            sendDailyReviewDigest(c.id, { supabase, sendSpanishEmail, publicAppUrl })
+              .catch(e => warn('[review-digest] community', c.id, e?.message || e));
           }
         }
       }
