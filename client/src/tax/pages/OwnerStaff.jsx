@@ -292,6 +292,15 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
               {t('employee.role.staffAdmin')}
             </span>
           )}
+          {e.is_task_reviewer && !e.is_seed_owner && (
+            <span style={{
+              marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+              background: '#dcfce7', color: '#166534',
+              fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+            }} title={t('owner.staff.reviewerHint')}>
+              {t('employee.role.reviewer')}
+            </span>
+          )}
           <AccessScopePill emp={e} t={t} />
           {!e.firebase_uid && (
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--tax-muted)' }}>

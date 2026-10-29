@@ -103,6 +103,7 @@ export default function OwnerStaffDetail({ employeeId }) {
               </>
             )}
             <StaffAdminToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
+            <ReviewerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
           </h2>
           {/* One-sentence summary of what this person can see, right under
@@ -1758,6 +1759,58 @@ function StaffAdminToggle({ emp, me, auth, onSaved, t }) {
                onChange={e => onChange(e.target.checked)}
                style={{ margin: 0 }} />
         {t('employee.role.staffAdmin')}
+      </label>
+      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
+    </span>
+  );
+}
+
+// "Reviewer" — the only role that can move a task to a terminal/
+// completed status. Narrower than Staff Admin: only the seeded owner
+// (checked by the page-level me?.is_seed_owner gate below, mirrored
+// server-side on PUT .../reviewer-role) can grant or revoke it — not
+// just any admin, and not even another Reviewer. Anyone else viewing
+// this page sees a plain badge when it applies, with no way to change it.
+function ReviewerToggle({ emp, me, auth, onSaved, t }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSelf = emp.id === me?.id;
+
+  if (emp.is_seed_owner) return null;
+
+  if (!me?.is_seed_owner) {
+    return emp.is_task_reviewer ? (
+      <span style={{
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', background: '#dcfce7', color: '#166534',
+      }} title={t('owner.staff.reviewerHint')}>{t('employee.role.reviewer')}</span>
+    ) : null;
+  }
+
+  const onChange = async (grant) => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminSetEmployeeTaskReviewer(auth, emp.id, grant);
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <label style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', cursor: (busy || isSelf) ? 'not-allowed' : 'pointer',
+        background: emp.is_task_reviewer ? '#dcfce7' : 'var(--tax-bg-alt)',
+        color: emp.is_task_reviewer ? '#166534' : 'var(--tax-muted)',
+      }} title={isSelf ? t('owner.staffDetail.role.selfHint') : t('owner.staff.reviewerHint')}>
+        <input type="checkbox" checked={!!emp.is_task_reviewer}
+               disabled={busy || isSelf}
+               onChange={e => onChange(e.target.checked)}
+               style={{ margin: 0 }} />
+        {t('employee.role.reviewer')}
       </label>
       {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
     </span>
