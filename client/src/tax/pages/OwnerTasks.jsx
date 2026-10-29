@@ -134,7 +134,6 @@ export default function OwnerTasks() {
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
   const isAdmin = employee?.role === 'admin';
-  const isOwner = !!employee?.is_owner;
   const isSeedOwner = !!employee?.is_seed_owner;
   // Reviewer is the one role allowed to move a task to a terminal/
   // completed status (see server-side isTaskReviewer in routes.js) —
@@ -437,7 +436,7 @@ export default function OwnerTasks() {
       {editingTask && (
         <TaskFormModal
           mode="edit" task={editingTask}
-          auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner} isSeedOwner={isSeedOwner}
+          auth={auth} community={community} isAdmin={isAdmin} isSeedOwner={isSeedOwner}
           isReviewer={isReviewer}
           reviewOverrideEnabled={reviewOverrideEnabled}
           statuses={statuses} employees={employees} customers={customers}
@@ -1363,7 +1362,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 // service from the customer's first active relationship (best-effort —
 // stays blank if no workflow rule chains to a product).
 function TaskFormModal({
-  mode, task, auth, community, isAdmin, isOwner, isSeedOwner, isReviewer, reviewOverrideEnabled,
+  mode, task, auth, community, isAdmin, isSeedOwner, isReviewer, reviewOverrideEnabled,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
@@ -1979,7 +1978,7 @@ function TaskFormModal({
 
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks}
-                                isAdmin={isAdmin} isOwner={isOwner} isReviewer={isReviewer}
+                                isAdmin={isAdmin} isReviewer={isReviewer}
                                 reviewOverrideEnabled={reviewOverrideEnabled}
                                 statuses={statuses} currentStatusKey={statusKey}
                                 auth={auth} locale={locale} t={t} />

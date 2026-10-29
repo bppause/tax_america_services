@@ -33,6 +33,17 @@ const {
   hasEmployeePermission,
   sanitizePermissions,
 } = require('./permissions');
+// Mirrors client/src/tax/pages/OwnerStaffDetail.jsx's SITE_ADMIN_REVOKED_KEYS
+// / SITE_ADMIN_GRANTED_KEYS exactly — used by PUT /admin/employees/:id/
+// site-admin-bundle to apply or remove the "Site admin" permission profile
+// server-side, so the bundle is defined once and can't drift between the
+// two copies.
+const SITE_ADMIN_BUNDLE_REVOKED_KEYS = [
+  'view_customers', 'manage_customers', 'manage_leads',
+  'manage_workflows', 'manage_email_templates', 'manage_settings',
+  'manage_employees', 'send_reminders', 'view_audit_logs',
+];
+const SITE_ADMIN_BUNDLE_GRANTED_KEYS = ['manage_services'];
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
 const { fetchAiNews, rowFromItem: newsRowFromItem } = require('./news-refresh');
 const { generateFaqsForService, inferRelationshipCategory } = require('./faq-autogen');
@@ -342,7 +353,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.get('x-tax-community') || '', 200);
     if (uid && email && communitySlug) {
       const { data: emp } = await supabase.from('tax_employees')
-        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner, is_seed_owner')
+        .select('id, community_id, email, role, status, firebase_uid, permissions, is_seed_owner')
         .eq('email', email).eq('community_id', communitySlug).maybeSingle();
       if (emp && emp.status === 'active' && emp.role === 'admin' &&
           (!emp.firebase_uid || emp.firebase_uid === uid)) {
@@ -358,13 +369,6 @@ module.exports = function createTaxRouter(deps) {
     }
     res.status(403).json({ error: 'Admin authentication required.' });
     return null;
-  }
-
-  // A global admin (env- or DB-level, not tied to a specific community
-  // employee row) outranks any community owner, so they always pass.
-  // Otherwise only the employee row flagged is_owner does.
-  function actorIsOwner(actor) {
-    return actor?.source === 'global' || !!actor?.employee?.is_owner;
   }
 
   // The Reviewer role — the only one allowed to move a task to a
@@ -401,7 +405,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.get('x-tax-community') || '', 200);
     if (uid && email && communitySlug) {
       const { data: emp } = await supabase.from('tax_employees')
-        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+        .select('id, community_id, email, role, status, firebase_uid, permissions, is_seed_owner, is_employee_site_admin, is_task_reviewer')
         .eq('email', email).eq('community_id', communitySlug).maybeSingle();
       if (emp && emp.status === 'active' && (!emp.firebase_uid || emp.firebase_uid === uid)) {
         const allowed = emp.is_seed_owner || emp.is_employee_site_admin
@@ -413,10 +417,10 @@ module.exports = function createTaxRouter(deps) {
     return null;
   }
 
-  // The seeded owner is the one account whose owner status is
-  // permanent and who alone can grant or revoke is_owner on anyone
-  // else — see PUT /admin/employees/:id/owner. A global admin still
-  // outranks everyone, same as actorIsOwner above.
+  // The seeded owner is the one account that can never be removed or
+  // demoted, and the only one who can grant/revoke the Reviewer role
+  // (PUT /admin/employees/:id/reviewer-role) or loosen the task-review
+  // requirement. A global admin still outranks everyone.
   function actorIsSeedOwner(actor) {
     return actor?.source === 'global' || !!actor?.employee?.is_seed_owner;
   }
@@ -3051,21 +3055,13 @@ ${closingHtml}
   // /employee/me) lights up automatically. Sends the welcome email by
   // default — owner can suppress with sendWelcomeEmail: false.
   router.post('/admin/customers/:id/promote-to-staff', async (req, res) => {
-    // manage_employees, not view_customers — this creates an employee
-    // row (with a role), so it needs the same gate the dedicated
-    // employee-creation endpoint uses, not the weaker "can see
-    // customers" permission that let any admin bypass it.
-    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    // Same gate the dedicated employee-creation endpoint uses — this
+    // creates an employee row (with a role), not just reads one.
+    const actor = await requireStaffManager(req, res);
     if (!actor) return;
     const customerId = trim(req.params.id, 200);
     const body = req.body || {};
     const role = body.role === 'admin' ? 'admin' : 'staff';
-    if (role === 'admin' && !actorIsOwner(actor)) {
-      return res.status(403).json({
-        error: 'owner_required',
-        message: 'Only the practice owner can create an admin account.',
-      });
-    }
     const overrideName = trim(body.name || '', MAX_NAME_LEN);
     const sendWelcome = body.sendWelcomeEmail === false ? false : true;
 
@@ -4425,20 +4421,21 @@ ${closingHtml}
     res.json({ ok: true, enabled });
   });
 
-  // Owner-only master switch for the per-task review-override checkbox.
-  // Off (default): requires_review is locked true on every task — the
-  // PATCH /admin/tasks/:id handler below refuses any attempt to flip it
-  // off, regardless of who asks. On: admins regain the ability to
-  // exempt an individual task from review, as before this switch
-  // existed. Gated stricter than manage_settings — any admin with that
-  // permission can reach every other community-settings toggle, but
-  // this one is reserved for the owner, matching the rest of the
-  // owner-tier gating (admin creation/promotion, task-review approval).
+  // Seed-owner-only master switch for the per-task review-override
+  // checkbox. Off (default): requires_review is locked true on every
+  // task — the PATCH /admin/tasks/:id handler below refuses any attempt
+  // to flip it off, regardless of who asks. On: admins regain the
+  // ability to exempt an individual task from review, as before this
+  // switch existed. Gated stricter than manage_settings — any admin
+  // with that permission can reach every other community-settings
+  // toggle, but loosening the review requirement undermines the
+  // Reviewer role's whole point, so this one is reserved for whoever
+  // can also grant that role: the seeded owner.
   router.put('/admin/community-settings/task-review-override-enabled', async (req, res) => {
     const actor = await requireOwnerAdmin(req, res, 'manage_settings');
     if (!actor) return;
-    if (!actorIsOwner(actor)) {
-      return res.status(403).json({ error: 'owner_required', message: 'Only the owner can change this setting.' });
+    if (!actorIsSeedOwner(actor)) {
+      return res.status(403).json({ error: 'seed_owner_required', message: 'Only the seeded owner account can change this setting.' });
     }
     const communitySlug = trim(req.body?.communitySlug, 200);
     const enabled = Boolean(req.body?.enabled);
@@ -12192,7 +12189,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -12208,7 +12205,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -12269,7 +12266,6 @@ ${closingHtml}
       address: e.address || {},
       preferredCommunicationEmail: e.preferred_communication_email || '',
       locale: e.locale, role: e.role, status: e.status,
-      is_owner: !!e.is_owner,
       is_seed_owner: !!e.is_seed_owner,
       is_employee_site_admin: !!e.is_employee_site_admin,
       is_task_reviewer: !!e.is_task_reviewer,
@@ -13140,7 +13136,7 @@ ${closingHtml}
     if (!(await requireStaffManager(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -13261,12 +13257,6 @@ ${closingHtml}
     const email = trim(body.email, 200).toLowerCase();
     const np = resolveNamePayload(body);
     const role = (body.role === 'admin') ? 'admin' : 'staff';
-    if (role === 'admin' && !actorIsOwner(actor)) {
-      return res.status(403).json({
-        error: 'owner_required',
-        message: 'Only the practice owner can create an admin account.',
-      });
-    }
     const locale = (body.locale === 'es') ? 'es' : 'en';
     // Default ON — mirrors the customer add flow. Owner can uncheck to add
     // a staff row without notifying them (e.g., seeding before go-live).
@@ -13361,6 +13351,50 @@ ${closingHtml}
     res.json({ ok: true, permissions: sanitized });
   });
 
+  // ── PUT /admin/employees/:id/site-admin-bundle ── narrow permissions
+  // toggle for the RoleSwitcher's three-way picker specifically.
+  //
+  // Picking "Site admin" (or moving back to full "Admin") touches the
+  // permissions object as an implementation detail — but the general
+  // permissions-edit endpoint above stays reserved for a full owner-
+  // admin, since it accepts arbitrary per-key grants/revokes. This
+  // route only ever applies or removes the fixed Site Admin bundle
+  // (SITE_ADMIN_REVOKED_KEYS/GRANTED_KEYS, mirrored from the client's
+  // RoleSwitcher), so a Staff Admin can use it to assign someone to
+  // Site admin without also picking up the power to edit arbitrary
+  // permissions on any admin account.
+  router.put('/admin/employees/:id/site-admin-bundle', async (req, res) => {
+    const actor = await requireStaffManager(req, res); if (!actor) return;
+    const empId = trim(req.params.id, 200);
+    const apply = !!(req.body || {}).apply;
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, email, community_id, role, permissions').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+
+    const nextPermissions = { ...(existing.permissions || {}) };
+    if (apply) {
+      for (const k of SITE_ADMIN_BUNDLE_REVOKED_KEYS) nextPermissions[k] = false;
+      for (const k of SITE_ADMIN_BUNDLE_GRANTED_KEYS) delete nextPermissions[k];
+    } else {
+      for (const k of SITE_ADMIN_BUNDLE_REVOKED_KEYS) delete nextPermissions[k];
+    }
+    const sanitized = sanitizePermissions(nextPermissions);
+
+    const { error } = await supabase.from('tax_employees')
+      .update({ permissions: sanitized, updated_at: new Date().toISOString() })
+      .eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'set_site_admin_bundle',
+        actorEmail: actor.email || '',
+        before: { permissions: existing.permissions || {} },
+        after: { permissions: sanitized },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, permissions: sanitized });
+  });
+
   // PUT /admin/employees/:id/role — change an existing employee's role
   // (staff <-> admin). Previously role was set once at creation with no
   // way to change it afterward, so a staff member could never be
@@ -13368,7 +13402,7 @@ ${closingHtml}
   // access, which is gated on role, not permissions) without recreating
   // their account. Body: { role: 'admin' | 'staff' }.
   router.put('/admin/employees/:id/role', async (req, res) => {
-    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    const actor = await requireStaffManager(req, res);
     if (!actor) return;
     const empId = trim(req.params.id, 200);
     const role = req.body?.role === 'admin' ? 'admin' : (req.body?.role === 'staff' ? 'staff' : null);
@@ -13378,17 +13412,7 @@ ${closingHtml}
       .select('id, email, community_id, role').eq('id', empId).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Employee not found.' });
 
-    // Only the owner can promote someone to admin. Demoting an existing
-    // admin back to staff stays open to any admin with manage_employees —
-    // that direction isn't the risky one.
-    if (role === 'admin' && existing.role !== 'admin' && !actorIsOwner(actor)) {
-      return res.status(403).json({
-        error: 'owner_required',
-        message: 'Only the practice owner can promote someone to admin.',
-      });
-    }
-
-    // Block an owner-admin from demoting themselves — only path back
+    // Block a Staff Admin from demoting themselves — only path back
     // would be direct DB access.
     if (actor.source === 'employee' && actor.employee?.id === empId && role !== 'admin') {
       return res.status(409).json({
@@ -13412,66 +13436,6 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, role });
-  });
-
-  // PUT /admin/employees/:id/owner — grant or revoke owner status.
-  // Self-service version of the one-off SQL seed: lets the seed owner
-  // hand the role to someone else (or add a second owner) without
-  // needing a schema migration every time. Only the seeded owner (or a
-  // global admin) can call this — a regular owner they've promoted
-  // can't grant or revoke anyone else's owner status, including their
-  // own. That keeps exactly one account always able to fix a mistake,
-  // instead of any current owner being able to lock the others out.
-  router.put('/admin/employees/:id/owner', async (req, res) => {
-    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
-    if (!actor) return;
-    if (!actorIsSeedOwner(actor)) {
-      return res.status(403).json({
-        error: 'seed_owner_required',
-        message: 'Only the original owner can grant or revoke owner status.',
-      });
-    }
-    const empId = trim(req.params.id, 200);
-    const nextIsOwner = !!req.body?.isOwner;
-
-    const { data: existing } = await supabase.from('tax_employees')
-      .select('id, email, community_id, role, is_owner, is_seed_owner').eq('id', empId).maybeSingle();
-    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
-
-    // The seed owner's own status is permanent — never revocable (and
-    // there's nothing to "grant" since it's already set). Without this,
-    // the one account guaranteed to always have authority could be
-    // stripped of it.
-    if (existing.is_seed_owner) {
-      return res.status(409).json({
-        error: 'cannot_modify_seed_owner',
-        message: 'The original owner\'s status can\'t be changed here.',
-      });
-    }
-
-    if (nextIsOwner === existing.is_owner) return res.json({ ok: true, is_owner: nextIsOwner, role: existing.role });
-
-    const update = { is_owner: nextIsOwner, updated_at: new Date().toISOString() };
-    // Owner outranks admin — granting owner to a staff member promotes
-    // them to admin in the same step, rather than making the seed owner
-    // promote to admin first and grant owner as a separate action.
-    if (nextIsOwner && existing.role !== 'admin') {
-      update.role = 'admin';
-    }
-    const { error } = await supabase.from('tax_employees')
-      .update(update)
-      .eq('id', empId);
-    if (error) return sendSupabaseError(res, error);
-
-    try {
-      await auditLog({
-        entity: 'tax.employee', entityId: empId, action: 'set_owner',
-        actorEmail: actor.email || '',
-        before: { is_owner: existing.is_owner, role: existing.role },
-        after: { is_owner: nextIsOwner, role: update.role || existing.role },
-      });
-    } catch (_e) {}
-    res.json({ ok: true, is_owner: nextIsOwner, role: update.role || existing.role });
   });
 
   // PUT /admin/employees/:id/public-profile — owner sets the homepage
@@ -13776,8 +13740,7 @@ ${closingHtml}
   // completion path in PATCH /admin/tasks/:id).
   router.put('/admin/employees/:id/reviewer-role', async (req, res) => {
     const actor = await requireOwnerAdmin(req, res); if (!actor) return;
-    const isSeedActor = actor.source === 'global' || !!actor.employee?.is_seed_owner;
-    if (!isSeedActor) {
+    if (!actorIsSeedOwner(actor)) {
       return res.status(403).json({
         error: 'seed_owner_required',
         message: 'Only the seeded owner account can assign the Reviewer role.',

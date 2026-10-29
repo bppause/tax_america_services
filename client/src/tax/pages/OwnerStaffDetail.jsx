@@ -92,16 +92,22 @@ export default function OwnerStaffDetail({ employeeId }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <h2 style={{ margin: 0, marginBottom: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
             <span>{displayPersonName(emp) || emp.email}</span>
-            {/* Promoting to full admin, or granting Owner, stays strictly
-                owner-gated — a Staff Admin reaching this page (role may
-                be 'staff') doesn't get these, only the narrower toggle
-                below. */}
-            {me?.role === 'admin' && (
-              <>
-                <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
-                <OwnerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
-              </>
+            {/* The seed owner's status is permanent and not editable
+                from anywhere — shown as a fixed badge only. Labeled
+                distinctly so it's unmistakable which account the
+                practice can never lose (see also: can't be archived
+                from ArchiveEmployeeButton, and the server-side guard on
+                PUT /admin/employees/:id/status). */}
+            {emp.is_seed_owner && (
+              <span style={{
+                padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                textTransform: 'uppercase', background: '#fef3c7', color: '#92400e',
+              }} title={t('owner.staff.seedOwnerHint')}>{t('employee.role.seedOwner')}</span>
             )}
+            {/* Anyone who can reach this page at all (full Customer Admin
+                or a Staff Admin — see the page-level gate above) can
+                assign Staff / Customer Admin / Site Admin here. */}
+            <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <StaffAdminToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <ReviewerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
@@ -1571,16 +1577,16 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
   const value = emp.role !== 'admin' ? 'staff'
     : (emp.permissions?.view_customers === false ? 'site_admin' : 'admin');
 
-  // Forces the exact Site admin permission profile regardless of
-  // whatever one-off revocations this account already carries — used
-  // both when switching into Site admin and by the repair link below,
-  // which has to work even when the dropdown already reads "Site
-  // admin" (so a plain re-pick wouldn't fire onChange at all).
-  const applySiteAdminProfile = async () => {
-    const nextPermissions = { ...(emp.permissions || {}) };
-    for (const k of SITE_ADMIN_REVOKED_KEYS) nextPermissions[k] = false;
-    for (const k of SITE_ADMIN_GRANTED_KEYS) delete nextPermissions[k];
-    await taxApi.adminSetEmployeePermissions(auth, emp.id, nextPermissions);
+  // Applies (or removes) the exact Site admin permission profile via the
+  // dedicated server-side bundle endpoint rather than the general
+  // permissions-edit one — that one stays reserved for a full Customer
+  // Admin, so this is the only permissions write a Staff Admin can make
+  // through this picker. Used both when switching into Site admin and
+  // by the repair link below, which has to work even when the dropdown
+  // already reads "Site admin" (so a plain re-pick wouldn't fire
+  // onChange at all).
+  const applySiteAdminProfile = async (apply) => {
+    await taxApi.adminApplySiteAdminBundle(auth, emp.id, apply);
   };
 
   const onChange = async (next) => {
@@ -1592,15 +1598,13 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
         await taxApi.adminSetEmployeeRole(auth, emp.id, nextRole);
       }
       if (next === 'site_admin') {
-        await applySiteAdminProfile();
+        await applySiteAdminProfile(true);
       } else if (next === 'admin' && SITE_ADMIN_REVOKED_KEYS.some(k => emp.permissions?.[k] === false)) {
         // Promoting to full admin restores every power Site admin
         // revoked — otherwise picking "Admin" here would silently do
         // nothing for a former site admin (they'd still be scoped to
         // Public homepage underneath).
-        const nextPermissions = { ...(emp.permissions || {}) };
-        for (const k of SITE_ADMIN_REVOKED_KEYS) delete nextPermissions[k];
-        await taxApi.adminSetEmployeePermissions(auth, emp.id, nextPermissions);
+        await applySiteAdminProfile(false);
       }
       onSaved();
     } catch (e) {
@@ -1610,7 +1614,7 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
 
   const onRepair = async () => {
     setBusy(true); setErr('');
-    try { await applySiteAdminProfile(); onSaved(); }
+    try { await applySiteAdminProfile(true); onSaved(); }
     catch (e) { setErr(e?.message || t('respond.error.generic')); }
     finally { setBusy(false); }
   };
@@ -1648,73 +1652,6 @@ function RoleSwitcher({ emp, me, auth, onSaved, t }) {
           {t('owner.staffDetail.role.repair')}
         </button>
       )}
-      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
-    </span>
-  );
-}
-
-// "Owner" sits above admin — only an owner can create or promote
-// another admin, and only an owner can sign off a task someone else
-// completed (no delegation to a non-owner admin). Granting/revoking it
-// on anyone else is reserved for the seed owner specifically (see
-// PUT /admin/employees/:id/owner) — a regular owner they've promoted
-// can't touch anyone's owner status, including their own, so there's
-// always exactly one account that can fix a mistake. Staff (not just
-// admins) can be targeted: granting owner to a staff member promotes
-// them to admin in the same step.
-function OwnerToggle({ emp, me, auth, onSaved, t }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-
-  // The seed owner's own status is permanent — shown as a fixed badge,
-  // never editable, not even by themselves. Labeled distinctly from a
-  // regular promoted "Owner" so it's unmistakable which account is the
-  // one the practice can never lose (see also: can't be archived from
-  // ArchiveEmployeeButton, and the server-side guard on PUT
-  // /admin/employees/:id/status).
-  if (emp.is_seed_owner) {
-    return (
-      <span style={{
-        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-        textTransform: 'uppercase', background: '#fef3c7', color: '#92400e',
-      }} title={t('owner.staff.seedOwnerHint')}>{t('employee.role.seedOwner')}</span>
-    );
-  }
-
-  if (!me?.is_seed_owner) {
-    return emp.is_owner ? (
-      <span style={{
-        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-        textTransform: 'uppercase', background: '#fef3c7', color: '#92400e',
-      }}>{t('owner.staffDetail.owner.badge')}</span>
-    ) : null;
-  }
-
-  const onChange = async (next) => {
-    setBusy(true); setErr('');
-    try {
-      await taxApi.adminSetEmployeeOwner(auth, emp.id, next);
-      onSaved();
-    } catch (e) {
-      setErr(e?.message || t('respond.error.generic'));
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <label style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-        textTransform: 'uppercase', cursor: busy ? 'not-allowed' : 'pointer',
-        background: emp.is_owner ? '#fef3c7' : 'var(--tax-bg-alt)',
-        color: emp.is_owner ? '#92400e' : 'var(--tax-muted)',
-      }} title={!emp.is_owner && emp.role !== 'admin' ? t('owner.staffDetail.owner.promotesAdmin') : undefined}>
-        <input type="checkbox" checked={!!emp.is_owner}
-               disabled={busy}
-               onChange={e => onChange(e.target.checked)}
-               style={{ margin: 0 }} />
-        {t('owner.staffDetail.owner.badge')}
-      </label>
       {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
     </span>
   );
