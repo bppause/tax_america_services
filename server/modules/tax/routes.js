@@ -12171,6 +12171,30 @@ ${closingHtml}
       res.status(403).json({ error: 'Account collision. Contact your practice administrator.' });
       return null;
     }
+
+    // Phase 4n.70: per-device session check. The SPA sends back the
+    // token POST /employee/auth/link minted on this browser's last page
+    // load. A token that doesn't resolve to a row (old deploy, or one
+    // simply never minted yet) is treated as "nothing to check" rather
+    // than failing the request — only an explicit revoke (an admin's
+    // force-logout from the Staff page) blocks it. last_seen_at is
+    // bumped on a throttle so routine polling doesn't turn into a write
+    // on every single request.
+    const sessionToken = trim(req.get('x-tax-session') || '', 200);
+    if (sessionToken) {
+      const { data: sess } = await supabase.from('tax_employee_sessions')
+        .select('id, revoked_at, last_seen_at').eq('session_token', sessionToken).maybeSingle();
+      if (sess?.revoked_at) {
+        res.status(401).json({ error: 'session_revoked', message: 'This device was signed out by an admin.' });
+        return null;
+      }
+      if (sess && Date.now() - new Date(sess.last_seen_at).getTime() > 5 * 60 * 1000) {
+        supabase.from('tax_employee_sessions')
+          .update({ last_seen_at: new Date().toISOString() }).eq('id', sess.id)
+          .then(() => {}, () => {});
+      }
+    }
+
     return emp;
   }
 
@@ -12329,7 +12353,42 @@ ${closingHtml}
         });
       } catch (_e) {}
     }
-    res.json({ ok: true, employee: { ...emp, firebase_uid: uid } });
+
+    // Phase 4n.70: one session row per browser/device sign-in, so admins
+    // can see "who's logged in where" and force a specific device to log
+    // out (see GET/POST /admin/employee-sessions*). The SPA calls this
+    // route on every fresh page load (whenever the Firebase user object
+    // appears), so a new row — and a fresh token the client stores and
+    // sends back as x-tax-session on every later request — gets minted
+    // once per browser tab's lifetime, not once ever.
+    const sessionToken = uuidv4();
+    const userAgent = trim(req.get('user-agent') || '', 300);
+    const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
+    const { error: sessErr } = await supabase.from('tax_employee_sessions').insert({
+      community_id: communitySlug, employee_id: emp.id, session_token: sessionToken,
+      user_agent: userAgent, ip_address: ip,
+    });
+    if (sessErr) warn('[tax] employee session insert failed', sessErr.message);
+
+    res.json({ ok: true, employee: { ...emp, firebase_uid: uid }, sessionToken });
+  });
+
+  // ── POST /employee/auth/signout ── self-service session cleanup
+  //
+  // Called on an explicit sign-out (or "switch account") so the row this
+  // device created on sign-in doesn't linger in the admin's "who's
+  // logged in where" list as if the device were still active. No admin
+  // gate — a caller can only ever revoke the token they themselves hold,
+  // never someone else's (there's nothing here keyed by employee id or
+  // email, only the opaque token).
+  router.post('/employee/auth/signout', async (req, res) => {
+    const sessionToken = trim(req.get('x-tax-session') || (req.body || {}).sessionToken || '', 200);
+    if (sessionToken) {
+      await supabase.from('tax_employee_sessions')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('session_token', sessionToken).is('revoked_at', null);
+    }
+    res.json({ ok: true });
   });
 
   // ── GET /employee/me ──
@@ -13023,6 +13082,72 @@ ${closingHtml}
     res.json({ employees: enriched });
   });
 
+  // ── GET /admin/employee-sessions ── "who's logged in where"
+  //
+  // Every row with revoked_at still null is a signed-in device. Grouped
+  // client-side by employee — this just returns the flat, most-recently-
+  // active-first list with enough of the owning employee's identity to
+  // render without a second round trip.
+  router.get('/admin/employee-sessions', async (req, res) => {
+    if (!(await requireOwnerAdmin(req, res))) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
+    const { data, error } = await supabase.from('tax_employee_sessions')
+      .select(`
+        id, employee_id, user_agent, ip_address, created_at, last_seen_at,
+        tax_employees ( email, name, first_name, middle_name, last_name, role, is_seed_owner )
+      `)
+      .eq('community_id', communitySlug).is('revoked_at', null)
+      .order('last_seen_at', { ascending: false }).limit(300);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ sessions: data || [] });
+  });
+
+  // ── POST /admin/employee-sessions/:id/revoke ── force-logout one device
+  //
+  // Takes effect on that device's very next request — requireTaxEmployee
+  // rejects any request carrying this token once revoked_at is set.
+  router.post('/admin/employee-sessions/:id/revoke', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees'); if (!actor) return;
+    const sessionId = trim(req.params.id, 200);
+    const { data: sess } = await supabase.from('tax_employee_sessions')
+      .select('id, employee_id, revoked_at').eq('id', sessionId).maybeSingle();
+    if (!sess) return res.status(404).json({ error: 'Session not found.' });
+    if (!sess.revoked_at) {
+      const { error } = await supabase.from('tax_employee_sessions')
+        .update({ revoked_at: new Date().toISOString(), revoked_by_employee_id: actor.employee?.id || null })
+        .eq('id', sessionId);
+      if (error) return sendSupabaseError(res, error);
+      try {
+        await auditLog({
+          entity: 'tax.employee_session', entityId: sessionId, action: 'revoke',
+          actorEmail: actor.email || '', after: { employeeId: sess.employee_id },
+        });
+      } catch (_e) {}
+    }
+    res.json({ ok: true });
+  });
+
+  // ── POST /admin/employees/:id/sessions/revoke-all ── force-logout every device
+  router.post('/admin/employees/:id/sessions/revoke-all', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res, 'manage_employees'); if (!actor) return;
+    const empId = trim(req.params.id, 200);
+    const { data: rows, error } = await supabase.from('tax_employee_sessions')
+      .update({ revoked_at: new Date().toISOString(), revoked_by_employee_id: actor.employee?.id || null })
+      .eq('employee_id', empId).is('revoked_at', null)
+      .select('id');
+    if (error) return sendSupabaseError(res, error);
+    if (rows && rows.length) {
+      try {
+        await auditLog({
+          entity: 'tax.employee_session', entityId: empId, action: 'revoke_all',
+          actorEmail: actor.email || '', after: { count: rows.length },
+        });
+      } catch (_e) {}
+    }
+    res.json({ ok: true, count: rows?.length || 0 });
+  });
+
   router.post('/admin/employees', async (req, res) => {
     const actor = await requireOwnerAdmin(req, res, 'manage_employees');
     if (!actor) return;
@@ -13463,8 +13588,18 @@ ${closingHtml}
       return res.status(400).json({ error: 'status must be active|paused|archived.' });
     }
     const { data: existing } = await supabase.from('tax_employees')
-      .select('id, status, email, community_id').eq('id', empId).maybeSingle();
+      .select('id, status, email, community_id, is_seed_owner').eq('id', empId).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+    // The seeded owner account is the one guaranteed throat to choke for
+    // the whole practice — pausing or archiving it (accidentally or
+    // otherwise) could lock everyone out with no admin left standing.
+    // It can only ever be 'active'.
+    if (existing.is_seed_owner && status !== 'active') {
+      return res.status(403).json({
+        error: 'seed_owner_protected',
+        message: 'The seeded owner account can\'t be paused or removed from staff.',
+      });
+    }
 
     const { error } = await supabase.from('tax_employees')
       .update({ status, updated_at: new Date().toISOString() })

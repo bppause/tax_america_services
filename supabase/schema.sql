@@ -3846,3 +3846,33 @@ insert into public.tax_relationship_default_faqs (id, relationship_type_id, disp
     '{"en":"HUT returns are filed quarterly on New York''s own quarter boundaries — due March 31, June 30, September 30, and December 31. Even in a quarter with no New York mileage, a zero return is still required to keep your certificate active.","es":"Las declaraciones de HUT se presentan trimestralmente según los trimestres propios de Nueva York — con vencimiento el 31 de marzo, 30 de junio, 30 de septiembre y 31 de diciembre. Incluso en un trimestre sin millaje en Nueva York, se requiere una declaración en cero para mantener activo su certificado."}'::jsonb,
     'tax.ny.gov — Highway Use Tax filing requirements')
 on conflict (id) do nothing;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Employee sign-in sessions — admin visibility into "who's logged in
+-- where" plus the ability to force a logout.
+--
+-- One row per browser/device sign-in, created by POST /employee/auth/link
+-- with a server-generated token the client stores (localStorage) and
+-- sends back as the x-tax-session header on every request. requireTax-
+-- Employee checks the row hasn't been revoked and bumps last_seen_at
+-- (throttled). An admin revoking a row from the Staff page takes effect
+-- on that device's very next request — no token/JWT invalidation needed
+-- since the session row itself is the source of truth.
+-- ═══════════════════════════════════════════════════════════════════════════════
+create table if not exists public.tax_employee_sessions (
+  id                      uuid primary key default gen_random_uuid(),
+  community_id            text not null references public.communities(id) on delete cascade,
+  employee_id             text not null references public.tax_employees(id) on delete cascade,
+  session_token           text not null unique,
+  user_agent              text not null default '',
+  ip_address              text not null default '',
+  created_at              timestamptz not null default now(),
+  last_seen_at            timestamptz not null default now(),
+  revoked_at              timestamptz,
+  revoked_by_employee_id  text references public.tax_employees(id) on delete set null
+);
+create index if not exists idx_tax_employee_sessions_employee
+  on public.tax_employee_sessions(employee_id) where revoked_at is null;
+create index if not exists idx_tax_employee_sessions_community
+  on public.tax_employee_sessions(community_id) where revoked_at is null;
+alter table public.tax_employee_sessions disable row level security;

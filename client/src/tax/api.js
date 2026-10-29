@@ -7,6 +7,18 @@
 
 const BASE = '/api/m/tax';
 const IMPERSONATION_KEY = 'tax-impersonation';
+// One token per browser/device employee sign-in — minted by POST
+// /employee/auth/link, sent back as x-tax-session on every later request
+// so an admin's force-logout (see adminRevokeEmployeeSession) takes
+// effect immediately: the server rejects the next request carrying a
+// revoked token with { error: 'session_revoked' }, caught below.
+const EMPLOYEE_SESSION_TOKEN_KEY = 'tax.employee.sessionToken';
+export function setEmployeeSessionToken(token) {
+  try { if (token) localStorage.setItem(EMPLOYEE_SESSION_TOKEN_KEY, token); } catch (_e) {}
+}
+export function clearEmployeeSessionToken() {
+  try { localStorage.removeItem(EMPLOYEE_SESSION_TOKEN_KEY); } catch (_e) {}
+}
 
 // Impersonation state lives in sessionStorage (tab-scoped). When present,
 // portal/employee requests send x-impersonation-token instead of Firebase
@@ -30,18 +42,29 @@ function authHeaders(auth) {
   // resolves the target identity from the token; community is included
   // for symmetry but not strictly needed (the token is community-bound).
   const imp = getImpersonation();
+  let headers;
   if (imp && imp.token) {
-    return {
+    headers = {
       'x-impersonation-token': imp.token,
       'x-tax-community': imp.communitySlug || '',
     };
+  } else if (!auth || !auth.uid || !auth.email) {
+    headers = {};
+  } else {
+    headers = {
+      'x-firebase-uid': auth.uid,
+      'x-firebase-email': auth.email,
+      'x-tax-community': auth.communitySlug || '',
+    };
   }
-  if (!auth || !auth.uid || !auth.email) return {};
-  return {
-    'x-firebase-uid': auth.uid,
-    'x-firebase-email': auth.email,
-    'x-tax-community': auth.communitySlug || '',
-  };
+  // Harmless on customer-portal calls (the server only checks it on
+  // employee-authed requests) — attached unconditionally so every call
+  // site doesn't need to know or care whether a session is tracked yet.
+  try {
+    const sessionToken = localStorage.getItem(EMPLOYEE_SESSION_TOKEN_KEY);
+    if (sessionToken) headers['x-tax-session'] = sessionToken;
+  } catch (_e) {}
+  return headers;
 }
 
 // Admin headers: always uses the real admin identity, never the impersonation
@@ -89,6 +112,15 @@ async function request(method, path, body, auth, { admin, timeoutMs } = {}) {
     const err = new Error((parsed && parsed.error) || `Request failed (${res.status})`);
     err.status = res.status;
     err.body = parsed;
+    // An admin force-logged this device out from the Staff page. Every
+    // call site already has its own try/catch for the thrown error (so
+    // the page they were on shows whatever it normally shows for a
+    // failed request), but this needs to also boot them out of the app
+    // — EmployeeAuthProvider listens for this event and does that.
+    if (res.status === 401 && parsed?.error === 'session_revoked') {
+      clearEmployeeSessionToken();
+      try { window.dispatchEvent(new CustomEvent('tax:session-revoked')); } catch (_e) {}
+    }
     throw err;
   }
   return parsed;
@@ -173,6 +205,7 @@ export const taxApi = {
 
   // Employee portal (Phase 3) — `auth = { uid, email, communitySlug }`
   employeeAuthLink(payload)                     { return request('POST', '/employee/auth/link', payload); },
+  employeeAuthSignOut(auth)                     { return request('POST', '/employee/auth/signout', {}, auth); },
   getEmployeeMe(auth)                           { return request('GET',  '/employee/me', undefined, auth); },
   updateEmployeeProfile(auth, payload)          { return request('PUT',  '/employee/profile', payload, auth); },
   getEmployeeNotificationTypes(auth)            { return request('GET',  '/employee/notification-types', undefined, auth); },
@@ -261,6 +294,9 @@ export const taxApi = {
   adminCreateEmployee(auth, payload)            { return request('POST', '/admin/employees', payload, auth, { admin: true }); },
   adminSendStaffWelcomeEmail(auth, id)          { return request('POST', `/admin/employees/${encodeURIComponent(id)}/send-welcome`, {}, auth, { admin: true }); },
   adminSetEmployeeStatus(auth, id, payload)     { return request('PUT', `/admin/employees/${encodeURIComponent(id)}/status`, payload, auth, { admin: true }); },
+  adminListEmployeeSessions(auth, communitySlug) { return request('GET', `/admin/employee-sessions?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
+  adminRevokeEmployeeSession(auth, sessionId)   { return request('POST', `/admin/employee-sessions/${encodeURIComponent(sessionId)}/revoke`, {}, auth, { admin: true }); },
+  adminRevokeAllEmployeeSessions(auth, employeeId) { return request('POST', `/admin/employees/${encodeURIComponent(employeeId)}/sessions/revoke-all`, {}, auth, { admin: true }); },
   adminListPermissions(auth)                    { return request('GET', '/admin/permissions', undefined, auth, { admin: true }); },
   adminSetEmployeePermissions(auth, id, permissions) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/permissions`, { permissions }, auth, { admin: true });

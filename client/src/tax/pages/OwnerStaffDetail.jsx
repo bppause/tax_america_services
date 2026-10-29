@@ -122,7 +122,7 @@ export default function OwnerStaffDetail({ employeeId }) {
           {emp.status === 'active' && (
             <CopyStaffPortalLinkButton emp={emp} community={community} t={t} />
           )}
-          {emp.id !== me?.id && (
+          {emp.id !== me?.id && !emp.is_seed_owner && (
             <ArchiveEmployeeButton emp={emp} auth={auth} onChanged={loadEmployee} t={t} />
           )}
         </div>
@@ -1649,13 +1649,17 @@ function OwnerToggle({ emp, me, auth, onSaved, t }) {
   const [err, setErr] = useState('');
 
   // The seed owner's own status is permanent — shown as a fixed badge,
-  // never editable, not even by themselves.
+  // never editable, not even by themselves. Labeled distinctly from a
+  // regular promoted "Owner" so it's unmistakable which account is the
+  // one the practice can never lose (see also: can't be archived from
+  // ArchiveEmployeeButton, and the server-side guard on PUT
+  // /admin/employees/:id/status).
   if (emp.is_seed_owner) {
     return (
       <span style={{
         padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
         textTransform: 'uppercase', background: '#fef3c7', color: '#92400e',
-      }}>{t('owner.staffDetail.owner.badge')}</span>
+      }} title={t('owner.staff.seedOwnerHint')}>{t('employee.role.seedOwner')}</span>
     );
   }
 

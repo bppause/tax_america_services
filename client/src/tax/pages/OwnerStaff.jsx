@@ -143,6 +143,8 @@ export default function OwnerStaff() {
         </span>
       </div>
 
+      <SessionsPanel auth={auth} community={community} locale={locale} t={t} />
+
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
       {adding && (
@@ -258,6 +260,15 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
             color: e.role === 'admin' ? '#fff' : 'var(--tax-muted)',
             fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
           }}>{e.role}</span>
+          {e.is_seed_owner && (
+            <span style={{
+              marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+              background: '#fef3c7', color: '#92400e',
+              fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+            }} title={t('owner.staff.seedOwnerHint')}>
+              {t('employee.role.seedOwner')}
+            </span>
+          )}
           <AccessScopePill emp={e} t={t} />
           {!e.firebase_uid && (
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--tax-muted)' }}>
@@ -285,6 +296,167 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
         )}
       </div>
     </div>
+  );
+}
+
+// Rough, no-dependency user-agent → "Chrome on Mac" label. Good enough
+// for "is this the device I think it is" at a glance; not meant to be
+// exhaustive UA parsing.
+function deviceLabel(ua, t) {
+  const s = String(ua || '');
+  if (!s) return t('owner.staff.sessions.unknownDevice');
+  let browser = 'Browser';
+  if (/Edg\//.test(s)) browser = 'Edge';
+  else if (/OPR\//.test(s)) browser = 'Opera';
+  else if (/Chrome\//.test(s)) browser = 'Chrome';
+  else if (/Firefox\//.test(s)) browser = 'Firefox';
+  else if (/Safari\//.test(s)) browser = 'Safari';
+  let os = '';
+  if (/iPhone/.test(s)) os = 'iPhone';
+  else if (/iPad/.test(s)) os = 'iPad';
+  else if (/Android/.test(s)) os = 'Android';
+  else if (/Mac OS X/.test(s)) os = 'Mac';
+  else if (/Windows/.test(s)) os = 'Windows';
+  else if (/Linux/.test(s)) os = 'Linux';
+  return os ? `${browser} · ${os}` : browser;
+}
+
+// "Who's logged in where" + force logout. Collapsed by default (most
+// days nobody needs it) but always visible at the top of the Staff page
+// — the one place an admin would think to look when a device needs to
+// be kicked off (a lost phone, an ex-employee's laptop, a shared
+// workstation someone forgot to sign out of).
+function SessionsPanel({ auth, community, locale, t }) {
+  const [open, setOpen] = useState(false);
+  const [sessions, setSessions] = useState(null);
+  const [err, setErr] = useState('');
+  const [busyId, setBusyId] = useState('');
+
+  const load = () => {
+    if (!community) return;
+    taxApi.adminListEmployeeSessions(auth, community.id)
+      .then(d => setSessions(d.sessions || []))
+      .catch(e => setErr(e?.message || t('error.loadFailed')));
+  };
+  useEffect(() => { if (open) load(); }, [open, community]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const grouped = useMemo(() => {
+    const m = new Map();
+    for (const s of sessions || []) {
+      if (!m.has(s.employee_id)) m.set(s.employee_id, { employee: s.tax_employees, employeeId: s.employee_id, rows: [] });
+      m.get(s.employee_id).rows.push(s);
+    }
+    return [...m.values()].sort((a, b) =>
+      (displayPersonName(a.employee) || a.employee?.email || '')
+        .localeCompare(displayPersonName(b.employee) || b.employee?.email || ''));
+  }, [sessions]);
+
+  const revoke = async (sessionId) => {
+    setBusyId(sessionId); setErr('');
+    try { await taxApi.adminRevokeEmployeeSession(auth, sessionId); load(); }
+    catch (e) { setErr(e?.message || t('respond.error.generic')); }
+    finally { setBusyId(''); }
+  };
+  const revokeAll = async (employeeId, name) => {
+    if (!window.confirm(t('owner.staff.sessions.confirmRevokeAll', { name }))) return;
+    setBusyId(employeeId); setErr('');
+    try { await taxApi.adminRevokeAllEmployeeSessions(auth, employeeId); load(); }
+    catch (e) { setErr(e?.message || t('respond.error.generic')); }
+    finally { setBusyId(''); }
+  };
+
+  return (
+    <section style={{
+      marginBottom: 16, border: '1px solid var(--tax-border)', borderRadius: 10,
+      background: '#fff', overflow: 'hidden',
+    }}>
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+              style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                width: '100%', textAlign: 'left', padding: '12px 14px',
+                border: 0, background: '#fff', cursor: 'pointer',
+              }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span aria-hidden="true" style={{
+            display: 'inline-block', transition: 'transform .15s ease',
+            transform: open ? 'none' : 'rotate(-90deg)',
+          }}>▾</span>
+          <strong>{t('owner.staff.sessions.title')}</strong>
+        </span>
+        {sessions !== null && (
+          <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+            {t('owner.staff.sessions.activeCount', { count: sessions.length })}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div style={{ padding: '0 14px 14px' }}>
+          <p style={{ fontSize: 13, color: 'var(--tax-muted)', margin: '0 0 10px' }}>
+            {t('owner.staff.sessions.subtitle')}
+          </p>
+          {err && <div className="tax-msg tax-msg--error">{err}</div>}
+          {sessions === null ? <p>{t('loading')}</p>
+            : grouped.length === 0 ? (
+              <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('owner.staff.sessions.empty')}</p>
+            ) : (
+              <div style={{ display: 'grid', gap: 10 }}>
+                {grouped.map(g => {
+                  const name = displayPersonName(g.employee) || g.employee?.email || '';
+                  return (
+                    <div key={g.employeeId} style={{
+                      border: '1px solid var(--tax-border)', borderRadius: 8, padding: '8px 10px',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+                        <strong style={{ fontSize: 13 }}>
+                          {name}
+                          {g.employee?.is_seed_owner && (
+                            <span style={{
+                              marginLeft: 6, padding: '1px 6px', borderRadius: 999,
+                              background: '#fef3c7', color: '#92400e',
+                              fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                            }}>{t('employee.role.seedOwner')}</span>
+                          )}
+                        </strong>
+                        {g.rows.length > 1 && (
+                          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                                  disabled={busyId === g.employeeId}
+                                  onClick={() => revokeAll(g.employeeId, name)}
+                                  style={{ color: '#b91c1c', borderColor: '#b91c1c', flexShrink: 0 }}>
+                            {t('owner.staff.sessions.revokeAll')}
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display: 'grid', gap: 6 }}>
+                        {g.rows.map(s => (
+                          <div key={s.id} style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            fontSize: 12, gap: 8,
+                          }}>
+                            <div style={{ minWidth: 0, color: 'var(--tax-muted)' }}>
+                              <div style={{ color: 'var(--tax-text)' }}>{deviceLabel(s.user_agent, t)}</div>
+                              <div>
+                                {s.ip_address || '—'}
+                                {' · '}
+                                {t('owner.staff.sessions.lastSeen', { time: formatLastSignInCompact(s.last_seen_at, locale, t) })}
+                              </div>
+                            </div>
+                            <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                                    disabled={busyId === s.id}
+                                    onClick={() => revoke(s.id)}
+                                    style={{ color: '#b91c1c', borderColor: '#b91c1c', flexShrink: 0 }}>
+                              {t('owner.staff.sessions.revoke')}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+        </div>
+      )}
+    </section>
   );
 }
 
