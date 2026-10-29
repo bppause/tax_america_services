@@ -1676,21 +1676,26 @@ function TaskFormModal({
   // the moment work actually begins — move it straight to In progress
   // in the same save, through the same note-prompting path as any other
   // status change, instead of leaving the operator to also remember to
-  // flip the Status dropdown by hand. Only kicks in when the task is
-  // actually ready to leave Not started (priority + due date already
-  // in place — same gate the server enforces); otherwise this is just
-  // a plain assignment, same as unassigning or reassigning a task
-  // that's already further along. Create mode is untouched — a
-  // brand-new task's initial status is whatever's picked in the Status
-  // field directly, not implied by also picking an owner.
+  // flip the Status dropdown by hand. That means priority and due date
+  // have to come along with it (same gate the server enforces on any
+  // move beyond Not started) — picking an owner with either still blank
+  // is refused with the same message as trying to move the status
+  // directly, rather than silently saving an assignee on a task that
+  // still has nothing else to go on. Unassigning, reassigning a task
+  // that's already further along (priority/due are already guaranteed
+  // to exist by then), and create mode (the whole form is filled before
+  // anything is sent) all skip this and just save plainly.
   const onAssigneeChange = (newOwnerId) => {
-    const readyToStart = isEdit && newOwnerId && statusKey === 'not_started' && priority && dueDate;
-    if (!readyToStart) {
+    if (!isEdit || !newOwnerId || statusKey !== 'not_started') {
       setAssignedTo(newOwnerId);
       saveNow({ assignedTo: newOwnerId });
       return;
     }
     const effectiveTask = { ...task, notes, assigned_employee_id: assignedTo, priority, due_date: dueDate };
+    const fieldsMsg = notStartedFieldsMissing({
+      task: effectiveTask, patch: { statusKey: 'in_progress', assignedEmployeeId: newOwnerId }, t,
+    });
+    if (fieldsMsg) { window.alert(fieldsMsg); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task: effectiveTask,
       patch: { statusKey: 'in_progress', assignedTo: newOwnerId }, t,
