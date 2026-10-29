@@ -11,7 +11,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { onTaxAuthChanged, signOutTax, signInWithGoogle, firebaseReady } from './firebase';
-import { taxApi, getImpersonation, clearImpersonation, setEmployeeSessionToken, clearEmployeeSessionToken } from '../api';
+import { taxApi, getImpersonation, clearImpersonation, getEmployeeSessionToken, setEmployeeSessionToken, clearEmployeeSessionToken } from '../api';
 
 const EmpAuthCtx = createContext({
   fbUser: null, employee: null, community: null,
@@ -52,7 +52,16 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
     setStatus('linking'); setError(''); setRedirectTo('');
     (async () => {
       try {
-        const linked = await taxApi.employeeAuthLink({ uid: fbUser.uid, email: fbUser.email, communitySlug });
+        // This app has no client-side router — every navigation is a
+        // real page load, so this effect (and this call) fires on every
+        // single page view. Sending back whatever token this browser
+        // already has lets the server reuse that same session row
+        // instead of minting a new one every time (see the server-side
+        // comment on POST /employee/auth/link for the full story).
+        const linked = await taxApi.employeeAuthLink({
+          uid: fbUser.uid, email: fbUser.email, communitySlug,
+          existingSessionToken: getEmployeeSessionToken(),
+        });
         // Store the per-device token BEFORE the next call, so getEmployeeMe
         // (and everything after) already carries it as x-tax-session.
         setEmployeeSessionToken(linked?.sessionToken);

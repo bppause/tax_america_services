@@ -12393,19 +12393,39 @@ ${closingHtml}
 
     // Phase 4n.70: one session row per browser/device sign-in, so admins
     // can see "who's logged in where" and force a specific device to log
-    // out (see GET/POST /admin/employee-sessions*). The SPA calls this
-    // route on every fresh page load (whenever the Firebase user object
-    // appears), so a new row — and a fresh token the client stores and
-    // sends back as x-tax-session on every later request — gets minted
-    // once per browser tab's lifetime, not once ever.
-    const sessionToken = uuidv4();
-    const userAgent = trim(req.get('user-agent') || '', 300);
-    const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
-    const { error: sessErr } = await supabase.from('tax_employee_sessions').insert({
-      community_id: communitySlug, employee_id: emp.id, session_token: sessionToken,
-      user_agent: userAgent, ip_address: ip,
-    });
-    if (sessErr) warn('[tax] employee session insert failed', sessErr.message);
+    // out (see GET/POST /admin/employee-sessions*). This app has no
+    // client-side router — every link is a real <a href>, so this route
+    // fires on every single page view, not once per browser session.
+    // Minting a fresh row every time (the original Phase 4n.70 cut)
+    // flooded the sessions list with dozens of duplicate rows for the
+    // same browser within minutes. The client now sends back whatever
+    // token it already has in localStorage; reuse that row (just touch
+    // last_seen_at) whenever it still resolves to this same employee and
+    // hasn't been revoked, and only mint a new one when there's truly
+    // nothing to reuse (first sign-in on this browser, a cleared/private
+    // tab, or an admin's force-logout of the old one).
+    const existingToken = trim(body.existingSessionToken || '', 200);
+    let sessionToken = null;
+    if (existingToken) {
+      const { data: existingSess } = await supabase.from('tax_employee_sessions')
+        .select('id, employee_id, revoked_at').eq('session_token', existingToken).maybeSingle();
+      if (existingSess && existingSess.employee_id === emp.id && !existingSess.revoked_at) {
+        sessionToken = existingToken;
+        supabase.from('tax_employee_sessions')
+          .update({ last_seen_at: new Date().toISOString() }).eq('id', existingSess.id)
+          .then(() => {}, () => {});
+      }
+    }
+    if (!sessionToken) {
+      sessionToken = uuidv4();
+      const userAgent = trim(req.get('user-agent') || '', 300);
+      const ip = trim((req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0], 80);
+      const { error: sessErr } = await supabase.from('tax_employee_sessions').insert({
+        community_id: communitySlug, employee_id: emp.id, session_token: sessionToken,
+        user_agent: userAgent, ip_address: ip,
+      });
+      if (sessErr) warn('[tax] employee session insert failed', sessErr.message);
+    }
 
     res.json({ ok: true, employee: { ...emp, firebase_uid: uid }, sessionToken });
   });

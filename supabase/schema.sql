@@ -3903,3 +3903,25 @@ update public.tax_employees
   set is_employee_site_admin = true
   where community_id = 'tax-america-services'
     and email = 'bppause@gmail.com';
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- One-time cleanup: this app has no client-side router (every nav is a
+-- real page load), so the original cut of POST /employee/auth/link
+-- minted a brand-new session row on every single page view instead of
+-- reusing one per browser — active accounts quickly piled up dozens of
+-- "active" rows for the same device. The route now reuses an existing,
+-- non-revoked row when the browser sends one back, so this only needs to
+-- run once: revoke every active row except the most recently created one
+-- per employee — that's always the one actually sitting in that
+-- browser's localStorage, since each page load had been overwriting it
+-- with a fresh token.
+-- ═══════════════════════════════════════════════════════════════════════════════
+with ranked_sessions as (
+  select id, row_number() over (partition by employee_id order by created_at desc) as rn
+  from public.tax_employee_sessions
+  where revoked_at is null
+)
+update public.tax_employee_sessions s
+set revoked_at = now()
+from ranked_sessions r
+where s.id = r.id and r.rn > 1;

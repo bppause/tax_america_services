@@ -13,6 +13,9 @@ const IMPERSONATION_KEY = 'tax-impersonation';
 // effect immediately: the server rejects the next request carrying a
 // revoked token with { error: 'session_revoked' }, caught below.
 const EMPLOYEE_SESSION_TOKEN_KEY = 'tax.employee.sessionToken';
+export function getEmployeeSessionToken() {
+  try { return localStorage.getItem(EMPLOYEE_SESSION_TOKEN_KEY) || ''; } catch (_e) { return ''; }
+}
 export function setEmployeeSessionToken(token) {
   try { if (token) localStorage.setItem(EMPLOYEE_SESSION_TOKEN_KEY, token); } catch (_e) {}
 }
