@@ -3384,32 +3384,52 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     const c = colorOf(effectiveUrgency(tt, thresholds, todayIso), community);
     const prCol = priorityColorOf(tt.priority, community);
     const custName = tt.customer
-      ? `${customerTypeIcon(tt.customer.customer_type)} ${tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email}`
+      ? (tt.customer.business_name || displayPersonName(tt.customer) || tt.customer.email)
       : '';
+    const customerHref = tt.customer
+      ? `/tax/${tt.community_id || community?.id}/employee/customers/${encodeURIComponent(tt.customer.id)}`
+      : null;
     const serviceName = tt.product
       ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
       : '';
-    const metaLine = [custName, serviceName].filter(Boolean).join(' · ');
     const ownerName = tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : '';
     return (
       <TaskHover key={tt.id} task={tt} statuses={statuses}
                  community={community} locale={locale} t={t}
                  onDeleted={onChange}>
-        <button type="button"
-                draggable
-                onDragStart={e => e.dataTransfer.setData('text/plain', tt.id)}
-                onClick={() => onEdit(tt)}
-                style={{
-                  display: 'block', width: '100%', textAlign: 'left', cursor: 'grab',
-                  padding: '8px 10px',
-                  background: '#fff',
-                  borderRadius: 6, border: '1px solid var(--tax-border)',
-                  borderLeft: `4px solid ${c.bar}`,
-                }}>
+        {/* A real <button> can't contain a real <a> validly, so this is
+            a div acting as one (role/tabIndex/onKeyDown) with the
+            customer name split into its own link, stopping propagation
+            so clicking it navigates to their detail page instead of
+            opening the task edit modal. */}
+        <div role="button" tabIndex={0}
+             draggable
+             onDragStart={e => e.dataTransfer.setData('text/plain', tt.id)}
+             onClick={() => onEdit(tt)}
+             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onEdit(tt); } }}
+             style={{
+               display: 'block', width: '100%', textAlign: 'left', cursor: 'grab',
+               padding: '8px 10px',
+               background: '#fff',
+               borderRadius: 6, border: '1px solid var(--tax-border)',
+               borderLeft: `4px solid ${c.bar}`,
+             }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>{tt.title}</div>
-          {metaLine && (
+          {(custName || serviceName) && (
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 2 }}>
-              {metaLine}
+              {custName && (
+                <>
+                  <span aria-hidden="true">{customerTypeIcon(tt.customer.customer_type)}</span>{' '}
+                  {customerHref ? (
+                    <a href={customerHref} onClick={e => e.stopPropagation()}
+                       style={{ color: 'var(--tax-brand-primary)' }}>
+                      {custName}
+                    </a>
+                  ) : custName}
+                </>
+              )}
+              {custName && serviceName && ' · '}
+              {serviceName}
             </div>
           )}
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 4 }}>
@@ -3432,7 +3452,7 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
               {t('owner.tasks.owner')}: {ownerName}
             </div>
           )}
-        </button>
+        </div>
       </TaskHover>
     );
   };
@@ -3568,19 +3588,33 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                 {groupedItems.map(g => {
                   const gid = `${col.key}::${g.key}`;
                   const isCollapsed = collapsed.has(gid);
+                  // Grouped by customer, the group key IS the customer
+                  // id (kanbanGroupKey's 'customer' case) — '__none__'
+                  // means Practice-wide, which has no detail page.
+                  const customerHref = (groupBy === 'customer' && g.key !== '__none__' && community?.id)
+                    ? `/tax/${community.id}/employee/customers/${encodeURIComponent(g.key)}`
+                    : null;
                   return (
                     <div key={g.key}>
-                      <button type="button" onClick={() => toggleGroup(gid)}
-                              className="tax-kanban-group-toggle"
-                              title={isCollapsed ? t('owner.tasks.kanban.groupExpand') : t('owner.tasks.kanban.groupCollapse')}
-                              aria-expanded={!isCollapsed}
-                              style={{
-                                width: '100%', cursor: 'pointer',
-                                font: 'inherit', fontSize: 11, fontWeight: 700, color: 'var(--tax-text)',
-                                textTransform: 'uppercase', letterSpacing: '.03em',
-                                borderRadius: 6, padding: '5px 8px',
-                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                              }}>
+                      {/* A real <button> can't contain a real <a> validly,
+                          so the toggle is a div acting as one (role/tabIndex/
+                          onKeyDown below) with the customer name split out
+                          into its own link when there is one, stopping
+                          propagation so clicking it navigates instead of
+                          toggling the group. */}
+                      <div role="button" tabIndex={0}
+                           onClick={() => toggleGroup(gid)}
+                           onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(gid); } }}
+                           className="tax-kanban-group-toggle"
+                           title={isCollapsed ? t('owner.tasks.kanban.groupExpand') : t('owner.tasks.kanban.groupCollapse')}
+                           aria-expanded={!isCollapsed}
+                           style={{
+                             width: '100%', cursor: 'pointer',
+                             font: 'inherit', fontSize: 11, fontWeight: 700, color: 'var(--tax-text)',
+                             textTransform: 'uppercase', letterSpacing: '.03em',
+                             borderRadius: 6, padding: '5px 8px',
+                             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                           }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                           <span aria-hidden="true" style={{
                             display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -3591,10 +3625,20 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
                             transition: 'transform .15s',
                           }}>▾</span>
                           {g.icon && <span aria-hidden="true">{g.icon}</span>}
-                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
+                          {customerHref ? (
+                            <a href={customerHref} onClick={e => e.stopPropagation()}
+                               style={{
+                                 color: 'var(--tax-brand-primary)', textDecoration: 'none',
+                                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                               }}>
+                              {g.label}
+                            </a>
+                          ) : (
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label}</span>
+                          )}
                         </span>
                         <span style={{ color: 'var(--tax-muted)', fontWeight: 500, flexShrink: 0 }}>· {g.items.length}</span>
-                      </button>
+                      </div>
                       {!isCollapsed && (
                         <div style={{ display: 'grid', gap: 6 }}>
                           {g.items.map(renderCard)}
