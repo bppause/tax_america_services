@@ -66,12 +66,19 @@ function formatDuration(totalSeconds) {
 // below) so it shows up in that shared history too — `onNewNote(trimmedNote)`,
 // when supplied, fires for exactly that case (never for an
 // already-existing note, which would just duplicate it).
-export function ensureStatusChangeNotes({ statuses, task, patch, t, onNewNote }) {
+//
+// `promptKey`, when passed, overrides the default terminal/non-terminal
+// copy selection below — used when a status change is itself implied by
+// some other action (e.g. assigning an owner auto-moves Not started to
+// In progress) and the generic "status change" wording wouldn't explain
+// why the prompt appeared.
+export function ensureStatusChangeNotes({ statuses, task, patch, t, onNewNote, promptKey: promptKeyOverride }) {
   if (!patch || !patch.statusKey || patch.statusKey === task?.status_key) return patch;
   const incoming = String(patch.notes || '').trim();
   if (incoming) return patch;
   const target = (statuses || []).find(s => s.key === patch.statusKey);
-  const promptKey = target?.is_terminal ? 'owner.tasks.completeNotesPrompt' : 'owner.tasks.statusChangeNotesPrompt';
+  const promptKey = promptKeyOverride
+    || (target?.is_terminal ? 'owner.tasks.completeNotesPrompt' : 'owner.tasks.statusChangeNotesPrompt');
   const note = typeof window !== 'undefined'
     ? window.prompt(t(promptKey))
     : null;
@@ -1665,6 +1672,42 @@ function TaskFormModal({
     saveNow(patch);
   };
 
+  // Assigning an owner to an existing task that hasn't started yet is
+  // the moment work actually begins — move it straight to In progress
+  // in the same save, through the same note-prompting path as any other
+  // status change, instead of leaving the operator to also remember to
+  // flip the Status dropdown by hand. Only kicks in when the task is
+  // actually ready to leave Not started (priority + due date already
+  // in place — same gate the server enforces); otherwise this is just
+  // a plain assignment, same as unassigning or reassigning a task
+  // that's already further along. Create mode is untouched — a
+  // brand-new task's initial status is whatever's picked in the Status
+  // field directly, not implied by also picking an owner.
+  const onAssigneeChange = (newOwnerId) => {
+    const readyToStart = isEdit && newOwnerId && statusKey === 'not_started' && priority && dueDate;
+    if (!readyToStart) {
+      setAssignedTo(newOwnerId);
+      saveNow({ assignedTo: newOwnerId });
+      return;
+    }
+    const effectiveTask = { ...task, notes, assigned_employee_id: assignedTo, priority, due_date: dueDate };
+    const patch = ensureStatusChangeNotes({
+      statuses, task: effectiveTask,
+      patch: { statusKey: 'in_progress', assignedTo: newOwnerId }, t,
+      promptKey: 'owner.tasks.assignedNextStepsPrompt',
+      onNewNote: (body) => {
+        taxApi.adminCreateTaskNote(auth, task.id, { body })
+          .then(() => setNotesRefreshKey(k => k + 1))
+          .catch(() => {});
+      },
+    });
+    if (!patch) return;
+    setAssignedTo(patch.assignedTo);
+    setStatusKey(patch.statusKey);
+    if (patch.notes !== undefined) setNotes(patch.notes);
+    saveNow(patch);
+  };
+
   const onSave = async (e) => {
     e?.preventDefault?.();
     if (!title.trim()) { setErr(t('owner.tasks.errTitle')); return; }
@@ -1901,7 +1944,7 @@ function TaskFormModal({
             <div>
               <label>{t('owner.tasks.field.owner')}</label>
               <select value={assignedTo} title={t('owner.tasks.field.ownerHint')}
-                      onChange={e => { setAssignedTo(e.target.value); saveNow({ assignedTo: e.target.value }); }}>
+                      onChange={e => onAssigneeChange(e.target.value)}>
                 <option value="">{t('owner.tasks.field.ownerNone')}</option>
                 {employees.map(em => (
                   <option key={em.id} value={em.id}>{displayPersonName(em) || em.email}</option>
