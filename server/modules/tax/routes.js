@@ -367,6 +367,16 @@ module.exports = function createTaxRouter(deps) {
     return actor?.source === 'global' || !!actor?.employee?.is_owner;
   }
 
+  // The Reviewer role — the only one allowed to move a task to a
+  // terminal/completed status (approving a Pending-review task, or
+  // completing one directly when a community's review override is on).
+  // The seed owner always counts, same convention as Staff Admin. Takes
+  // an employee row (as returned by requireTaxEmployee), not an
+  // requireOwnerAdmin-style actor wrapper.
+  function isTaskReviewer(emp) {
+    return !!emp?.is_seed_owner || !!emp?.is_task_reviewer;
+  }
+
   // "Staff admin" gate — narrower than requireOwnerAdmin: lets through a
   // full owner-admin (same rule requireOwnerAdmin('manage_employees')
   // uses) OR any employee flagged is_employee_site_admin, regardless of
@@ -391,7 +401,7 @@ module.exports = function createTaxRouter(deps) {
     const communitySlug = trim(req.get('x-tax-community') || '', 200);
     if (uid && email && communitySlug) {
       const { data: emp } = await supabase.from('tax_employees')
-        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner, is_seed_owner, is_employee_site_admin')
+        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
         .eq('email', email).eq('community_id', communitySlug).maybeSingle();
       if (emp && emp.status === 'active' && (!emp.firebase_uid || emp.firebase_uid === uid)) {
         const allowed = emp.is_seed_owner || emp.is_employee_site_admin
@@ -2822,11 +2832,14 @@ ${closingHtml}
     }
   }
 
-  // Notify every owner in a task's community the moment it lands on
+  // Notify every Reviewer in a task's community the moment it lands on
   // "Pending review" — the whole point of the review queue is that it
-  // needs the owner to actually look at it, so this fires once, right
-  // when PATCH /admin/tasks/:id parks the task there (see
-  // stillRequiresReview below), not on every subsequent edit.
+  // needs a Reviewer to actually look at it (they're the only role that
+  // can act on it — see isTaskReviewer), so this fires once, right when
+  // PATCH /admin/tasks/:id parks the task there (see stillRequiresReview
+  // below), not on every subsequent edit. Previously targeted every
+  // is_owner employee; narrowed to the Reviewer role now that review
+  // approval itself is gated to it, not ownership.
   async function notifyOwnersTaskPendingReview({ taskId, actor }) {
     try {
       const { data: task } = await supabase.from('tax_tasks')
@@ -2837,7 +2850,9 @@ ${closingHtml}
       if (!task) return;
       const { data: owners } = await supabase.from('tax_employees')
         .select('id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs')
-        .eq('community_id', task.community_id).eq('is_owner', true).neq('status', 'archived');
+        .eq('community_id', task.community_id)
+        .or('is_task_reviewer.eq.true,is_seed_owner.eq.true')
+        .neq('status', 'archived');
       if (!owners || !owners.length) return;
       const { data: community } = await supabase.from('communities')
         .select('id, name').eq('id', task.community_id).maybeSingle();
@@ -8934,6 +8949,17 @@ ${closingHtml}
           // unrelated edit to an already-pending task would re-notify.
           enteredPendingReview = cur.status_key !== update.status_key;
         } else {
+          // Review is off (community override) or this task's already
+          // been through it once — either way, landing it on a terminal
+          // status completes it right here instead of re-queuing, so
+          // the Reviewer-only rule has to be enforced on this path too,
+          // not just POST /admin/tasks/:id/review.
+          if (!isTaskReviewer(emp)) {
+            return res.status(403).json({
+              error: 'reviewer_required',
+              message: 'Only a Reviewer can mark a task completed.',
+            });
+          }
           update.completed_at = new Date().toISOString();
         }
       } else {
@@ -9069,12 +9095,12 @@ ${closingHtml}
       .eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    // Only the owner can sign off — no delegation to another admin,
-    // regardless of who's assigned to the task. Separation of duties
-    // is the point of the queue: the person doing the work, even an
-    // admin, never approves their own (or anyone else's) completion.
-    if (!emp.is_owner) {
-      return res.status(403).json({ error: 'Only the owner can review this task.' });
+    // Only the Reviewer role can sign off — no delegation to another
+    // admin, regardless of who's assigned to the task. Separation of
+    // duties is the point of the queue: the person doing the work, even
+    // an admin, never approves their own (or anyone else's) completion.
+    if (!isTaskReviewer(emp)) {
+      return res.status(403).json({ error: 'reviewer_required', message: 'Only a Reviewer can review this task.' });
     }
     if (!cur.pending_review_at || cur.reviewed_at) {
       return res.status(409).json({ error: 'This task is not awaiting review.' });
@@ -9126,10 +9152,10 @@ ${closingHtml}
   // Admins see every task awaiting review in their community.
   router.get('/admin/tasks/awaiting-review', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
-    // Only the owner can act on a review, so only the owner gets a
+    // Only a Reviewer can act on a review, so only a Reviewer gets a
     // list — showing anyone else a queue they can't touch is just
     // confusing.
-    if (!emp.is_owner) return res.json({ tasks: [] });
+    if (!isTaskReviewer(emp)) return res.json({ tasks: [] });
     let q = supabase.from('tax_tasks')
       .select(`
         id, title, due_date, priority, status_key, customer_id, product_id, pending_review_at,
@@ -12166,7 +12192,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -12182,7 +12208,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -12246,6 +12272,7 @@ ${closingHtml}
       is_owner: !!e.is_owner,
       is_seed_owner: !!e.is_seed_owner,
       is_employee_site_admin: !!e.is_employee_site_admin,
+      is_task_reviewer: !!e.is_task_reviewer,
       notificationChannels: Array.isArray(e.notification_channels) ? e.notification_channels : ['in_app'],
       notificationPrefs: (e.notification_prefs && typeof e.notification_prefs === 'object') ? e.notification_prefs : {},
       // Effective permissions map. Only revoked keys are stored
@@ -13113,7 +13140,7 @@ ${closingHtml}
     if (!(await requireStaffManager(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin, is_task_reviewer')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -13737,6 +13764,48 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, isEmployeeSiteAdmin: grant });
+  });
+
+  // ── PUT /admin/employees/:id/reviewer-role ── grant/revoke "Reviewer"
+  //
+  // Unlike Staff Admin (any existing Staff Admin can grant it), only the
+  // seeded owner account — or a platform global admin, who outranks
+  // everyone — can assign or remove the Reviewer role. Reviewer is the
+  // only role that can move a task to a terminal/completed status (see
+  // isTaskReviewer, POST /admin/tasks/:id/review, and the direct-
+  // completion path in PATCH /admin/tasks/:id).
+  router.put('/admin/employees/:id/reviewer-role', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res); if (!actor) return;
+    const isSeedActor = actor.source === 'global' || !!actor.employee?.is_seed_owner;
+    if (!isSeedActor) {
+      return res.status(403).json({
+        error: 'seed_owner_required',
+        message: 'Only the seeded owner account can assign the Reviewer role.',
+      });
+    }
+    const empId = trim(req.params.id, 200);
+    const grant = !!(req.body || {}).grant;
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, is_seed_owner, is_task_reviewer').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+    // The seed owner already has (and can never lose) this via
+    // isTaskReviewer's implicit check — nothing to toggle.
+    if (existing.is_seed_owner) {
+      return res.status(400).json({ error: 'Already has full access.' });
+    }
+    const { error } = await supabase.from('tax_employees')
+      .update({ is_task_reviewer: grant, updated_at: new Date().toISOString() })
+      .eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'set_task_reviewer',
+        actorEmail: actor.email || '',
+        before: { isTaskReviewer: !!existing.is_task_reviewer },
+        after: { isTaskReviewer: grant },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, isTaskReviewer: grant });
   });
 
   // POST /admin/employees/:id/send-welcome

@@ -3925,3 +3925,30 @@ update public.tax_employee_sessions s
 set revoked_at = now()
 from ranked_sessions r
 where s.id = r.id and r.rn > 1;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- "Reviewer" role — the only role allowed to move a task to a terminal/
+-- completed status, whether that's approving a task sitting in Pending
+-- review (POST /admin/tasks/:id/review) or completing one directly when
+-- a community has the review-override switch on
+-- (PATCH /admin/tasks/:id). Replaces the previous "any owner can
+-- review" rule with a narrower, explicitly-granted one. Unlike Staff
+-- Admin (which any existing Staff Admin can grant), only the seeded
+-- owner account can assign or remove this role — see PUT
+-- /admin/employees/:id/reviewer-role.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_employees
+  add column if not exists is_task_reviewer boolean not null default false;
+
+-- The seeded owner always counts as a reviewer (server-side
+-- isTaskReviewer() treats is_seed_owner as implicit) — flagged too so
+-- the badge is consistent wherever "who can review tasks" is shown.
+update public.tax_employees
+  set is_task_reviewer = true
+  where is_seed_owner = true;
+
+-- bppause@gmail.com gets it by default alongside the seeded owner.
+update public.tax_employees
+  set is_task_reviewer = true
+  where community_id = 'tax-america-services'
+    and email = 'bppause@gmail.com';

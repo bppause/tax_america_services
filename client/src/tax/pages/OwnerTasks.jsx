@@ -136,6 +136,10 @@ export default function OwnerTasks() {
   const isAdmin = employee?.role === 'admin';
   const isOwner = !!employee?.is_owner;
   const isSeedOwner = !!employee?.is_seed_owner;
+  // Reviewer is the one role allowed to move a task to a terminal/
+  // completed status (see server-side isTaskReviewer in routes.js) —
+  // the seed owner always counts, same convention as Staff Admin.
+  const isReviewer = !!employee?.is_task_reviewer || isSeedOwner;
   // Settings → Admin/staff view. Simple mode locks this page to a plain
   // list: no Kanban/Calendar/Periods, no bulk actions, no blocked-by/
   // review/time-tracking panel in the edit modal.
@@ -434,6 +438,7 @@ export default function OwnerTasks() {
         <TaskFormModal
           mode="edit" task={editingTask}
           auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner} isSeedOwner={isSeedOwner}
+          isReviewer={isReviewer}
           reviewOverrideEnabled={reviewOverrideEnabled}
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
@@ -1358,7 +1363,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 // service from the customer's first active relationship (best-effort —
 // stays blank if no workflow rule chains to a product).
 function TaskFormModal({
-  mode, task, auth, community, isAdmin, isOwner, isSeedOwner, reviewOverrideEnabled,
+  mode, task, auth, community, isAdmin, isOwner, isSeedOwner, isReviewer, reviewOverrideEnabled,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
@@ -1974,7 +1979,7 @@ function TaskFormModal({
 
           {isEdit && !isSimple && (
             <TaskProgressPanel task={task} tasks={tasks}
-                                isAdmin={isAdmin} isOwner={isOwner}
+                                isAdmin={isAdmin} isOwner={isOwner} isReviewer={isReviewer}
                                 reviewOverrideEnabled={reviewOverrideEnabled}
                                 statuses={statuses} currentStatusKey={statusKey}
                                 auth={auth} locale={locale} t={t} />
@@ -2051,7 +2056,7 @@ function CollapsibleField({ title, badge, defaultOpen, children }) {
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so approving a review
 // never risks closing the modal.
-function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnabled, statuses, currentStatusKey, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, isAdmin, isReviewer, reviewOverrideEnabled, statuses, currentStatusKey, auth, locale, t }) {
   // ── Time summary — fully automatic, no manual start/stop. Computed
   // from status_changed_at (bumped server-side on every status
   // transition) and created_at; frozen once the task is completed.
@@ -2084,9 +2089,9 @@ function TaskProgressPanel({ task, tasks, isAdmin, isOwner, reviewOverrideEnable
   const approved = reviewDecision === 'approve' || !!task.reviewed_at;
   const changesRequested = reviewDecision === 'reject';
   const pendingReview = !approved && !changesRequested && !!task.pending_review_at && !task.reviewed_at;
-  // Only the owner can review — no delegation to another admin, matches
-  // the server gate on POST /admin/tasks/:id/review.
-  const isReviewer = isOwner;
+  // Only the Reviewer role can review/complete — no delegation to
+  // another admin, matches the server gate on POST /admin/tasks/:id/
+  // review and the direct-to-completed path in PATCH /admin/tasks/:id.
 
   const onSetRequiresReview = async (val) => {
     setRequiresReview(val);
@@ -3375,7 +3380,14 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     try {
       await taxApi.adminUpdateTask(auth, id, patch);
       onChange();
-    } catch (_e) { /* swallow */ }
+    } catch (err) {
+      // Most drag failures are silent-fine to ignore (a stale card from
+      // another tab, etc.), but a drag onto a terminal column by a
+      // non-Reviewer now fails deliberately (server-side reviewer_required)
+      // and deserves to actually say so — the card otherwise just snaps
+      // back with zero explanation.
+      if (err?.body?.error === 'reviewer_required') window.alert(err.message || t('owner.tasks.reviewerRequiredDrop'));
+    }
   };
 
   // One card's markup, shared between the flat (groupBy='none') and
