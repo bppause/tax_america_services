@@ -1691,11 +1691,19 @@ function TaskFormModal({
       saveNow({ assignedTo: newOwnerId });
       return;
     }
+    // Owner is guaranteed present here (checked above), so this can
+    // only ever be missing priority and/or due date — named explicitly
+    // ("assigning also requires...") rather than reusing the generic
+    // beyond-Not-started wording, so it's clear why the dropdown just
+    // reverted and exactly which of the two fields still needs filling.
+    const missingFields = [];
+    if (!priority) missingFields.push(t('owner.tasks.field.priority'));
+    if (!dueDate) missingFields.push(t('owner.tasks.field.due'));
+    if (missingFields.length) {
+      window.alert(t('owner.tasks.ownerAssignRequiresFields', { fields: missingFields.join(', ') }));
+      return;
+    }
     const effectiveTask = { ...task, notes, assigned_employee_id: assignedTo, priority, due_date: dueDate };
-    const fieldsMsg = notStartedFieldsMissing({
-      task: effectiveTask, patch: { statusKey: 'in_progress', assignedEmployeeId: newOwnerId }, t,
-    });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task: effectiveTask,
       patch: { statusKey: 'in_progress', assignedTo: newOwnerId }, t,
