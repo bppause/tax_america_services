@@ -4,6 +4,7 @@
 //   /tax                                       → DEFAULT_COMMUNITY landing
 //   /tax/{community-slug}                      → that community's landing
 //   /tax/respond/{token}                       → magic-link customer response (Phase 1.5)
+//   /tax/review/{token}                        → magic-link Reviewer task approve/reject
 //   /tax/{community-slug}/portal               → portal dashboard (Phase 2a)
 //   /tax/{community-slug}/portal/profile       → portal profile + preferences
 //   /tax/{community-slug}/portal/filings/{id}  → portal filing detail + response
@@ -15,6 +16,7 @@ import PublicFaqs from './pages/PublicFaqs';
 import PublicArticles from './pages/PublicArticles';
 import PublicCalendar from './pages/PublicCalendar';
 import Respond from './pages/Respond';
+import TaskReview from './pages/TaskReview';
 import PortalLogin from './pages/PortalLogin';
 import PortalDashboard from './pages/PortalDashboard';
 import PortalFiling from './pages/PortalFiling';
@@ -66,6 +68,9 @@ function parseTaxPath() {
   // parts[0] is always 'tax' here (main.jsx only mounts TaxApp on /tax/*).
   if (parts[1] === 'respond' && parts[2]) {
     return { route: 'respond', token: decodeURIComponent(parts[2]) };
+  }
+  if (parts[1] === 'review' && parts[2]) {
+    return { route: 'task-review', token: decodeURIComponent(parts[2]) };
   }
   // Phase 5: platform admin lives at /tax/_platform/*. The underscore
   // prefix can't collide with a real community slug (slugs are
@@ -139,15 +144,17 @@ export default function TaxApp() {
     <TaxLocaleProvider>
       {parsed.route === 'respond'
         ? <Respond token={parsed.token} />
-        : parsed.route === 'report-access'
-          ? <TaxReport communitySlug={parsed.slug} token={parsed.token} />
-          : parsed.route.startsWith('platform')
-            ? <PlatformRoot parsed={parsed} />
-            : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))
-              ? <EmployeeRoot parsed={parsed} />
-              : parsed.route.startsWith('portal')
-                ? <PortalRoot parsed={parsed} />
-                : parsed.route === 'public-faqs'
+        : parsed.route === 'task-review'
+          ? <TaskReview token={parsed.token} />
+          : parsed.route === 'report-access'
+            ? <TaxReport communitySlug={parsed.slug} token={parsed.token} />
+            : parsed.route.startsWith('platform')
+              ? <PlatformRoot parsed={parsed} />
+              : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))
+                ? <EmployeeRoot parsed={parsed} />
+                : parsed.route.startsWith('portal')
+                  ? <PortalRoot parsed={parsed} />
+                  : parsed.route === 'public-faqs'
                   ? <PublicFaqs communitySlug={parsed.slug} />
                   : parsed.route === 'public-articles'
                     ? <PublicArticles communitySlug={parsed.slug} />
