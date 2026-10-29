@@ -230,6 +230,20 @@ export default function EmployeeShell({ community, active, children }) {
               {employee && navLink('dashboard', `${base}/dashboard`, t('employee.nav.dashboard'))}
             </div>
 
+            {/* Staff Admin (is_employee_site_admin) — a narrow,
+                role-independent grant for add/remove-staff + sessions.
+                Surfaced here rather than folded into the isAdmin-gated
+                groups below so a plain staff-role account holding the
+                flag still sees a path to it. A full admin already
+                reaches Staff through their own group further down, so
+                this only adds anything when the flag's holder isn't
+                already an admin. */}
+            {employee?.is_employee_site_admin && !isAdmin && (
+              <NavGroup groupKey="staff-admin" label={t('employee.nav.groupStaffAdmin')}>
+                {navLink('staff', `${base}/staff`, t('employee.nav.staff'))}
+              </NavGroup>
+            )}
+
             {isSimple ? (
               <>
                 {/* Simple mode (Settings → Admin/staff view): two groups

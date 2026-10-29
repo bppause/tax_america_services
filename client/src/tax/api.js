@@ -297,6 +297,8 @@ export const taxApi = {
   adminListEmployeeSessions(auth, communitySlug) { return request('GET', `/admin/employee-sessions?communitySlug=${encodeURIComponent(communitySlug)}`, undefined, auth, { admin: true }); },
   adminRevokeEmployeeSession(auth, sessionId)   { return request('POST', `/admin/employee-sessions/${encodeURIComponent(sessionId)}/revoke`, {}, auth, { admin: true }); },
   adminRevokeAllEmployeeSessions(auth, employeeId) { return request('POST', `/admin/employees/${encodeURIComponent(employeeId)}/sessions/revoke-all`, {}, auth, { admin: true }); },
+  adminSetEmployeeSiteAdmin(auth, id, grant)    { return request('PUT', `/admin/employees/${encodeURIComponent(id)}/site-admin-role`, { grant }, auth, { admin: true }); },
+  adminGetEmployeeLoginHistory(auth, id)        { return request('GET', `/admin/employees/${encodeURIComponent(id)}/sessions`, undefined, auth, { admin: true }); },
   adminListPermissions(auth)                    { return request('GET', '/admin/permissions', undefined, auth, { admin: true }); },
   adminSetEmployeePermissions(auth, id, permissions) {
     return request('PUT', `/admin/employees/${encodeURIComponent(id)}/permissions`, { permissions }, auth, { admin: true });

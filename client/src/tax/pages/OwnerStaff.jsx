@@ -5,6 +5,7 @@ import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import { formatLastSignInCompact } from '../lib/lastSignIn';
 import { displayPersonName } from '../lib/personName';
+import { deviceLabel } from '../lib/deviceLabel';
 
 export default function OwnerStaff() {
   const { t, locale } = useT();
@@ -16,7 +17,7 @@ export default function OwnerStaff() {
   const [err, setErr] = useState('');
 
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ firstName: '', middleName: '', lastName: '', email: '', role: 'staff', locale: 'en', sendWelcomeEmail: true });
+  const [form, setForm] = useState({ firstName: '', middleName: '', lastName: '', email: '', role: 'staff', locale: 'en', sendWelcomeEmail: true, isEmployeeSiteAdmin: false });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState({ kind: 'idle', text: '' });
 
@@ -65,6 +66,7 @@ export default function OwnerStaff() {
           : undefined,
         locale: form.locale,
         sendWelcomeEmail: form.sendWelcomeEmail,
+        isEmployeeSiteAdmin: form.isEmployeeSiteAdmin,
       });
       // Phase 4n.16: messaging branches on whether the email already had an
       // account on the platform. Existing users (customer accounts, dual
@@ -93,7 +95,7 @@ export default function OwnerStaff() {
           : t(`${baseKey}.emailFailed`);
       }
       setMsg({ kind, text });
-      setForm({ firstName: '', middleName: '', lastName: '', email: '', role: 'staff', locale: 'en', sendWelcomeEmail: true });
+      setForm({ firstName: '', middleName: '', lastName: '', email: '', role: 'staff', locale: 'en', sendWelcomeEmail: true, isEmployeeSiteAdmin: false });
       setAdding(false);
       load();
     } catch (err) {
@@ -101,7 +103,11 @@ export default function OwnerStaff() {
     } finally { setBusy(false); }
   };
 
-  if (employee && employee.role !== 'admin') {
+  // A Staff Admin (is_employee_site_admin) reaches this page too, even
+  // on a 'staff' role account — the flag exists specifically to let
+  // someone add/remove staff and manage sessions without being a full
+  // admin.
+  if (employee && employee.role !== 'admin' && !employee.is_employee_site_admin) {
     return <EmployeeShell community={community}>
       <div className="tax-msg tax-msg--error">{t('owner.notAuthorized')}</div>
     </EmployeeShell>;
@@ -199,6 +205,14 @@ export default function OwnerStaff() {
             </p>
           )}
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0', cursor: 'pointer' }}>
+            <input type="checkbox" checked={form.isEmployeeSiteAdmin}
+                   onChange={e => setForm(p => ({ ...p, isEmployeeSiteAdmin: e.target.checked }))} />
+            <span>{t('employee.role.staffAdmin')}</span>
+          </label>
+          <p style={{ color: 'var(--tax-muted)', fontSize: 13, margin: '0 0 8px' }}>
+            {t('owner.staff.staffAdminHint')}
+          </p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0', cursor: 'pointer' }}>
             <input type="checkbox" checked={form.sendWelcomeEmail}
                    onChange={e => setForm(p => ({ ...p, sendWelcomeEmail: e.target.checked }))} />
             <span>{t('owner.staff.sendWelcomeEmail')}</span>
@@ -269,6 +283,15 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
               {t('employee.role.seedOwner')}
             </span>
           )}
+          {e.is_employee_site_admin && !e.is_seed_owner && (
+            <span style={{
+              marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+              background: '#e0f2fe', color: '#075985',
+              fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+            }} title={t('owner.staff.staffAdminHint')}>
+              {t('employee.role.staffAdmin')}
+            </span>
+          )}
           <AccessScopePill emp={e} t={t} />
           {!e.firebase_uid && (
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--tax-muted)' }}>
@@ -297,28 +320,6 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
       </div>
     </div>
   );
-}
-
-// Rough, no-dependency user-agent → "Chrome on Mac" label. Good enough
-// for "is this the device I think it is" at a glance; not meant to be
-// exhaustive UA parsing.
-function deviceLabel(ua, t) {
-  const s = String(ua || '');
-  if (!s) return t('owner.staff.sessions.unknownDevice');
-  let browser = 'Browser';
-  if (/Edg\//.test(s)) browser = 'Edge';
-  else if (/OPR\//.test(s)) browser = 'Opera';
-  else if (/Chrome\//.test(s)) browser = 'Chrome';
-  else if (/Firefox\//.test(s)) browser = 'Firefox';
-  else if (/Safari\//.test(s)) browser = 'Safari';
-  let os = '';
-  if (/iPhone/.test(s)) os = 'iPhone';
-  else if (/iPad/.test(s)) os = 'iPad';
-  else if (/Android/.test(s)) os = 'Android';
-  else if (/Mac OS X/.test(s)) os = 'Mac';
-  else if (/Windows/.test(s)) os = 'Windows';
-  else if (/Linux/.test(s)) os = 'Linux';
-  return os ? `${browser} · ${os}` : browser;
 }
 
 // "Who's logged in where" + force logout. Collapsed by default (most
@@ -415,6 +416,13 @@ function SessionsPanel({ auth, community, locale, t }) {
                               background: '#fef3c7', color: '#92400e',
                               fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
                             }}>{t('employee.role.seedOwner')}</span>
+                          )}
+                          {g.employee?.is_employee_site_admin && !g.employee?.is_seed_owner && (
+                            <span style={{
+                              marginLeft: 6, padding: '1px 6px', borderRadius: 999,
+                              background: '#e0f2fe', color: '#075985',
+                              fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                            }}>{t('employee.role.staffAdmin')}</span>
                           )}
                         </strong>
                         {g.rows.length > 1 && (
