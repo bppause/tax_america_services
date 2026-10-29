@@ -367,6 +367,42 @@ module.exports = function createTaxRouter(deps) {
     return actor?.source === 'global' || !!actor?.employee?.is_owner;
   }
 
+  // "Staff admin" gate — narrower than requireOwnerAdmin: lets through a
+  // full owner-admin (same rule requireOwnerAdmin('manage_employees')
+  // uses) OR any employee flagged is_employee_site_admin, regardless of
+  // role. That flag exists specifically so a practice can deputize
+  // someone for staff/account administration — add/remove staff, grant
+  // or revoke this same flag on others, see and force-logout sessions —
+  // without making them a full admin (no customers, leads, or settings
+  // access comes with it). Used only by the staff/session routes below;
+  // every other admin-gated route stays on requireOwnerAdmin as before.
+  async function requireStaffManager(req, res) {
+    if (!requireSupabaseEnv(res)) return null;
+    const headerEmail = trim(req.get('x-admin-email') || req.query.adminEmail || '', 200).toLowerCase();
+    if (headerEmail) {
+      const envOk = typeof isEnvGlobalAdminEmail === 'function' && isEnvGlobalAdminEmail(headerEmail);
+      const dbOk  = !envOk && typeof isGlobalAdmin === 'function'
+        ? await isGlobalAdmin('', headerEmail)
+        : false;
+      if (envOk || dbOk) return { email: headerEmail, source: 'global' };
+    }
+    const uid = trim(req.get('x-firebase-uid') || '', 200);
+    const email = trim(req.get('x-firebase-email') || '', 200).toLowerCase();
+    const communitySlug = trim(req.get('x-tax-community') || '', 200);
+    if (uid && email && communitySlug) {
+      const { data: emp } = await supabase.from('tax_employees')
+        .select('id, community_id, email, role, status, firebase_uid, permissions, is_owner, is_seed_owner, is_employee_site_admin')
+        .eq('email', email).eq('community_id', communitySlug).maybeSingle();
+      if (emp && emp.status === 'active' && (!emp.firebase_uid || emp.firebase_uid === uid)) {
+        const allowed = emp.is_seed_owner || emp.is_employee_site_admin
+          || (emp.role === 'admin' && hasEmployeePermission(emp, 'manage_employees'));
+        if (allowed) return { email, source: 'employee', employee: emp };
+      }
+    }
+    res.status(403).json({ error: 'Admin authentication required.' });
+    return null;
+  }
+
   // The seeded owner is the one account whose owner status is
   // permanent and who alone can grant or revoke is_owner on anyone
   // else — see PUT /admin/employees/:id/owner. A global admin still
@@ -12130,7 +12166,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -12146,7 +12182,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -12209,6 +12245,7 @@ ${closingHtml}
       locale: e.locale, role: e.role, status: e.status,
       is_owner: !!e.is_owner,
       is_seed_owner: !!e.is_seed_owner,
+      is_employee_site_admin: !!e.is_employee_site_admin,
       notificationChannels: Array.isArray(e.notification_channels) ? e.notification_channels : ['in_app'],
       notificationPrefs: (e.notification_prefs && typeof e.notification_prefs === 'object') ? e.notification_prefs : {},
       // Effective permissions map. Only revoked keys are stored
@@ -13053,10 +13090,10 @@ ${closingHtml}
   });
 
   router.get('/admin/employees', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireStaffManager(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_owner, is_seed_owner, is_employee_site_admin')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -13089,13 +13126,13 @@ ${closingHtml}
   // active-first list with enough of the owning employee's identity to
   // render without a second round trip.
   router.get('/admin/employee-sessions', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res))) return;
+    if (!(await requireStaffManager(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug required.' });
     const { data, error } = await supabase.from('tax_employee_sessions')
       .select(`
         id, employee_id, user_agent, ip_address, created_at, last_seen_at,
-        tax_employees ( email, name, first_name, middle_name, last_name, role, is_seed_owner )
+        tax_employees!tax_employee_sessions_employee_id_fkey ( email, name, first_name, middle_name, last_name, role, is_seed_owner, is_employee_site_admin )
       `)
       .eq('community_id', communitySlug).is('revoked_at', null)
       .order('last_seen_at', { ascending: false }).limit(300);
@@ -13108,7 +13145,7 @@ ${closingHtml}
   // Takes effect on that device's very next request — requireTaxEmployee
   // rejects any request carrying this token once revoked_at is set.
   router.post('/admin/employee-sessions/:id/revoke', async (req, res) => {
-    const actor = await requireOwnerAdmin(req, res, 'manage_employees'); if (!actor) return;
+    const actor = await requireStaffManager(req, res); if (!actor) return;
     const sessionId = trim(req.params.id, 200);
     const { data: sess } = await supabase.from('tax_employee_sessions')
       .select('id, employee_id, revoked_at').eq('id', sessionId).maybeSingle();
@@ -13130,7 +13167,7 @@ ${closingHtml}
 
   // ── POST /admin/employees/:id/sessions/revoke-all ── force-logout every device
   router.post('/admin/employees/:id/sessions/revoke-all', async (req, res) => {
-    const actor = await requireOwnerAdmin(req, res, 'manage_employees'); if (!actor) return;
+    const actor = await requireStaffManager(req, res); if (!actor) return;
     const empId = trim(req.params.id, 200);
     const { data: rows, error } = await supabase.from('tax_employee_sessions')
       .update({ revoked_at: new Date().toISOString(), revoked_by_employee_id: actor.employee?.id || null })
@@ -13148,8 +13185,29 @@ ${closingHtml}
     res.json({ ok: true, count: rows?.length || 0 });
   });
 
+  // ── GET /admin/employees/:id/sessions ── login/logout history for one
+  // employee — active and ended sessions both — for the "Login history"
+  // section on their Staff detail page. Distinct from GET /admin/
+  // employee-sessions above, which is the practice-wide "who's logged in
+  // right now" list. revoked_by is only present when an admin forced the
+  // logout (POST .../revoke or .../revoke-all); a self sign-out
+  // (POST /employee/auth/signout) leaves it null.
+  router.get('/admin/employees/:id/sessions', async (req, res) => {
+    if (!(await requireStaffManager(req, res))) return;
+    const empId = trim(req.params.id, 200);
+    const { data, error } = await supabase.from('tax_employee_sessions')
+      .select(`
+        id, user_agent, ip_address, created_at, last_seen_at, revoked_at,
+        revoked_by:tax_employees!tax_employee_sessions_revoked_by_employee_id_fkey ( email, name, first_name, middle_name, last_name )
+      `)
+      .eq('employee_id', empId)
+      .order('created_at', { ascending: false }).limit(100);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ sessions: data || [] });
+  });
+
   router.post('/admin/employees', async (req, res) => {
-    const actor = await requireOwnerAdmin(req, res, 'manage_employees');
+    const actor = await requireStaffManager(req, res);
     if (!actor) return;
     const body = req.body || {};
     const communitySlug = trim(body.communitySlug, 200);
@@ -13185,6 +13243,7 @@ ${closingHtml}
       id, community_id: communitySlug, email,
       name: np.name, first_name: np.first, middle_name: np.middle, last_name: np.last,
       role, locale, permissions,
+      is_employee_site_admin: !!body.isEmployeeSiteAdmin,
     });
     if (error) return sendSupabaseError(res, error);
 
@@ -13580,7 +13639,7 @@ ${closingHtml}
   });
 
   router.put('/admin/employees/:id/status', async (req, res) => {
-    if (!(await requireOwnerAdmin(req, res, 'manage_employees'))) return;
+    if (!(await requireStaffManager(req, res))) return;
     const empId = trim(req.params.id, 200);
     const body = req.body || {};
     const status = String(body.status || '').toLowerCase();
@@ -13624,6 +13683,40 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, status });
+  });
+
+  // ── PUT /admin/employees/:id/site-admin-role ── grant/revoke "Staff Admin"
+  //
+  // Lets an existing Staff Admin deputize (or un-deputize) someone else —
+  // "assign/remove other employee site admins" — without needing the
+  // practice owner for this specific, narrow grant. Full role/owner
+  // changes (PUT .../role, .../owner) stay owner-gated as before; this
+  // only ever toggles the one flag requireStaffManager checks.
+  router.put('/admin/employees/:id/site-admin-role', async (req, res) => {
+    const actor = await requireStaffManager(req, res); if (!actor) return;
+    const empId = trim(req.params.id, 200);
+    const grant = !!(req.body || {}).grant;
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, is_seed_owner, is_employee_site_admin').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+    // The seed owner already has (and can never lose) every power this
+    // flag grants via full, unrevoked admin access — nothing to toggle.
+    if (existing.is_seed_owner) {
+      return res.status(400).json({ error: 'Already has full access.' });
+    }
+    const { error } = await supabase.from('tax_employees')
+      .update({ is_employee_site_admin: grant, updated_at: new Date().toISOString() })
+      .eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'set_employee_site_admin',
+        actorEmail: actor.email || '',
+        before: { isEmployeeSiteAdmin: !!existing.is_employee_site_admin },
+        after: { isEmployeeSiteAdmin: grant },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, isEmployeeSiteAdmin: grant });
   });
 
   // POST /admin/employees/:id/send-welcome

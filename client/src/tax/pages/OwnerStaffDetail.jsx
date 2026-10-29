@@ -5,8 +5,9 @@ import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import { CERT_LIBRARY } from '../lib/certLibrary';
 
-import { formatLastSignIn } from '../lib/lastSignIn';
+import { formatLastSignIn, formatDateTime } from '../lib/lastSignIn';
 import { displayPersonName, parsePersonName } from '../lib/personName';
+import { deviceLabel } from '../lib/deviceLabel';
 import { CollapsibleSection } from './OwnerSettings';
 
 // Category display order mirrors OwnerCustomers so the chip groups feel
@@ -69,7 +70,9 @@ export default function OwnerStaffDetail({ employeeId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, employeeId]);
 
-  if (me && me.role !== 'admin') {
+  // A Staff Admin (is_employee_site_admin) reaches this page too, even
+  // on a 'staff' role account.
+  if (me && me.role !== 'admin' && !me.is_employee_site_admin) {
     return <EmployeeShell community={community}>
       <div className="tax-msg tax-msg--error">{t('owner.notAuthorized')}</div>
     </EmployeeShell>;
@@ -89,8 +92,17 @@ export default function OwnerStaffDetail({ employeeId }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <h2 style={{ margin: 0, marginBottom: 4, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
             <span>{displayPersonName(emp) || emp.email}</span>
-            <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
-            <OwnerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
+            {/* Promoting to full admin, or granting Owner, stays strictly
+                owner-gated — a Staff Admin reaching this page (role may
+                be 'staff') doesn't get these, only the narrower toggle
+                below. */}
+            {me?.role === 'admin' && (
+              <>
+                <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
+                <OwnerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
+              </>
+            )}
+            <StaffAdminToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
           </h2>
           {/* One-sentence summary of what this person can see, right under
@@ -174,6 +186,11 @@ export default function OwnerStaffDetail({ employeeId }) {
             onChange={loadAssignments} t={t}
             locale={locale} community={community} />
         )}
+      </CollapsibleSection>
+
+      <CollapsibleSection storageKey="staffDetail.loginHistory" defaultOpen={false}
+                           title={t('owner.staffDetail.loginHistory.title')}>
+        <LoginHistorySection emp={emp} auth={auth} t={t} locale={locale} />
       </CollapsibleSection>
     </EmployeeShell>
   );
@@ -1699,6 +1716,129 @@ function OwnerToggle({ emp, me, auth, onSaved, t }) {
       </label>
       {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
     </span>
+  );
+}
+
+// "Staff Admin" (is_employee_site_admin) — grant/revoke the narrow
+// add/remove-staff + sessions capability, independent of role. Visible
+// to any actor who can reach this page at all (full admin or an
+// existing Staff Admin — see requireStaffManager server-side), so a
+// Staff Admin can deputize or un-deputize someone else without the
+// practice owner. The seed owner already has this by default and
+// can't have it toggled; disabled on your own row (mirrors RoleSwitcher
+// — no changing your own standing from here).
+function StaffAdminToggle({ emp, me, auth, onSaved, t }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSelf = emp.id === me?.id;
+
+  if (emp.is_seed_owner) return null;
+
+  const onChange = async (grant) => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminSetEmployeeSiteAdmin(auth, emp.id, grant);
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <label style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', cursor: (busy || isSelf) ? 'not-allowed' : 'pointer',
+        background: emp.is_employee_site_admin ? '#e0f2fe' : 'var(--tax-bg-alt)',
+        color: emp.is_employee_site_admin ? '#075985' : 'var(--tax-muted)',
+      }} title={isSelf ? t('owner.staffDetail.role.selfHint') : t('owner.staff.staffAdminHint')}>
+        <input type="checkbox" checked={!!emp.is_employee_site_admin}
+               disabled={busy || isSelf}
+               onChange={e => onChange(e.target.checked)}
+               style={{ margin: 0 }} />
+        {t('employee.role.staffAdmin')}
+      </label>
+      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
+    </span>
+  );
+}
+
+// Full login/logout history for this employee — every device they've
+// ever signed in from, active or long since ended. Reuses the same
+// tax_employee_sessions rows the Staff list's "Who's logged in" panel
+// reads from (GET /admin/employee-sessions only returns the still-active
+// ones); this pulls the complete history for one person instead.
+function LoginHistorySection({ emp, auth, t, locale }) {
+  const [sessions, setSessions] = useState(null);
+  const [err, setErr] = useState('');
+  const [busyId, setBusyId] = useState('');
+
+  const load = () => {
+    taxApi.adminGetEmployeeLoginHistory(auth, emp.id)
+      .then(d => setSessions(d.sessions || []))
+      .catch(e => setErr(e?.message || t('error.loadFailed')));
+  };
+  useEffect(load, [emp.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const revoke = async (sessionId) => {
+    setBusyId(sessionId); setErr('');
+    try { await taxApi.adminRevokeEmployeeSession(auth, sessionId); load(); }
+    catch (e) { setErr(e?.message || t('respond.error.generic')); }
+    finally { setBusyId(''); }
+  };
+
+  if (sessions === null) return <p>{t('loading')}</p>;
+  if (err) return <div className="tax-msg tax-msg--error">{err}</div>;
+  if (sessions.length === 0) {
+    return <p style={{ color: 'var(--tax-muted)', fontSize: 13 }}>{t('owner.staffDetail.loginHistory.empty')}</p>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {sessions.map(s => {
+        const isActive = !s.revoked_at;
+        const revokerName = s.revoked_by ? (displayPersonName(s.revoked_by) || s.revoked_by.email) : '';
+        return (
+          <div key={s.id} className="tax-contact-item" style={{
+            display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+          }}>
+            <div style={{ minWidth: 0, fontSize: 13 }}>
+              <div>
+                {t('owner.staffDetail.loginHistory.signedIn', { time: formatDateTime(s.created_at, locale) })}
+                {' — '}
+                <span style={{ color: 'var(--tax-muted)' }}>
+                  {deviceLabel(s.user_agent, t)}{s.ip_address ? ` · ${s.ip_address}` : ''}
+                </span>
+              </div>
+              <div style={{ marginTop: 2, fontSize: 12 }}>
+                {isActive ? (
+                  <span style={{ color: 'var(--tax-success)', fontWeight: 600 }}>
+                    {t('owner.staffDetail.loginHistory.active')}
+                  </span>
+                ) : revokerName ? (
+                  <span style={{ color: '#b91c1c' }}>
+                    {t('owner.staffDetail.loginHistory.forcedOut', { time: formatDateTime(s.revoked_at, locale), name: revokerName })}
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--tax-muted)' }}>
+                    {t('owner.staffDetail.loginHistory.signedOut', { time: formatDateTime(s.revoked_at, locale) })}
+                  </span>
+                )}
+              </div>
+            </div>
+            {isActive && (
+              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                      disabled={busyId === s.id}
+                      onClick={() => revoke(s.id)}
+                      style={{ color: '#b91c1c', borderColor: '#b91c1c', flexShrink: 0 }}>
+                {t('owner.staff.sessions.revoke')}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

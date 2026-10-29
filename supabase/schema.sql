@@ -3876,3 +3876,30 @@ create index if not exists idx_tax_employee_sessions_employee
 create index if not exists idx_tax_employee_sessions_community
   on public.tax_employee_sessions(community_id) where revoked_at is null;
 alter table public.tax_employee_sessions disable row level security;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- "Staff admin" — a narrow, role-independent grant: add/remove staff,
+-- grant or revoke this same flag on other employees, and see/force-
+-- logout sessions on the Staff page — without the rest of what
+-- role='admin' unlocks (customers, leads, settings, …). Lets a practice
+-- deputize someone for staff/account administration specifically
+-- without making them a full admin. Shown in the UI as "Staff Admin",
+-- kept distinct from the existing "Site admin" (role='admin' + the
+-- view_customers permission revoked, for managing the public website).
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_employees
+  add column if not exists is_employee_site_admin boolean not null default false;
+
+-- The seeded owner already has (and can never lose) every power this
+-- flag grants via full, unrevoked admin access — flagged too so the
+-- badge is consistent wherever "who can manage staff" is shown.
+update public.tax_employees
+  set is_employee_site_admin = true
+  where is_seed_owner = true;
+
+-- bppause@gmail.com — the practice's own technical admin — gets it by
+-- default alongside the seeded owner.
+update public.tax_employees
+  set is_employee_site_admin = true
+  where community_id = 'tax-america-services'
+    and email = 'bppause@gmail.com';
