@@ -8850,6 +8850,28 @@ ${closingHtml}
       update.reviewer_employee_id = trim(body.reviewerEmployeeId || '', 200) || null;
     }
 
+    // Assigning an owner to a task that hasn't started yet is itself the
+    // signal that work can begin — move it straight to In progress
+    // instead of leaving it sitting in Not started until someone
+    // remembers to also flip the status by hand. Only fires when: the
+    // caller isn't already choosing a different status in this same
+    // request (an explicit choice always wins); the task isn't already
+    // further along (reassigning a task that's already moving doesn't
+    // reopen or restart it); and it's actually ready to leave Not
+    // started — priority + due date already in place, the same gate any
+    // other move beyond Not started has to clear (see below). When those
+    // aren't both already set, the assignment is just saved as-is and
+    // the task stays in Not started, same as before this existed.
+    if (cur.status_key === 'not_started'
+        && update.assigned_employee_id
+        && (update.status_key === undefined || update.status_key === 'not_started')) {
+      const effPriority = update.priority !== undefined ? update.priority : cur.priority;
+      const effDue = update.due_date !== undefined ? update.due_date : cur.due_date;
+      if (effPriority && effDue) {
+        update.status_key = 'in_progress';
+      }
+    }
+
     // A task tied to a customer isn't practice-wide — it needs one of
     // that customer's own tagged services, not a blank or unrelated one.
     // Only checked when this request actually touches customer/service,
