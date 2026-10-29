@@ -135,6 +135,7 @@ export default function OwnerTasks() {
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
   const isAdmin = employee?.role === 'admin';
   const isOwner = !!employee?.is_owner;
+  const isSeedOwner = !!employee?.is_seed_owner;
   // Settings → Admin/staff view. Simple mode locks this page to a plain
   // list: no Kanban/Calendar/Periods, no bulk actions, no blocked-by/
   // review/time-tracking panel in the edit modal.
@@ -432,7 +433,7 @@ export default function OwnerTasks() {
       {editingTask && (
         <TaskFormModal
           mode="edit" task={editingTask}
-          auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner}
+          auth={auth} community={community} isAdmin={isAdmin} isOwner={isOwner} isSeedOwner={isSeedOwner}
           reviewOverrideEnabled={reviewOverrideEnabled}
           statuses={statuses} employees={employees} customers={customers}
           products={products} relationshipTypes={relationshipTypes}
@@ -483,7 +484,7 @@ export default function OwnerTasks() {
         <TasksPeriods auth={auth} community={community} filters={filters}
                       statuses={statuses} employees={employees}
                       customerById={customerById} employeeById={employeeById}
-                      productById={productById} isAdmin={isAdmin}
+                      productById={productById} isAdmin={isAdmin} isSeedOwner={isSeedOwner}
                       onEdit={setEditingTask}
                       selectedIds={selectedIds} toggleSelect={toggleSelect}
                       selectMany={selectMany}
@@ -511,6 +512,7 @@ export default function OwnerTasks() {
                               statuses={statuses} employees={employees}
                               customerById={customerById} employeeById={employeeById}
                               productById={productById} isAdmin={isAdmin} employeeId={employee?.id}
+                              isSeedOwner={isSeedOwner}
                               auth={auth} onEdit={setEditingTask} onChange={load}
                               selectedIds={isSimple ? undefined : selectedIds}
                               toggleSelect={isSimple ? undefined : toggleSelect}
@@ -1040,7 +1042,7 @@ function GroupSelectAll({ tasks, selectedIds, toggleSelect, selectMany, t }) {
   );
 }
 
-function TaskRow({ task, auth, community, statuses, employees, customerById, employeeById, productById, isAdmin, employeeId, onEdit, onChange, selected, onToggleSelect, locale, t }) {
+function TaskRow({ task, auth, community, statuses, employees, customerById, employeeById, productById, isSeedOwner, onEdit, onChange, selected, onToggleSelect, locale, t }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [showNotes, setShowNotes] = useState(false);
@@ -1088,9 +1090,13 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
     catch (e) { setErr(e?.message || ''); }
     finally { setBusy(false); }
   };
-  // Admins can always delete; a non-admin may also delete a task they
-  // themselves assigned (created), mirroring the server-side check.
-  const canDelete = isAdmin || (!!employeeId && task.created_by_employee_id === employeeId);
+  // A task still sitting in Not started has no real work recorded
+  // against it yet, so anyone can clear it. Once it's moved past that —
+  // in progress, pending review, completed — deleting it destroys
+  // whatever's attached (notes, time entries, review history), so
+  // that's reserved for the seeded owner account specifically, not
+  // just any admin. Mirrors the server-side check in DELETE /admin/tasks/:id.
+  const canDelete = task.status_key === 'not_started' || !!isSeedOwner;
 
   return (
     <TaskHover task={task} statuses={statuses}
@@ -1352,7 +1358,7 @@ function TaskNotesSection({ auth, taskId, locale, t, refreshKey }) {
 // service from the customer's first active relationship (best-effort —
 // stays blank if no workflow rule chains to a product).
 function TaskFormModal({
-  mode, task, auth, community, isAdmin, isOwner, reviewOverrideEnabled,
+  mode, task, auth, community, isAdmin, isOwner, isSeedOwner, reviewOverrideEnabled,
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
@@ -1389,10 +1395,10 @@ function TaskFormModal({
   const [err, setErr] = useState('');
   const [saveStatus, setSaveStatus] = useState('idle');
   const [delBusy, setDelBusy] = useState(false);
-  // Admins can always delete; a non-admin may also delete a task they
-  // themselves assigned (created), mirroring the server-side check in
-  // DELETE /admin/tasks/:id.
-  const canDelete = isEdit && (isAdmin || (!!employeeId && task.created_by_employee_id === employeeId));
+  // Not started has no real work recorded against it yet, so anyone can
+  // delete it; past that, only the seeded owner account can — mirrors
+  // the server-side check in DELETE /admin/tasks/:id.
+  const canDelete = isEdit && (task.status_key === 'not_started' || !!isSeedOwner);
   const onDeleteTask = async () => {
     if (delBusy) return;
     if (!window.confirm(t('owner.tasks.deleteConfirm'))) return;
@@ -2614,7 +2620,7 @@ function DuePill({ dueDate, thresholds, t }) {
 
 // ─── Grouped list view ───────────────────────────────────────────────────
 function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
-                            customerById, employeeById, productById, isAdmin, employeeId,
+                            customerById, employeeById, productById, isAdmin, employeeId, isSeedOwner,
                             auth, onEdit, onChange,
                             selectedIds, toggleSelect, selectMany,
                             locale, t }) {
@@ -2627,7 +2633,7 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
           <TaskRow key={task.id} task={task} auth={auth} community={community}
                    statuses={statuses} employees={employees}
                    customerById={customerById} employeeById={employeeById}
-                   productById={productById} isAdmin={isAdmin} employeeId={employeeId}
+                   productById={productById} isAdmin={isAdmin} employeeId={employeeId} isSeedOwner={isSeedOwner}
                    onEdit={() => onEdit(task)}
                    onChange={onChange}
                    selected={selectedIds?.has(task.id)}
@@ -2696,7 +2702,7 @@ function TasksGroupedList({ tasks, groupBy, community, statuses, employees,
                 <TaskRow key={task.id} task={task} auth={auth} community={community}
                          statuses={statuses} employees={employees}
                          customerById={customerById} employeeById={employeeById}
-                         productById={productById} isAdmin={isAdmin} employeeId={employeeId}
+                         productById={productById} isAdmin={isAdmin} employeeId={employeeId} isSeedOwner={isSeedOwner}
                          onEdit={() => onEdit(task)}
                          onChange={onChange}
                          selected={selectedIds?.has(task.id)}
@@ -2765,7 +2771,7 @@ function periodLabelFor(cadenceKind, dueDateIso, locale) {
 }
 
 function TasksPeriods({ auth, community, filters, statuses, employees, customerById,
-                        employeeById, productById, isAdmin, onEdit,
+                        employeeById, productById, isAdmin, isSeedOwner, onEdit,
                         selectedIds, toggleSelect, selectMany,
                         periodsGroup = 'period',
                         mine, employeeId, hideCompleted, locale, t }) {
@@ -2854,7 +2860,7 @@ function TasksPeriods({ auth, community, filters, statuses, employees, customerB
                 auth={auth} community={community} thresholds={thresholds} todayIso={todayIso}
                 statuses={statuses} employees={employees}
                 customerById={customerById} employeeById={employeeById}
-                productById={productById} isAdmin={isAdmin}
+                productById={productById} isAdmin={isAdmin} isSeedOwner={isSeedOwner}
                 selectedIds={selectedIds} toggleSelect={toggleSelect} selectMany={selectMany}
                 onEdit={onEdit}
                 onTaskChange={() => {
@@ -2953,7 +2959,7 @@ function TasksPeriods({ auth, community, filters, statuses, employees, customerB
 function PeriodCard({ period: p, isOpen, onToggle, cached,
                       auth, community, thresholds, todayIso,
                       statuses, employees, customerById, employeeById, productById,
-                      isAdmin, selectedIds, toggleSelect, selectMany,
+                      isAdmin, isSeedOwner, selectedIds, toggleSelect, selectMany,
                       onEdit, onTaskChange,
                       hideServiceLabel, indent,
                       locale, t }) {
@@ -3058,7 +3064,7 @@ function PeriodCard({ period: p, isOpen, onToggle, cached,
                 <TaskRow key={tt.id} task={tt} auth={auth} community={community}
                          statuses={statuses} employees={employees}
                          customerById={customerById} employeeById={employeeById}
-                         productById={productById} isAdmin={isAdmin} employeeId={employeeId}
+                         productById={productById} isSeedOwner={isSeedOwner}
                          selected={selectedIds?.has(tt.id)}
                          onToggleSelect={toggleSelect ? () => toggleSelect(tt.id) : undefined}
                          onEdit={onEdit} onChange={onTaskChange}

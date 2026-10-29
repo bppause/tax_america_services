@@ -11,7 +11,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { onTaxAuthChanged, signOutTax, signInWithGoogle, firebaseReady } from './firebase';
-import { taxApi, getImpersonation, clearImpersonation } from '../api';
+import { taxApi, getImpersonation, clearImpersonation, setEmployeeSessionToken, clearEmployeeSessionToken } from '../api';
 
 const EmpAuthCtx = createContext({
   fbUser: null, employee: null, community: null,
@@ -52,7 +52,10 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
     setStatus('linking'); setError(''); setRedirectTo('');
     (async () => {
       try {
-        await taxApi.employeeAuthLink({ uid: fbUser.uid, email: fbUser.email, communitySlug });
+        const linked = await taxApi.employeeAuthLink({ uid: fbUser.uid, email: fbUser.email, communitySlug });
+        // Store the per-device token BEFORE the next call, so getEmployeeMe
+        // (and everything after) already carries it as x-tax-session.
+        setEmployeeSessionToken(linked?.sessionToken);
         const data = await taxApi.getEmployeeMe({ uid: fbUser.uid, email: fbUser.email, communitySlug });
         if (cancelled) return;
         setMe(data); setStatus('ready');
@@ -92,6 +95,21 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
     return () => { cancelled = true; };
   }, [impersonation]);
 
+  // An admin force-logged this device out (see GET/POST /admin/employee-
+  // sessions* and the Staff page). api.js dispatches this the moment any
+  // request comes back 401 session_revoked — fires at most once per page
+  // load in practice (once signed out, there's no auth header left to
+  // trigger it again) but a tight re-entrancy guard isn't worth the code.
+  useEffect(() => {
+    if (impersonation) return;
+    const onRevoked = () => {
+      signOutTax().catch(() => {});
+      window.location.href = `/tax/${communitySlug}/employee`;
+    };
+    window.addEventListener('tax:session-revoked', onRevoked);
+    return () => window.removeEventListener('tax:session-revoked', onRevoked);
+  }, [impersonation, communitySlug]);
+
   const refreshMe = useCallback(async () => {
     if (impersonation) {
       try { const data = await taxApi.getEmployeeMe({ communitySlug: impersonation.communitySlug }); setMe(data); }
@@ -112,9 +130,14 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
       window.location.href = `/tax/${impersonation.communitySlug}/employee`;
       return;
     }
+    // Best-effort — so this device's row stops showing as "active" in an
+    // admin's "who's logged in where" list right away instead of only
+    // going stale after several minutes of no further requests.
+    try { await taxApi.employeeAuthSignOut({ uid: fbUser?.uid, email: fbUser?.email, communitySlug }); } catch (_e) {}
+    clearEmployeeSessionToken();
     try { await signOutTax(); } catch (_e) {}
     setFbUser(null); setMe(null); setStatus('unauthenticated');
-  }, [impersonation]);
+  }, [impersonation, fbUser, communitySlug]);
 
   // One-click "log out and log in as another user": signs out of the
   // current Firebase session, then immediately reopens the Google account
@@ -123,10 +146,12 @@ export function TaxEmployeeAuthProvider({ communitySlug, children }) {
   // offered during impersonation — that has its own exit flow above.
   const switchAccount = useCallback(async () => {
     if (impersonation) return;
+    try { await taxApi.employeeAuthSignOut({ uid: fbUser?.uid, email: fbUser?.email, communitySlug }); } catch (_e) {}
+    clearEmployeeSessionToken();
     try { await signOutTax(); } catch (_e) {}
     setFbUser(null); setMe(null); setStatus('unauthenticated');
     try { await signInWithGoogle(); } catch (_e) { /* picker closed/cancelled — stay signed out */ }
-  }, [impersonation]);
+  }, [impersonation, fbUser, communitySlug]);
 
   const exitImpersonation = useCallback(async () => {
     if (!impersonation) return;

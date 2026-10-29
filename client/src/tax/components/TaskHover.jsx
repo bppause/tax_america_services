@@ -94,11 +94,12 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, task?.id]);
 
-  // Admins can always delete; a non-admin may also delete a task they
-  // themselves assigned (created), mirroring the server-side check in
+  // Not started has no real work recorded against it yet, so anyone can
+  // delete it; past that (in progress, pending review, completed),
+  // deleting destroys whatever's attached, so it's reserved for the
+  // seeded owner account specifically. Mirrors the server-side check in
   // DELETE /admin/tasks/:id.
-  const canDelete = !!employee && (employee.role === 'admin'
-    || (!!employee.id && task.created_by_employee_id === employee.id));
+  const canDelete = !!employee && (task.status_key === 'not_started' || !!employee.is_seed_owner);
 
   const reposition = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
