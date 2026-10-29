@@ -3298,6 +3298,19 @@ function TasksCalendar({ tasks, community, statuses, onEdit, onChange, locale, t
   );
 }
 
+// Short, plain-language explanation of what each default status means,
+// shown under every Kanban column header. Custom status keys an owner
+// adds beyond the four defaults (not_started/in_progress/pending_review/
+// completed, plus the common cancelled) get no subtitle rather than a
+// guessed one.
+const KANBAN_STATUS_HINT_KEY = {
+  not_started: 'owner.tasks.kanban.statusHint.not_started',
+  in_progress: 'owner.tasks.kanban.statusHint.in_progress',
+  pending_review: 'owner.tasks.kanban.statusHint.pending_review',
+  completed: 'owner.tasks.kanban.statusHint.completed',
+  cancelled: 'owner.tasks.kanban.statusHint.cancelled',
+};
+
 // Same grouping key convention TasksGroupedList uses for the List view —
 // kept separate rather than shared, since Kanban cards already carry their
 // relations embedded (tt.customer/tt.assignee/tt.product straight off the
@@ -3439,6 +3452,16 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
 
   return (
     <div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10,
+        padding: '8px 12px', borderRadius: 8, fontSize: 12.5, lineHeight: 1.4,
+        background: 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)',
+        border: '1px solid color-mix(in srgb, var(--tax-brand-primary) 18%, #fff)',
+        color: 'var(--tax-text)',
+      }}>
+        <span aria-hidden="true">💡</span>
+        <span>{t('owner.tasks.kanban.workflowHint')}</span>
+      </div>
       {showGroups && allGroupIds.length > 0 && (
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
           <button type="button" className="tax-btn tax-btn--sm tax-btn--ghost"
@@ -3484,33 +3507,58 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
           groupedItems = order.map(k => ({ key: k, ...groups.get(k) }));
         }
 
+        // "In progress" is the column that answers "what's actively
+        // being worked on and who owns it" — the one most worth staff
+        // noticing and keeping populated (vs. letting work sit in Not
+        // started). Given a tinted background + heavier border, same
+        // color language as the status chip elsewhere, so it reads as
+        // highlighted without needing a hardcoded color unrelated to
+        // whatever the owner picked for this status.
+        const isInProgress = col.key === 'in_progress';
+        const colColor = col.color || '#9ca3af';
+        const hintKey = KANBAN_STATUS_HINT_KEY[col.key];
+
         return (
           <div key={col.id || col.key}
                onDragOver={e => e.preventDefault()}
                onDrop={e => onDrop(e, col.key)}
                style={{
-                 background: 'var(--tax-bg-alt)', borderRadius: 8,
+                 background: isInProgress
+                   ? `color-mix(in srgb, ${colColor} 10%, #fff)`
+                   : 'var(--tax-bg-alt)',
+                 borderRadius: 8,
                  padding: 8, minHeight: 200,
                  // Phase 4n.47: each column carries the status's
                  // owner-configured color along its top, so the
                  // Kanban inherits the same color language the chip
                  // uses in the List view.
-                 borderTop: `3px solid ${col.color || '#9ca3af'}`,
+                 borderTop: `${isInProgress ? 5 : 3}px solid ${colColor}`,
                }}>
             <div style={{
-              padding: '4px 6px 8px', fontSize: 12, fontWeight: 700,
-              color: 'var(--tax-muted)', textTransform: 'uppercase', letterSpacing: '.04em',
+              padding: '4px 6px 2px', fontSize: 12,
+              fontWeight: isInProgress ? 800 : 700,
+              color: isInProgress ? colColor : 'var(--tax-muted)',
+              textTransform: 'uppercase', letterSpacing: '.04em',
               display: 'flex', justifyContent: 'space-between', alignItems: 'center',
             }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{
                   width: 10, height: 10, borderRadius: 999,
-                  background: col.color || '#9ca3af',
+                  background: colColor,
                 }} />
                 {pickI18n(col.label_i18n, locale).value || col.key}
               </span>
               <span style={{ fontWeight: 500 }}>· {items.length}</span>
             </div>
+            {hintKey && (
+              <div style={{
+                padding: '0 6px 8px', fontSize: 11, lineHeight: 1.35,
+                color: 'var(--tax-muted)', textTransform: 'none', fontWeight: 400,
+                letterSpacing: 'normal',
+              }}>
+                {t(hintKey)}
+              </div>
+            )}
             {groupedItems && groupedItems.length === 0 ? (
               <div style={{ fontSize: 11, color: 'var(--tax-muted)', textAlign: 'center', padding: 12 }}>
                 {t('owner.tasks.kanban.empty')}
