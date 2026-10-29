@@ -274,7 +274,7 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
             background: e.role === 'admin' ? 'var(--tax-brand-primary)' : 'var(--tax-bg-alt)',
             color: e.role === 'admin' ? '#fff' : 'var(--tax-muted)',
             fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
-          }}>{e.role}</span>
+          }}>{e.role === 'admin' ? t('owner.staffDetail.role.admin') : t('owner.staffDetail.role.staff')}</span>
           {e.is_seed_owner && (
             <span style={{
               marginLeft: 6, padding: '1px 8px', borderRadius: 999,
@@ -334,15 +334,14 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
 
 // Quick reference for every role/badge that can show up on this page —
 // the role model has grown past what the inline "Who sees what" note
-// above can cover (Staff/Admin/Site admin, Owner/Seed owner, and the two
-// independent grants Staff Admin and Reviewer). Collapsed by default,
-// same convention as the sessions panel below — reference material, not
-// everyday UI.
+// above can cover (Staff/Customer Admin/Site admin, Seed owner, and the
+// two independent grants Staff Admin and Reviewer). Collapsed by
+// default, same convention as the sessions panel below — reference
+// material, not everyday UI.
 const ROLE_LEGEND = [
   { key: 'staff',       bg: 'var(--tax-bg-alt)', fg: 'var(--tax-muted)' },
   { key: 'admin',       bg: 'var(--tax-brand-primary)', fg: '#fff' },
   { key: 'siteAdmin',   bg: 'color-mix(in srgb, #6b7280 10%, #fff)', fg: '#374151' },
-  { key: 'owner',       bg: '#fef3c7', fg: '#92400e' },
   { key: 'seedOwner',   bg: '#fef3c7', fg: '#92400e' },
   { key: 'staffAdmin',  bg: '#e0f2fe', fg: '#075985' },
   { key: 'reviewer',    bg: '#dcfce7', fg: '#166534' },

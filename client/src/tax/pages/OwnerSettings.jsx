@@ -629,12 +629,12 @@ export default function OwnerSettings() {
 
       <TaskStatusesSection auth={auth} community={community} t={t} />
 
-      {/* Owner-only master switch — all tasks require owner review by
-          default, no exceptions. This just decides whether the
-          per-task "Requires review" checkbox (on each task's edit
-          modal) is even allowed to be turned off. Admins who aren't
-          the owner see this read-only, matching the rest of the
-          owner-tier gating. */}
+      {/* Seeded-owner-only master switch — all tasks require Reviewer
+          sign-off by default, no exceptions. This just decides whether
+          the per-task "Requires review" checkbox (on each task's edit
+          modal) is even allowed to be turned off. Loosening it
+          undermines the Reviewer role's whole point, so it's reserved
+          for whoever can also grant that role: the seeded owner. */}
       <CollapsibleSection
         storageKey="reviewOverride"
         defaultOpen={false}
@@ -648,11 +648,11 @@ export default function OwnerSettings() {
           </p>
           <label style={{
             display: 'flex', gap: 12, padding: 14, border: '1px solid var(--tax-border)', borderRadius: 8,
-            cursor: (busy || !employee?.is_owner) ? 'not-allowed' : 'pointer',
+            cursor: (busy || !employee?.is_seed_owner) ? 'not-allowed' : 'pointer',
             background: reviewOverrideEnabled ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : '#fff',
-            opacity: employee?.is_owner ? 1 : 0.6,
+            opacity: employee?.is_seed_owner ? 1 : 0.6,
           }}>
-            <input type="checkbox" disabled={busy || !employee?.is_owner}
+            <input type="checkbox" disabled={busy || !employee?.is_seed_owner}
                    checked={reviewOverrideEnabled}
                    onChange={e => onToggleReviewOverride(e.target.checked)}
                    style={{ marginTop: 2 }} />
@@ -663,7 +663,7 @@ export default function OwnerSettings() {
               </div>
             </div>
           </label>
-          {!employee?.is_owner && (
+          {!employee?.is_seed_owner && (
             <p style={{ margin: 0, fontSize: 12, color: 'var(--tax-muted)' }}>
               {t('owner.settings.reviewOverride.ownerOnly')}
             </p>

@@ -19,10 +19,10 @@ const NAV_ICON = {
 };
 
 // A plain "Staff" badge told everyone with an employee login the same
-// thing regardless of what they could actually do — an owner, a staff
-// member scoped to a handful of assigned customers, and a site admin who
-// can't see customer data at all, all saw the identical label. This maps
-// the real access tiers (role, is_owner/is_seed_owner, and the
+// thing regardless of what they could actually do — the seed owner, a
+// staff member scoped to a handful of assigned customers, and a site
+// admin who can't see customer data at all, all saw the identical
+// label. This maps the real access tiers (role, is_seed_owner, and the
 // view_customers revocation that "Site admin" bundles — see
 // OwnerStaffDetail's RoleSwitcher) onto one label + one plain-language
 // scope line, shown wherever the signed-in employee needs to know what
@@ -31,9 +31,6 @@ function employeeRoleInfo(employee, t) {
   if (!employee) return null;
   if (employee.is_seed_owner) {
     return { label: t('employee.role.seedOwner'), scope: t('employee.role.scope.all'), bg: '#fef3c7', fg: '#92400e' };
-  }
-  if (employee.is_owner) {
-    return { label: t('owner.staffDetail.owner.badge'), scope: t('employee.role.scope.all'), bg: '#fef3c7', fg: '#92400e' };
   }
   if (employee.role === 'admin' && employee.permissions?.view_customers === false) {
     return { label: t('owner.staffDetail.role.siteAdmin'), scope: t('employee.role.scope.none'), bg: '#ede9fe', fg: '#5b21b6' };
@@ -113,13 +110,15 @@ export default function EmployeeShell({ community, active, children }) {
     return () => { cancelled = true; };
   }, [fbUser, community]);
 
-  // Owner-only badge on the Tasks link — tasks sitting in the review
+  // Reviewer-only badge on the Tasks link — tasks sitting in the review
   // queue aren't visible anywhere outside Tasks/Dashboard otherwise,
   // so this makes "something needs you" visible from any page in the
-  // portal, not just after navigating to one of those two.
+  // portal, not just after navigating to one of those two. Matches the
+  // server-side isTaskReviewer gate on GET /admin/tasks/awaiting-review.
+  const isReviewer = !!employee?.is_task_reviewer || !!employee?.is_seed_owner;
   const [awaitingReview, setAwaitingReview] = useState(0);
   useEffect(() => {
-    if (!fbUser || !community || !employee?.is_owner) { setAwaitingReview(0); return; }
+    if (!fbUser || !community || !isReviewer) { setAwaitingReview(0); return; }
     let cancelled = false;
     const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
     const load = () => taxApi.adminTasksAwaitingReview(auth)
@@ -128,7 +127,7 @@ export default function EmployeeShell({ community, active, children }) {
     load();
     const id = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [fbUser, community, employee?.is_owner]);
+  }, [fbUser, community, isReviewer]);
 
   // Notification bell — surfaces tax_employee_notifications rows (new
   // messages, signed requests, task status changes, …). The endpoints
