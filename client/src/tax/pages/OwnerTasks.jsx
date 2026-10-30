@@ -460,7 +460,7 @@ export default function OwnerTasks() {
             )
           : view === 'kanban' ? (
               <TasksKanban tasks={tasks} statuses={statuses} community={community}
-                           auth={auth} onChange={load} hideCompleted={hideCompleted}
+                           auth={auth} employeeId={employee?.id} onChange={load} hideCompleted={hideCompleted}
                            groupBy={groupBy}
                            onEdit={setEditingTask} locale={locale} t={t} />
             )
@@ -999,7 +999,7 @@ function GroupSelectAll({ tasks, selectedIds, toggleSelect, selectMany, t }) {
   );
 }
 
-function TaskRow({ task, auth, community, statuses, employees, customerById, employeeById, productById, isSeedOwner, onEdit, onChange, selected, onToggleSelect, locale, t }) {
+function TaskRow({ task, auth, community, statuses, employees, customerById, employeeById, productById, isSeedOwner, employeeId, onEdit, onChange, selected, onToggleSelect, locale, t }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [showNotes, setShowNotes] = useState(false);
@@ -1021,8 +1021,11 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   // Shown next to a Not-started task so the operator can tell at a
   // glance whether it's actually ready to start, without opening it —
   // the same three fields the server gates any move beyond Not started
-  // on (see notStartedFieldsMissing).
-  const notStartedMissing = task.status_key === 'not_started' ? [
+  // on (see notStartedFieldsMissing). Start is a personal "I'm
+  // beginning this" action, so it's owner-only — someone looking at a
+  // teammate's task uses the Status dropdown instead.
+  const canStart = task.status_key === 'not_started' && !!employeeId && task.assigned_employee_id === employeeId;
+  const notStartedMissing = canStart ? [
     !task.assigned_employee_id && t('owner.tasks.field.owner'),
     !task.priority && t('owner.tasks.field.priority'),
     !task.due_date && t('owner.tasks.field.due'),
@@ -1146,7 +1149,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
             <span style={{ color: 'var(--tax-muted)' }}>
               {t('owner.tasks.created')}: {task.created_at ? new Date(task.created_at).toLocaleDateString() : ''}
             </span>
-            {task.status_key === 'not_started' && (
+            {canStart && (
               notStartedMissing.length > 0 ? (
                 <span style={{
                   padding: '1px 8px', borderRadius: 999,
@@ -1165,7 +1168,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-          {task.status_key === 'not_started' && (
+          {canStart && (
             <button type="button"
                     onClick={() => update({ statusKey: 'in_progress' }, 'owner.tasks.startNotesPrompt')}
                     disabled={busy}
@@ -1796,7 +1799,7 @@ function TaskFormModal({
                 {dueDate ? '✓' : '○'} {t('owner.tasks.field.due')}
               </span>
             </div>
-            {isEdit && (
+            {isEdit && assignedTo && assignedTo === employeeId && (
               <button type="button"
                       onClick={() => onProgressSetStatus('in_progress', 'owner.tasks.startNotesPrompt')}
                       className="tax-btn tax-btn--sm"
@@ -2909,7 +2912,7 @@ function TasksPeriods({ auth, community, filters, statuses, employees, customerB
                 auth={auth} community={community} thresholds={thresholds} todayIso={todayIso}
                 statuses={statuses} employees={employees}
                 customerById={customerById} employeeById={employeeById}
-                productById={productById} isAdmin={isAdmin} isSeedOwner={isSeedOwner}
+                productById={productById} isAdmin={isAdmin} isSeedOwner={isSeedOwner} employeeId={employeeId}
                 selectedIds={selectedIds} toggleSelect={toggleSelect} selectMany={selectMany}
                 onEdit={onEdit}
                 onTaskChange={() => {
@@ -3008,7 +3011,7 @@ function TasksPeriods({ auth, community, filters, statuses, employees, customerB
 function PeriodCard({ period: p, isOpen, onToggle, cached,
                       auth, community, thresholds, todayIso,
                       statuses, employees, customerById, employeeById, productById,
-                      isAdmin, isSeedOwner, selectedIds, toggleSelect, selectMany,
+                      isAdmin, isSeedOwner, employeeId, selectedIds, toggleSelect, selectMany,
                       onEdit, onTaskChange,
                       hideServiceLabel, indent,
                       locale, t }) {
@@ -3113,7 +3116,7 @@ function PeriodCard({ period: p, isOpen, onToggle, cached,
                 <TaskRow key={tt.id} task={tt} auth={auth} community={community}
                          statuses={statuses} employees={employees}
                          customerById={customerById} employeeById={employeeById}
-                         productById={productById} isSeedOwner={isSeedOwner}
+                         productById={productById} isSeedOwner={isSeedOwner} employeeId={employeeId}
                          selected={selectedIds?.has(tt.id)}
                          onToggleSelect={toggleSelect ? () => toggleSelect(tt.id) : undefined}
                          onEdit={onEdit} onChange={onTaskChange}
@@ -3381,7 +3384,7 @@ function kanbanGroupKey(tt, groupBy, locale, t) {
 }
 
 // ─── Kanban view (status columns + native drag-and-drop) ─────────────────
-function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideCompleted, groupBy, locale, t }) {
+function TasksKanban({ tasks, statuses, community, auth, employeeId, onChange, onEdit, hideCompleted, groupBy, locale, t }) {
   const thresholds = resolveThresholds(community);
   const todayIso = new Date().toISOString().slice(0, 10);
   // Per-(column, group) collapse state — keyed "statusKey::groupKey" so the
@@ -3408,30 +3411,38 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     tasksByStatus.set(tt.status_key, arr);
   }
 
-  const onDrop = async (e, targetKey) => {
-    e.preventDefault();
-    const id = e.dataTransfer.getData('text/plain');
-    if (!id) return;
-    const task = tasks.find(tt => tt.id === id);
+  // Shared by drag-drop (onDrop below) and the Kanban card's own Start
+  // button — one status-change path, same note prompt and Not-started
+  // field gate either way.
+  const changeTaskStatus = async (taskId, targetKey, promptKeyOverride) => {
+    const task = tasks.find(tt => tt.id === taskId);
     if (!task || task.status_key === targetKey) return;
     const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: targetKey }, t });
     if (fieldsMsg) { window.alert(fieldsMsg); onEdit(task); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
-      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
+      promptKey: promptKeyOverride,
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, taskId, { body }).catch(() => {}),
     });
     if (!patch) return;
     try {
-      await taxApi.adminUpdateTask(auth, id, patch);
+      await taxApi.adminUpdateTask(auth, taskId, patch);
       onChange();
     } catch (err) {
-      // Most drag failures are silent-fine to ignore (a stale card from
-      // another tab, etc.), but a drag onto a terminal column by a
+      // Most failures here are silent-fine to ignore (a stale card from
+      // another tab, etc.), but hitting a terminal column by a
       // non-Reviewer now fails deliberately (server-side reviewer_required)
       // and deserves to actually say so — the card otherwise just snaps
       // back with zero explanation.
       if (err?.body?.error === 'reviewer_required') window.alert(err.message || t('owner.tasks.reviewerRequiredDrop'));
     }
+  };
+
+  const onDrop = async (e, targetKey) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    if (!id) return;
+    await changeTaskStatus(id, targetKey);
   };
 
   // One card's markup, shared between the flat (groupBy='none') and
@@ -3449,6 +3460,16 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
       ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
       : '';
     const ownerName = tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : '';
+    // Same readiness summary as the Tasks list row — lets the card
+    // itself offer the Start action without opening the task or
+    // waiting on the TaskHover popover's hover delay. Owner-only, same
+    // as everywhere else Start shows up.
+    const canStart = tt.status_key === 'not_started' && !!employeeId && tt.assigned_employee_id === employeeId;
+    const notStartedMissing = canStart ? [
+      !tt.assigned_employee_id && t('owner.tasks.field.owner'),
+      !tt.priority && t('owner.tasks.field.priority'),
+      !tt.due_date && t('owner.tasks.field.due'),
+    ].filter(Boolean) : [];
     return (
       <TaskHover key={tt.id} task={tt} statuses={statuses}
                  community={community} locale={locale} t={t}
@@ -3506,6 +3527,25 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
           {ownerName && (
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 4 }}>
               {t('owner.tasks.owner')}: {ownerName}
+            </div>
+          )}
+          {canStart && (
+            <div style={{ marginTop: 6 }}>
+              {notStartedMissing.length > 0 && (
+                <div style={{ fontSize: 10, color: '#92400e', marginBottom: 4 }}>
+                  {t('owner.tasks.notStartedMissingShort', { fields: notStartedMissing.join(', ') })}
+                </div>
+              )}
+              <button type="button"
+                      onClick={e => { e.stopPropagation(); changeTaskStatus(tt.id, 'in_progress', 'owner.tasks.startNotesPrompt'); }}
+                      style={{
+                        width: '100%', border: 'none', borderRadius: 6, padding: '4px 0',
+                        cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                        background: notStartedMissing.length ? 'var(--tax-bg-alt)' : '#166534',
+                        color: notStartedMissing.length ? 'var(--tax-muted)' : '#fff',
+                      }}>
+                {t('owner.tasks.startTask')}
+              </button>
             </div>
           )}
         </div>
