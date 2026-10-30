@@ -107,7 +107,12 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   // checklist — lets the popover (the one surface shared by every task
   // view: Calendar, Kanban, Dashboard, Periods, customer profile) offer
   // the same quick Start action everywhere, not just on the Tasks page.
-  const notStartedMissing = task.status_key === 'not_started' ? [
+  // Start is a personal "I'm beginning this" action, so it only shows
+  // when the viewer is the task's own assigned owner — someone looking
+  // at a teammate's task uses the Status field in the edit modal
+  // instead, same as any other admin status change.
+  const canStart = !!employee && task.status_key === 'not_started' && task.assigned_employee_id === employee.id;
+  const notStartedMissing = canStart ? [
     !task.assigned_employee_id && t('owner.tasks.field.owner'),
     !task.priority && t('owner.tasks.field.priority'),
     !task.due_date && t('owner.tasks.field.due'),
@@ -175,7 +180,14 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   const onStartClick = async () => {
     if (startBusy) return;
     const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: 'in_progress' }, t });
-    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    if (fieldsMsg) {
+      window.alert(fieldsMsg);
+      // No edit form embedded in a popover — send the operator straight
+      // into the full task editor to fill in what's missing, same deep
+      // link the Tasks list and Kanban use for this.
+      if (community?.id) window.location.href = `/tax/${community.id}/employee/tasks?edit=${encodeURIComponent(task.id)}`;
+      return;
+    }
     const finalPatch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: 'in_progress' }, t,
       promptKey: 'owner.tasks.startNotesPrompt',
@@ -364,7 +376,7 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
           )}
         </div>
       )}
-      {task.status_key === 'not_started' && (
+      {canStart && (
         <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
           {startErr && (
             <div style={{ fontSize: 11, color: 'var(--tax-error)', marginBottom: 4 }}>{startErr}</div>
