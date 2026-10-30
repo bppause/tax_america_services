@@ -405,6 +405,7 @@ export default function OwnerTasks() {
           onCustomersChanged={(c) => setCustomers(prev => [c, ...prev])}
           onClose={() => setEditingTask(null)}
           onSaved={() => { setEditingTask(null); load(); }}
+          onChanged={load}
         />
       )}
 
@@ -1365,7 +1366,7 @@ function TaskFormModal({
   statuses, employees, customers, products, relationshipTypes,
   tasks, employeeId,
   defaultAssignee, locale, t, isSimple,
-  onCustomersChanged, onClose, onSaved,
+  onCustomersChanged, onClose, onSaved, onChanged,
 }) {
   const isEdit = mode === 'edit';
   // Owner-editable per-community override (Settings → Priority
@@ -1398,10 +1399,21 @@ function TaskFormModal({
   const [err, setErr] = useState('');
   const [saveStatus, setSaveStatus] = useState('idle');
   const [delBusy, setDelBusy] = useState(false);
+  // Server truth for the fields this form doesn't keep in its own local
+  // state — pending_review_at, reviewed_at, completed_at, status_changed_at,
+  // time_in_*_seconds. Starts as the task prop (a snapshot from when the
+  // modal opened) and gets replaced with whatever PATCH /admin/tasks/:id
+  // actually did (see doSave.current below) every time this form saves,
+  // since the modal deliberately stays open across autosaves and the
+  // server can redirect a status change (e.g. into Pending review) that
+  // the caller never explicitly asked for. TaskProgressPanel reads this,
+  // not the stale `task` prop, so its review panel (Approve/Reject) shows
+  // up the moment a save actually lands the task there.
+  const [liveTask, setLiveTask] = useState(task);
   // Not started has no real work recorded against it yet, so anyone can
   // delete it; past that, only the seeded owner account can — mirrors
   // the server-side check in DELETE /admin/tasks/:id.
-  const canDelete = isEdit && (task.status_key === 'not_started' || !!isSeedOwner);
+  const canDelete = isEdit && (liveTask.status_key === 'not_started' || !!isSeedOwner);
   const onDeleteTask = async () => {
     if (delBusy) return;
     if (!window.confirm(t('owner.tasks.deleteConfirm'))) return;
@@ -1606,13 +1618,29 @@ function TaskFormModal({
     if (isEdit) {
       setSaveStatus('saving');
       try {
-        await taxApi.adminUpdateTask(auth, task.id, {
+        const r = await taxApi.adminUpdateTask(auth, task.id, {
           title: t_.trim(), customerId: c_ || null, productId: p_ || null,
           statusKey: s_, priority: pr_, assignedEmployeeId: a_ || null,
           dueDate: d_ || null, notes: n_.trim(),
         });
         setSaveStatus('saved');
-        onSaved();
+        if (r?.task) {
+          setLiveTask(r.task);
+          // The server can redirect a status change (e.g. into Pending
+          // review, when the task still requires review) — reconcile
+          // the dropdown to what actually happened instead of leaving
+          // it stuck showing what was picked.
+          if (r.task.status_key && r.task.status_key !== s_) setStatusKey(r.task.status_key);
+        }
+        // Refresh the parent's background list (so the row/card/Kanban
+        // column reflects this save) WITHOUT closing the modal — every
+        // field here autosaves individually, so closing after each one
+        // would kick the operator out mid-edit. In particular, a status
+        // change that lands the task in Pending review needs the modal
+        // to stay open so the Reviewer can see the Approve/Reject
+        // buttons that just appeared (driven by liveTask above) and act
+        // on them immediately.
+        onChanged?.();
         savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2500);
       } catch (e) { setSaveStatus(e?.message || 'Save failed'); }
     }
@@ -1967,10 +1995,10 @@ function TaskFormModal({
             <div>
               <label>{t('owner.tasks.field.status')}</label>
               <select value={statusKey}
-                      title={(isEdit ? (task.requires_review && !task.reviewed_at) : true)
+                      title={(isEdit ? (liveTask.requires_review && !liveTask.reviewed_at) : true)
                         ? t('owner.tasks.field.statusReviewHint') : t('owner.tasks.field.statusHint')}
                       onChange={e => onProgressSetStatus(e.target.value)}>
-                {statusSelectOptions(statuses, isEdit ? task : { requires_review: true, reviewed_at: null }, t, locale).map(opt => (
+                {statusSelectOptions(statuses, isEdit ? liveTask : { requires_review: true, reviewed_at: null }, t, locale).map(opt => (
                   <option key={opt.id} value={opt.key}>{opt.label}</option>
                 ))}
               </select>
@@ -1995,11 +2023,11 @@ function TaskFormModal({
           )}
 
           {isEdit && !isSimple && (
-            <TaskProgressPanel task={task} tasks={tasks}
+            <TaskProgressPanel task={liveTask} tasks={tasks}
                                 isAdmin={isAdmin} isReviewer={isReviewer}
                                 reviewOverrideEnabled={reviewOverrideEnabled}
                                 statuses={statuses} currentStatusKey={statusKey}
-                                auth={auth} locale={locale} t={t} />
+                                auth={auth} onChanged={onChanged} locale={locale} t={t} />
           )}
 
           {err && <div className="tax-msg tax-msg--error">{err}</div>}
@@ -2073,7 +2101,7 @@ function CollapsibleField({ title, badge, defaultOpen, children }) {
 // on purpose — it manages its own save calls instead of going through
 // the parent form's autosave/onSaved plumbing, so approving a review
 // never risks closing the modal.
-function TaskProgressPanel({ task, tasks, isAdmin, isReviewer, reviewOverrideEnabled, statuses, currentStatusKey, auth, locale, t }) {
+function TaskProgressPanel({ task, tasks, isAdmin, isReviewer, reviewOverrideEnabled, statuses, currentStatusKey, auth, onChanged, locale, t }) {
   // ── Time summary — fully automatic, no manual start/stop. Computed
   // from status_changed_at (bumped server-side on every status
   // transition) and created_at; frozen once the task is completed.
@@ -2146,6 +2174,12 @@ function TaskProgressPanel({ task, tasks, isAdmin, isReviewer, reviewOverrideEna
     try {
       await taxApi.adminReviewTask(auth, task.id, { decision, note: reviewNote.trim() });
       setReviewDecision(decision);
+      // The background list (row/card/Kanban column) otherwise keeps
+      // showing Pending review until something else happens to refetch
+      // it — approving or rejecting here doesn't go through the parent
+      // form's autosave path (deliberately, see the note on this
+      // component above), so it has to trigger that refresh itself.
+      onChanged?.();
     } catch (e) { setReviewErr(e?.message || ''); }
     finally { setReviewBusy(false); }
   };

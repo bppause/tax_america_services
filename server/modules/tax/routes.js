@@ -8819,7 +8819,7 @@ ${closingHtml}
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, product_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority, status_changed_at, time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds')
+      .select('id, community_id, customer_id, product_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority, status_changed_at, completed_at, time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -9031,7 +9031,14 @@ ${closingHtml}
     if (enteredPendingReview) {
       await notifyOwnersTaskPendingReview({ taskId, actor: emp });
     }
-    res.json({ ok: true });
+    // Hands back the resulting row (not just the fields the caller sent)
+    // so an open edit modal can reflect what the server actually did —
+    // in particular, a status the caller picked can get silently
+    // redirected to Pending review above (stillRequiresReview); without
+    // this, the modal would keep showing the caller's original pick
+    // instead of the real status, and the review panel would never know
+    // to show its Approve/Reject buttons.
+    res.json({ ok: true, task: { ...cur, ...update } });
   });
 
   // ── Collaborative task notes (Phase 4n.6x) ──────────────────────────────
