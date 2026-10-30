@@ -1072,8 +1072,17 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   const urgency = effectiveUrgency(task, thresholds);
   const due = colorOf(urgency, community);
   const prCol = priorityColorOf(task.priority, community);
+  // Shown next to a Not-started task so the operator can tell at a
+  // glance whether it's actually ready to start, without opening it —
+  // the same three fields the server gates any move beyond Not started
+  // on (see notStartedFieldsMissing).
+  const notStartedMissing = task.status_key === 'not_started' ? [
+    !task.assigned_employee_id && t('owner.tasks.field.owner'),
+    !task.priority && t('owner.tasks.field.priority'),
+    !task.due_date && t('owner.tasks.field.due'),
+  ].filter(Boolean) : [];
 
-  const update = async (patch) => {
+  const update = async (patch, promptKeyOverride) => {
     // Rather than just refusing and leaving the operator to go find
     // the fields themselves, open the task straight into the edit
     // modal — the Not-started checklist there shows exactly what's
@@ -1086,6 +1095,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
     // so the server round-trip never has to fail.
     const finalPatch = ensureStatusChangeNotes({
       statuses, task, patch, t,
+      promptKey: promptKeyOverride,
       onNewNote: (body) => taxApi.adminCreateTaskNote(auth, task.id, { body }).catch(() => {}),
     });
     if (!finalPatch) return;
@@ -1190,10 +1200,38 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
             <span style={{ color: 'var(--tax-muted)' }}>
               {t('owner.tasks.created')}: {task.created_at ? new Date(task.created_at).toLocaleDateString() : ''}
             </span>
+            {task.status_key === 'not_started' && (
+              notStartedMissing.length > 0 ? (
+                <span style={{
+                  padding: '1px 8px', borderRadius: 999,
+                  background: 'color-mix(in srgb, #d97706 15%, #fff)', color: '#92400e',
+                  fontSize: 11, fontWeight: 700,
+                }}>{t('owner.tasks.notStartedMissingShort', { fields: notStartedMissing.join(', ') })}</span>
+              ) : (
+                <span style={{
+                  padding: '1px 8px', borderRadius: 999,
+                  background: 'color-mix(in srgb, #16a34a 15%, #fff)', color: '#166534',
+                  fontSize: 11, fontWeight: 700,
+                }}>{t('owner.tasks.readyToStart')}</span>
+              )
+            )}
           </div>
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
+          {task.status_key === 'not_started' && (
+            <button type="button"
+                    onClick={() => update({ statusKey: 'in_progress' }, 'owner.tasks.startNotesPrompt')}
+                    disabled={busy}
+                    className="tax-btn tax-btn--sm"
+                    style={{
+                      border: 'none',
+                      background: notStartedMissing.length ? 'var(--tax-bg-alt)' : '#166534',
+                      color: notStartedMissing.length ? 'var(--tax-muted)' : '#fff',
+                    }}>
+              {t('owner.tasks.startTask')}
+            </button>
+          )}
           <select value={task.status_key} onChange={e => update({ statusKey: e.target.value })}
                   disabled={busy}
                   style={{
@@ -1645,10 +1683,13 @@ function TaskFormModal({
   const [notesRefreshKey, setNotesRefreshKey] = useState(0);
 
   // Lets TaskProgressPanel's timer-driven reminders (move to in-progress /
-  // mark complete), and the Status select right below, change status
+  // mark complete), the Status select right below, and the explicit
+  // "Start task" button in the Not-started checklist change status
   // through the same path — single source of truth, same completion-
-  // notes prompt.
-  const onProgressSetStatus = (key) => {
+  // notes prompt. `promptKeyOverride` lets a specific trigger (the Start
+  // button) use copy that explains why the prompt appeared, instead of
+  // the generic "status change" wording.
+  const onProgressSetStatus = (key, promptKeyOverride) => {
     // Owner/priority/due live in this same form — use the current
     // local state (not the stale `task` prop) so a value just typed
     // in, but not yet round-tripped, still counts toward the gate.
@@ -1657,6 +1698,7 @@ function TaskFormModal({
     if (fieldsMsg) { window.alert(fieldsMsg); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task: effectiveTask, patch: { statusKey: key }, t,
+      promptKey: promptKeyOverride,
       // Create mode has no task.id yet — the prompted note still lands
       // in local `notes` state below and gets seeded into the log once
       // the task is actually created (see onSave).
@@ -1667,55 +1709,6 @@ function TaskFormModal({
       } : undefined,
     });
     if (!patch) return;
-    setStatusKey(patch.statusKey);
-    if (patch.notes !== undefined) setNotes(patch.notes);
-    saveNow(patch);
-  };
-
-  // Assigning an owner to an existing task that hasn't started yet is
-  // the moment work actually begins — move it straight to In progress
-  // in the same save, through the same note-prompting path as any other
-  // status change, instead of leaving the operator to also remember to
-  // flip the Status dropdown by hand. That means priority and due date
-  // have to come along with it (same gate the server enforces on any
-  // move beyond Not started) — picking an owner with either still blank
-  // is refused with the same message as trying to move the status
-  // directly, rather than silently saving an assignee on a task that
-  // still has nothing else to go on. Unassigning, reassigning a task
-  // that's already further along (priority/due are already guaranteed
-  // to exist by then), and create mode (the whole form is filled before
-  // anything is sent) all skip this and just save plainly.
-  const onAssigneeChange = (newOwnerId) => {
-    if (!isEdit || !newOwnerId || statusKey !== 'not_started') {
-      setAssignedTo(newOwnerId);
-      saveNow({ assignedTo: newOwnerId });
-      return;
-    }
-    // Owner is guaranteed present here (checked above), so this can
-    // only ever be missing priority and/or due date — named explicitly
-    // ("assigning also requires...") rather than reusing the generic
-    // beyond-Not-started wording, so it's clear why the dropdown just
-    // reverted and exactly which of the two fields still needs filling.
-    const missingFields = [];
-    if (!priority) missingFields.push(t('owner.tasks.field.priority'));
-    if (!dueDate) missingFields.push(t('owner.tasks.field.due'));
-    if (missingFields.length) {
-      window.alert(t('owner.tasks.ownerAssignRequiresFields', { fields: missingFields.join(', ') }));
-      return;
-    }
-    const effectiveTask = { ...task, notes, assigned_employee_id: assignedTo, priority, due_date: dueDate };
-    const patch = ensureStatusChangeNotes({
-      statuses, task: effectiveTask,
-      patch: { statusKey: 'in_progress', assignedTo: newOwnerId }, t,
-      promptKey: 'owner.tasks.assignedNextStepsPrompt',
-      onNewNote: (body) => {
-        taxApi.adminCreateTaskNote(auth, task.id, { body })
-          .then(() => setNotesRefreshKey(k => k + 1))
-          .catch(() => {});
-      },
-    });
-    if (!patch) return;
-    setAssignedTo(patch.assignedTo);
     setStatusKey(patch.statusKey);
     if (patch.notes !== undefined) setNotes(patch.notes);
     saveNow(patch);
@@ -1957,7 +1950,7 @@ function TaskFormModal({
             <div>
               <label>{t('owner.tasks.field.owner')}</label>
               <select value={assignedTo} title={t('owner.tasks.field.ownerHint')}
-                      onChange={e => onAssigneeChange(e.target.value)}>
+                      onChange={e => { setAssignedTo(e.target.value); saveNow({ assignedTo: e.target.value }); }}>
                 <option value="">{t('owner.tasks.field.ownerNone')}</option>
                 {employees.map(em => (
                   <option key={em.id} value={em.id}>{displayPersonName(em) || em.email}</option>
@@ -2012,6 +2005,18 @@ function TaskFormModal({
                   {dueDate ? '✓' : '○'} {t('owner.tasks.field.due')}
                 </span>
               </div>
+              {isEdit && (
+                <button type="button"
+                        onClick={() => onProgressSetStatus('in_progress', 'owner.tasks.startNotesPrompt')}
+                        className="tax-btn tax-btn--sm"
+                        style={{
+                          marginTop: 10, border: 'none',
+                          background: (assignedTo && priority && dueDate) ? '#166534' : 'var(--tax-border)',
+                          color: (assignedTo && priority && dueDate) ? '#fff' : 'var(--tax-muted)',
+                        }}>
+                  {t('owner.tasks.startTask')}
+                </button>
+              )}
             </div>
           )}
 
