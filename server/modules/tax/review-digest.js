@@ -98,7 +98,7 @@ async function sendDailyReviewDigest(communityId, deps) {
 
   const { data: community, error: cErr } = await supabase
     .from('communities')
-    .select('id, name, name_en, slug, default_locale')
+    .select('id, name, name_en, default_locale')
     .eq('id', communityId).maybeSingle();
   if (cErr || !community) { warn('[review-digest] community fetch error', cErr?.message); return; }
 
@@ -125,7 +125,7 @@ async function sendDailyReviewDigest(communityId, deps) {
 
   const appUrl = (publicAppUrl || '').replace(/\/$/, '');
   if (!appUrl) { warn('[review-digest] publicAppUrl not configured; skipping (review links need an absolute URL)'); return; }
-  const tasksHref = `${appUrl}/tax/${community.slug}/owner/tasks`;
+  const tasksHref = `${appUrl}/tax/${community.id}/employee/tasks`;
   const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
   for (const reviewer of recipients) {

@@ -35,7 +35,7 @@ async function sendOwnerAiDigest(communityId, deps) {
   // 2. Fetch community info for the email
   const { data: community, error: cErr } = await supabase
     .from('communities')
-    .select('id, name, slug, contact_email')
+    .select('id, name, contact_email')
     .eq('id', communityId)
     .maybeSingle();
   if (cErr || !community) { warn('[ai-digest] community fetch error', cErr?.message); return; }
@@ -99,7 +99,7 @@ async function sendOwnerAiDigest(communityId, deps) {
 
   // Build open tasks section
   const appUrl = (deps.publicAppUrl || '').replace(/\/$/, '');
-  const communitySlug = community.slug;
+  const communitySlug = community.id;
 
   let tasksHtml = '';
   if (openTasks && openTasks.length > 0) {
@@ -118,7 +118,7 @@ async function sendOwnerAiDigest(communityId, deps) {
 
     // Base URL for the tasks page
     const tasksBase = appUrl && communitySlug
-      ? `${appUrl}/tax/${communitySlug}/owner/tasks`
+      ? `${appUrl}/tax/${communitySlug}/employee/tasks`
       : null;
 
     // Group by assignee, preserving order (unassigned last)
