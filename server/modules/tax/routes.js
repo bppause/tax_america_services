@@ -8254,6 +8254,7 @@ ${closingHtml}
         blocked_by_task_id, requires_review, reviewer_employee_id,
         pending_review_at, reviewed_at, reviewed_by_employee_id, review_note,
         last_viewed_at, last_viewed_by_employee_id,
+        time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds,
         customer:tax_customers ( id, name, business_name, first_name, middle_name, last_name, email, phone, whatsapp, address, status ),
         product:tax_products ( id, slug, name_i18n, category ),
         auto_task:tax_service_auto_tasks ( id, title_i18n, cadence_kind, anchor_rule ),
@@ -8762,6 +8763,30 @@ ${closingHtml}
     res.json({ ok: true, id, task: row });
   });
 
+  // Column each of the three tracked statuses accumulates its running
+  // seconds-spent total into — see the "Cumulative time-in-status"
+  // schema.sql section. A terminal or custom status has no column
+  // (nothing to accrue).
+  const STATUS_TIME_BUCKET_COLUMN = {
+    not_started: 'time_in_not_started_seconds',
+    in_progress: 'time_in_progress_seconds',
+    pending_review: 'time_in_pending_review_seconds',
+  };
+
+  // Adds the seconds just spent in `prior`'s status onto that status's
+  // running total, mutating `update` in place. Call this with the task's
+  // PRIOR row (before this transition) right alongside stamping a fresh
+  // status_changed_at — `nowIso` should be the same timestamp used for
+  // that stamp, so the two always agree on when the prior visit ended.
+  function accrueStatusTime(prior, update, nowIso) {
+    const bucket = STATUS_TIME_BUCKET_COLUMN[prior.status_key];
+    if (!bucket || !prior.status_changed_at) return;
+    const elapsedSeconds = Math.max(0, Math.round(
+      (new Date(nowIso).getTime() - new Date(prior.status_changed_at).getTime()) / 1000
+    ));
+    update[bucket] = (prior[bucket] || 0) + elapsedSeconds;
+  }
+
   // Makes sure a community has a "Pending review" status row to park a
   // task on while it awaits review, creating one on first use if the
   // schema migration hasn't run for this community yet (e.g. a
@@ -8794,7 +8819,7 @@ ${closingHtml}
     const body = req.body || {};
 
     const { data: cur, error: cErr } = await supabase.from('tax_tasks')
-      .select('id, community_id, customer_id, product_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority')
+      .select('id, community_id, customer_id, product_id, assigned_employee_id, status_key, notes, blocked_by_task_id, requires_review, reviewer_employee_id, pending_review_at, reviewed_at, due_date, priority, status_changed_at, time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds')
       .eq('id', taskId).maybeSingle();
     if (cErr) return sendSupabaseError(res, cErr);
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
@@ -8924,6 +8949,7 @@ ${closingHtml}
         }
       }
       update.status_changed_at = new Date().toISOString();
+      accrueStatusTime(cur, update, update.status_changed_at);
       const { data: opt } = await supabase.from('tax_task_status_options')
         .select('is_terminal').eq('community_id', cur.community_id).eq('key', update.status_key).maybeSingle();
       if (opt?.is_terminal) {
@@ -9077,10 +9103,13 @@ ${closingHtml}
   // responsible for their own auth/role/community checks and for
   // confirming `task.pending_review_at` is set and `task.reviewed_at`
   // isn't, before calling in; `task` must carry at least id, community_id,
-  // status_key, review_target_status_key.
+  // status_key, review_target_status_key, status_changed_at, and the
+  // three time_in_*_seconds columns (status_key is always 'pending_review'
+  // here, so accrueStatusTime always credits that bucket).
   async function applyTaskReviewDecision({ task, decision, note, actor }) {
     const nowIso = new Date().toISOString();
     const update = { updated_at: nowIso, review_note: note, review_target_status_key: null, status_changed_at: nowIso };
+    accrueStatusTime(task, update, nowIso);
     if (decision === 'approve') {
       update.reviewed_at = nowIso;
       update.reviewed_by_employee_id = actor.id;
@@ -9150,7 +9179,7 @@ ${closingHtml}
       });
     }
     const { data: cur } = await supabase.from('tax_tasks')
-      .select('id, community_id, pending_review_at, reviewed_at, status_key, notes, review_target_status_key')
+      .select('id, community_id, pending_review_at, reviewed_at, status_key, notes, review_target_status_key, status_changed_at, time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds')
       .eq('id', taskId).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Task not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
@@ -9194,7 +9223,8 @@ ${closingHtml}
       .select(`
         id, community_id, title, due_date, priority, status_key, notes,
         pending_review_at, reviewed_at, review_target_status_key,
-        assigned_employee_id, customer_id
+        assigned_employee_id, customer_id, status_changed_at,
+        time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds
       `).eq('id', t.task_id).maybeSingle();
     if (taskErr) return { ok: false, status: 500, error: taskErr.message };
     if (!task) return { ok: false, status: 404, error: 'Task not found.' };

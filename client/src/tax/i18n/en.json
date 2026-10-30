@@ -847,6 +847,8 @@
   "owner.tasks.progress.timeSummaryHint": "Tracked automatically from status changes — nothing to start or stop.",
   "owner.tasks.progress.timeInStatus": "In \"{status}\" for {duration}",
   "owner.tasks.progress.timeTotalAge": "Total age: {duration}",
+  "owner.tasks.progress.timeByStatus": "Time in each status (days)",
+  "owner.tasks.progress.timeByStatusHint": "Running total of time spent in each status, across every visit — laid down for future reporting, not shown anywhere else yet.",
   "owner.tasks.lastViewed": "Last viewed by {name} · {date}",
   "owner.tasks.lastViewed.someone": "a teammate",
   "owner.tasks.lastViewed.never": "⚠ Not yet viewed by anyone",

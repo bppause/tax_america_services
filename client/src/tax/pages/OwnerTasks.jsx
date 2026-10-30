@@ -11,6 +11,7 @@ import { formatDateTime } from '../lib/lastSignIn';
 import { mailtoHref, whatsappHref, taskContactMessage } from '../lib/contactLinks';
 import TaskHover from '../components/TaskHover';
 import { customerTypeIcon } from '../components/CustomerTypeBadge';
+import { ensureStatusChangeNotes, notStartedFieldsMissing } from '../lib/taskStatus';
 
 // Owner / staff task tracker. Replaces the spreadsheet workflow:
 // columns from the source CSV map onto this UI as
@@ -42,76 +43,21 @@ function formatDuration(totalSeconds) {
   return `${h}h ${m}m`;
 }
 
-// Inline status-change-note prompt. Any status change — not just one
-// that moves a task into a terminal bucket — gets a note, so prompt
-// the user via window.prompt (unless the patch already carries a
-// fresh one) and merge the result into the patch. Returns null when
-// the user cancels — the caller should skip the API call. Keeps the
-// inline status dropdown and the Kanban drag-drop from surprising the
-// user with a server 400. The prompt copy still calls out "closing
-// note" specifically when the target status is terminal (the server
-// gates completion on it too), and a plainer "what changed" note
-// otherwise.
-//
-// Deliberately does NOT treat task.notes (the legacy single field)
-// as already satisfying this — that field is sticky across every
-// future edit once anything has ever been typed into it, so trusting
-// it here would make every status change after the first one skip
-// the prompt entirely, which is exactly the bug this used to have.
-// Each transition needs its own fresh note.
-//
-// task.notes stays the legacy single field the server gates status
-// changes on (no server-side change needed), but a freshly-prompted
-// note also belongs in the collaborative notes log (see TaskNotesSection
-// below) so it shows up in that shared history too — `onNewNote(trimmedNote)`,
-// when supplied, fires for exactly that case (never for an
-// already-existing note, which would just duplicate it).
-//
-// `promptKey`, when passed, overrides the default terminal/non-terminal
-// copy selection below — used when a status change is itself implied by
-// some other action (e.g. assigning an owner auto-moves Not started to
-// In progress) and the generic "status change" wording wouldn't explain
-// why the prompt appeared.
-export function ensureStatusChangeNotes({ statuses, task, patch, t, onNewNote, promptKey: promptKeyOverride }) {
-  if (!patch || !patch.statusKey || patch.statusKey === task?.status_key) return patch;
-  const incoming = String(patch.notes || '').trim();
-  if (incoming) return patch;
-  const target = (statuses || []).find(s => s.key === patch.statusKey);
-  const promptKey = promptKeyOverride
-    || (target?.is_terminal ? 'owner.tasks.completeNotesPrompt' : 'owner.tasks.statusChangeNotesPrompt');
-  const note = typeof window !== 'undefined'
-    ? window.prompt(t(promptKey))
-    : null;
-  if (note === null) return null;
-  const trimmed = String(note).trim();
-  if (!trimmed) {
-    if (typeof window !== 'undefined') window.alert(t('owner.tasks.statusChangeNotesRequired'));
-    return null;
-  }
-  onNewNote?.(trimmed);
-  return { ...patch, notes: trimmed };
+function formatDays(totalDays) {
+  const d = Math.max(0, totalDays || 0);
+  if (d < 0.05) return '<0.1d';
+  return `${d.toFixed(1)}d`;
 }
 
-// A task can't move beyond "Not started" without an owner, priority,
-// and due date already in place — those are what make it actually
-// actionable (who's doing it, how urgent, by when). Checked against
-// whichever value is effective after the patch (falls back to the
-// task's current one). Mirrors the server gate on PATCH
-// /admin/tasks/:id and POST /admin/tasks. Returns a translated error
-// string if blocked, or null if the move is fine.
-export function notStartedFieldsMissing({ task, patch, t }) {
-  if (!patch || !patch.statusKey) return null;
-  if (patch.statusKey === 'not_started') return null;
-  const assignee = patch.assignedEmployeeId !== undefined ? patch.assignedEmployeeId : task?.assigned_employee_id;
-  const priority = patch.priority !== undefined ? patch.priority : task?.priority;
-  const due = patch.dueDate !== undefined ? patch.dueDate : task?.due_date;
-  const missing = [];
-  if (!assignee) missing.push(t('owner.tasks.field.owner'));
-  if (!priority) missing.push(t('owner.tasks.field.priority'));
-  if (!due) missing.push(t('owner.tasks.field.due'));
-  if (!missing.length) return null;
-  return t('owner.tasks.notStartedFieldsRequired', { fields: missing.join(', ') });
-}
+// Column each of the three tracked statuses accumulates its
+// time-in-status total into — mirrors STATUS_TIME_BUCKET_COLUMN in
+// routes.js (see accrueStatusTime there, and the "Cumulative
+// time-in-status" section of schema.sql).
+const STATUS_TIME_BUCKET = {
+  not_started: 'time_in_not_started_seconds',
+  in_progress: 'time_in_progress_seconds',
+  pending_review: 'time_in_pending_review_seconds',
+};
 
 // When a task requires owner review and hasn't been approved yet,
 // picking a terminal status was never really "mark as done" — the
@@ -1824,6 +1770,47 @@ function TaskFormModal({
             )}
           </div>
         )}
+
+        {/* Visible up front, not just as a block-on-attempt — shows
+            exactly what's missing before the operator tries to move
+            the status and gets stopped, and the Start button right here
+            means they don't have to scroll down to the Status field to
+            act on it. Drops away once the task has actually moved past
+            Not started. */}
+        {statusKey === 'not_started' && (
+          <div style={{
+            padding: '8px 10px', borderRadius: 8, marginBottom: 10,
+            background: 'var(--tax-bg-alt)', fontSize: 12,
+          }}>
+            <div style={{ fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
+              {t('owner.tasks.notStartedChecklist.heading')}
+            </div>
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+              <span style={{ color: assignedTo ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                {assignedTo ? '✓' : '○'} {t('owner.tasks.field.owner')}
+              </span>
+              <span style={{ color: priority ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                {priority ? '✓' : '○'} {t('owner.tasks.field.priority')}
+              </span>
+              <span style={{ color: dueDate ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
+                {dueDate ? '✓' : '○'} {t('owner.tasks.field.due')}
+              </span>
+            </div>
+            {isEdit && (
+              <button type="button"
+                      onClick={() => onProgressSetStatus('in_progress', 'owner.tasks.startNotesPrompt')}
+                      className="tax-btn tax-btn--sm"
+                      style={{
+                        marginTop: 10, border: 'none',
+                        background: (assignedTo && priority && dueDate) ? '#166534' : 'var(--tax-border)',
+                        color: (assignedTo && priority && dueDate) ? '#fff' : 'var(--tax-muted)',
+                      }}>
+                {t('owner.tasks.startTask')}
+              </button>
+            )}
+          </div>
+        )}
+
         <form onSubmit={isEdit ? e => e.preventDefault() : onSave} className="tax-form" style={{ boxShadow: 'none', padding: 0, border: 0, gap: 10 }}>
           <div>
             <label>{t('owner.tasks.field.title')}</label>
@@ -1982,44 +1969,6 @@ function TaskFormModal({
             </div>
           </div>
 
-          {/* Visible up front, not just as a block-on-attempt — shows
-              exactly what's missing before the operator tries to move
-              the status and gets stopped. Drops away once the task has
-              actually moved past Not started. */}
-          {statusKey === 'not_started' && (
-            <div style={{
-              padding: '8px 10px', borderRadius: 8,
-              background: 'var(--tax-bg-alt)', fontSize: 12,
-            }}>
-              <div style={{ fontWeight: 600, color: 'var(--tax-muted)', marginBottom: 4 }}>
-                {t('owner.tasks.notStartedChecklist.heading')}
-              </div>
-              <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                <span style={{ color: assignedTo ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
-                  {assignedTo ? '✓' : '○'} {t('owner.tasks.field.owner')}
-                </span>
-                <span style={{ color: priority ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
-                  {priority ? '✓' : '○'} {t('owner.tasks.field.priority')}
-                </span>
-                <span style={{ color: dueDate ? 'var(--tax-success, #166534)' : 'var(--tax-muted)' }}>
-                  {dueDate ? '✓' : '○'} {t('owner.tasks.field.due')}
-                </span>
-              </div>
-              {isEdit && (
-                <button type="button"
-                        onClick={() => onProgressSetStatus('in_progress', 'owner.tasks.startNotesPrompt')}
-                        className="tax-btn tax-btn--sm"
-                        style={{
-                          marginTop: 10, border: 'none',
-                          background: (assignedTo && priority && dueDate) ? '#166534' : 'var(--tax-border)',
-                          color: (assignedTo && priority && dueDate) ? '#fff' : 'var(--tax-muted)',
-                        }}>
-                  {t('owner.tasks.startTask')}
-                </button>
-              )}
-            </div>
-          )}
-
           <div>
             <label>{t('owner.tasks.field.due')}</label>
             <input type="date" value={dueDate} title={t('owner.tasks.field.dueHint')}
@@ -2136,6 +2085,24 @@ function TaskProgressPanel({ task, tasks, isAdmin, isReviewer, reviewOverrideEna
   const statusStartMs = task.status_changed_at ? new Date(task.status_changed_at).getTime() : createdAtMs;
   const secondsInStatus = Math.max(0, Math.round((endForDuration - statusStartMs) / 1000));
   const secondsTotalAge = Math.max(0, Math.round((endForDuration - createdAtMs) / 1000));
+  // Per-status running totals, for future metrics (e.g. "average days
+  // in review") — the banked seconds from every PAST visit to a status
+  // (time_in_*_seconds, accumulated server-side — see accrueStatusTime
+  // in routes.js) plus whatever's been spent in the CURRENT one so far
+  // if it's one of the three tracked (secondsInStatus, already computed
+  // above).
+  const daysInBucket = (bucketStatusKey) => {
+    const banked = task[STATUS_TIME_BUCKET[bucketStatusKey]] || 0;
+    const live = task.status_key === bucketStatusKey ? secondsInStatus : 0;
+    return (banked + live) / 86400;
+  };
+  // Status labels are per-community configurable (tax_task_status_options.
+  // label_i18n) — same lookup currentStatusLabel above uses, not a fixed
+  // i18n string, since a practice can rename these.
+  const statusLabelFor = (key) => {
+    const s = (statuses || []).find(x => x.key === key);
+    return s ? (pickI18n(s.label_i18n, locale).value || key) : key;
+  };
 
   // ── Review ──────────────────────────────────────────────────────────────
   const [requiresReview, setRequiresReview] = useState(!!task.requires_review);
@@ -2303,6 +2270,23 @@ function TaskProgressPanel({ task, tasks, isAdmin, isReviewer, reviewOverrideEna
         </div>
         <div style={{ fontSize: 12, color: 'var(--tax-muted)', marginTop: 2 }}>
           {t('owner.tasks.progress.timeTotalAge', { duration: formatDuration(secondsTotalAge) })}
+        </div>
+      </div>
+
+      {/* Running totals per status, in days — not shown anywhere else
+          yet, laid down now as a foundation for future reporting (e.g.
+          "average days in review" across the practice). Each number
+          includes whatever's been spent in that status so far on this
+          visit, on top of every past visit's banked total. */}
+      <div>
+        <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--tax-muted)' }}
+               title={t('owner.tasks.progress.timeByStatusHint')}>
+          {t('owner.tasks.progress.timeByStatus')}
+        </label>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 2, fontSize: 13 }}>
+          <span>{statusLabelFor('not_started')}: {formatDays(daysInBucket('not_started'))}</span>
+          <span>{statusLabelFor('in_progress')}: {formatDays(daysInBucket('in_progress'))}</span>
+          <span>{statusLabelFor('pending_review')}: {formatDays(daysInBucket('pending_review'))}</span>
         </div>
       </div>
     </div>

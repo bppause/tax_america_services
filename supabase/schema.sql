@@ -3973,3 +3973,35 @@ create table if not exists public.tax_review_tokens (
 );
 create index if not exists idx_tax_review_tokens_task on public.tax_review_tokens(task_id);
 alter table public.tax_review_tokens disable row level security;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Cumulative time-in-status, per bucket — foundation for future task
+-- metrics (e.g. "average days in review"). Distinct from the existing
+-- status_changed_at-based live timer (TaskProgressPanel's "time in
+-- current status"), which only ever reflects the MOST RECENT visit to
+-- whatever status a task happens to be in right now. These three
+-- columns instead accumulate seconds spent in each of the three
+-- tracked statuses across however many times a task revisits one (e.g.
+-- sent back from review more than once, each pass adds to the same
+-- running total).
+--
+-- Bumped server-side (accrueStatusTime in routes.js) right before
+-- status_changed_at is stamped, on every status_key change that leaves
+-- one of these three statuses: PATCH /admin/tasks/:id and
+-- applyTaskReviewDecision (POST /admin/tasks/:id/review and the public
+-- POST /review/:token both route through it). PATCH /admin/tasks/bulk
+-- does NOT accrue into these columns — it still bumps status_changed_at
+-- correctly, so time going forward in the new status is still tracked,
+-- but a task bulk-transitioned out of one of the three statuses doesn't
+-- get that visit's time credited to it.
+--
+-- A terminal status (e.g. Completed) or any custom status a community
+-- has added isn't tracked — there's no "time in Completed" metric to
+-- accumulate.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_tasks
+  add column if not exists time_in_not_started_seconds integer not null default 0;
+alter table public.tax_tasks
+  add column if not exists time_in_progress_seconds integer not null default 0;
+alter table public.tax_tasks
+  add column if not exists time_in_pending_review_seconds integer not null default 0;
