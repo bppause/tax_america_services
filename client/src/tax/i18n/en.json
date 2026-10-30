@@ -784,6 +784,7 @@
   "owner.tasks.field.status": "Status",
   "owner.tasks.field.statusHint": "Where this task stands right now.",
   "owner.tasks.field.statusSubmitForReview": "Submit for owner review ({status})",
+  "owner.tasks.field.statusApprove": "Approve as {status}",
   "owner.tasks.field.statusReviewHint": "This task requires the owner's review before it's done — choosing a completed status sends it for review instead of completing it right away.",
   "owner.tasks.notStartedFieldsRequired": "Add {fields} before moving this task beyond Not started.",
   "owner.tasks.notStartedChecklist.heading": "To move this task beyond Not started, you'll need:",

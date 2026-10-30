@@ -783,6 +783,7 @@
   "owner.tasks.field.status": "Estado",
   "owner.tasks.field.statusHint": "En qué punto está esta tarea en este momento.",
   "owner.tasks.field.statusSubmitForReview": "Enviar a revisión del propietario ({status})",
+  "owner.tasks.field.statusApprove": "Aprobar como {status}",
   "owner.tasks.field.statusReviewHint": "Esta tarea requiere la revisión del propietario antes de darse por terminada — elegir un estado de finalización la envía a revisión en lugar de completarla de inmediato.",
   "owner.tasks.notStartedFieldsRequired": "Agrega {fields} antes de mover esta tarea más allá de No iniciado.",
   "owner.tasks.notStartedChecklist.heading": "Para mover esta tarea más allá de No iniciado, necesitarás:",
