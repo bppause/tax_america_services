@@ -80,7 +80,7 @@ async function sendDailyTaskStatusDigest(communityId, deps) {
 
   const { data: community, error: cErr } = await supabase
     .from('communities')
-    .select('id, name, name_en, slug, default_locale')
+    .select('id, name, name_en, default_locale')
     .eq('id', communityId).maybeSingle();
   if (cErr || !community) { warn('[task-digest] community fetch error', cErr?.message); return; }
 
@@ -107,7 +107,7 @@ async function sendDailyTaskStatusDigest(communityId, deps) {
   if (!notStarted.length && !inProgress.length) return; // nothing to report
 
   const appUrl = (publicAppUrl || '').replace(/\/$/, '');
-  const tasksHref = appUrl ? `${appUrl}/tax/${community.slug}/owner/tasks` : null;
+  const tasksHref = appUrl ? `${appUrl}/tax/${community.id}/employee/tasks` : null;
   const dateStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
   // One send per locale group — recipients without a stored locale fall
