@@ -8915,6 +8915,7 @@ ${closingHtml}
     //      review_target_status_key remembers what was actually
     //      requested, so approval can restore it.
     let enteredPendingReview = false;
+    let approvedViaStatusChange = false;
     if (update.status_key && update.status_key !== cur.status_key) {
       // Must be a note freshly supplied with THIS request — falling
       // back to the task's existing notes would let every status
@@ -8964,7 +8965,32 @@ ${closingHtml}
             });
           }
         }
-        const stillRequiresReview = (update.requires_review !== undefined
+        // A task already sitting in the review queue moving to a
+        // terminal status is the Reviewer approving it, not a fresh
+        // completion attempt. Without this, picking (or dragging) a
+        // terminal status on a Pending-review task hit the
+        // stillRequiresReview branch below and got silently re-parked
+        // right back on Pending review — a no-op with no error, since
+        // that's also where it already was. Reuses the same
+        // reviewer-only gate and stamps POST /admin/tasks/:id/review
+        // does, just through this endpoint instead.
+        const alreadyAwaitingReview = cur.status_key === 'pending_review'
+          && !!cur.pending_review_at && !cur.reviewed_at;
+        if (alreadyAwaitingReview) {
+          if (!isTaskReviewer(emp)) {
+            return res.status(403).json({
+              error: 'reviewer_required',
+              message: 'Only a Reviewer can mark a task completed.',
+            });
+          }
+          update.reviewed_at = update.status_changed_at;
+          update.reviewed_by_employee_id = emp.id;
+          update.completed_at = update.status_changed_at;
+          update.review_target_status_key = null;
+          update.review_note = providedNotes;
+          approvedViaStatusChange = true;
+        }
+        const stillRequiresReview = !approvedViaStatusChange && (update.requires_review !== undefined
           ? update.requires_review : cur.requires_review)
           && !cur.reviewed_at;
         if (stillRequiresReview) {
@@ -8976,7 +9002,7 @@ ${closingHtml}
           // triggers the owner notification below — otherwise every
           // unrelated edit to an already-pending task would re-notify.
           enteredPendingReview = cur.status_key !== update.status_key;
-        } else {
+        } else if (!approvedViaStatusChange) {
           // Review is off (community override) or this task's already
           // been through it once — either way, landing it on a terminal
           // status completes it right here instead of re-queuing, so
@@ -9020,7 +9046,10 @@ ${closingHtml}
         actor: emp,
       });
     }
-    if (update.status_key && update.status_key !== cur.status_key) {
+    // An approval fires its own notification below (same one the
+    // dedicated review endpoint uses) — skip the generic status-changed
+    // one here so the assignee doesn't get two emails for one decision.
+    if (update.status_key && update.status_key !== cur.status_key && !approvedViaStatusChange) {
       await notifyTaskStatusChanged({
         taskId,
         oldStatusKey: cur.status_key,
@@ -9030,6 +9059,12 @@ ${closingHtml}
     }
     if (enteredPendingReview) {
       await notifyOwnersTaskPendingReview({ taskId, actor: emp });
+    }
+    if (approvedViaStatusChange) {
+      await notifyTaskReviewDecision({
+        taskId, decision: 'approve', note: String(body.notes || '').trim(),
+        newStatusKey: update.status_key, actor: emp,
+      });
     }
     // Hands back the resulting row (not just the fields the caller sent)
     // so an open edit modal can reflect what the server actually did —

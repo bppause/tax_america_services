@@ -73,15 +73,25 @@ const STATUS_TIME_BUCKET = {
 // after saving. This relabels those options instead of hiding them —
 // the value sent to the server is still the real terminal key
 // unchanged, only the displayed text differs.
+//
+// A task that's ALREADY sitting in Pending review is the one exception
+// — picking a terminal status there is the Reviewer approving it (see
+// the alreadyAwaitingReview branch server-side), not submitting it into
+// the queue a second time, so it gets its own "Approve as X" label
+// instead of "Submit X for review".
 export function statusSelectOptions(statuses, task, t, locale) {
   const needsReview = !!task?.requires_review && !task?.reviewed_at;
+  const alreadyAwaitingReview = task?.status_key === 'pending_review'
+    && !!task?.pending_review_at && !task?.reviewed_at;
   return (statuses || []).map(s => {
     const label = pickI18n(s.label_i18n, locale).value || s.key;
     return {
       key: s.key,
       id: s.id,
       label: (needsReview && s.is_terminal)
-        ? t('owner.tasks.field.statusSubmitForReview', { status: label })
+        ? (alreadyAwaitingReview
+            ? t('owner.tasks.field.statusApprove', { status: label })
+            : t('owner.tasks.field.statusSubmitForReview', { status: label }))
         : label,
     };
   });
