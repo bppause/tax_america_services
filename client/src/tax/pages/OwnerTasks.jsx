@@ -45,6 +45,11 @@ function formatDuration(totalSeconds) {
 
 function formatDays(totalDays) {
   const d = Math.max(0, totalDays || 0);
+  // Exactly zero (a status the task has never visited) reads as "0d",
+  // not "<0.1d" — that phrasing implies some small but nonzero amount
+  // was actually spent there, which a bucket that's never accrued
+  // anything hasn't.
+  if (d === 0) return '0d';
   if (d < 0.05) return '<0.1d';
   return `${d.toFixed(1)}d`;
 }
