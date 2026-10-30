@@ -3408,30 +3408,38 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
     tasksByStatus.set(tt.status_key, arr);
   }
 
-  const onDrop = async (e, targetKey) => {
-    e.preventDefault();
-    const id = e.dataTransfer.getData('text/plain');
-    if (!id) return;
-    const task = tasks.find(tt => tt.id === id);
+  // Shared by drag-drop (onDrop below) and the Kanban card's own Start
+  // button — one status-change path, same note prompt and Not-started
+  // field gate either way.
+  const changeTaskStatus = async (taskId, targetKey, promptKeyOverride) => {
+    const task = tasks.find(tt => tt.id === taskId);
     if (!task || task.status_key === targetKey) return;
     const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: targetKey }, t });
     if (fieldsMsg) { window.alert(fieldsMsg); onEdit(task); return; }
     const patch = ensureStatusChangeNotes({
       statuses, task, patch: { statusKey: targetKey }, t,
-      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, id, { body }).catch(() => {}),
+      promptKey: promptKeyOverride,
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, taskId, { body }).catch(() => {}),
     });
     if (!patch) return;
     try {
-      await taxApi.adminUpdateTask(auth, id, patch);
+      await taxApi.adminUpdateTask(auth, taskId, patch);
       onChange();
     } catch (err) {
-      // Most drag failures are silent-fine to ignore (a stale card from
-      // another tab, etc.), but a drag onto a terminal column by a
+      // Most failures here are silent-fine to ignore (a stale card from
+      // another tab, etc.), but hitting a terminal column by a
       // non-Reviewer now fails deliberately (server-side reviewer_required)
       // and deserves to actually say so — the card otherwise just snaps
       // back with zero explanation.
       if (err?.body?.error === 'reviewer_required') window.alert(err.message || t('owner.tasks.reviewerRequiredDrop'));
     }
+  };
+
+  const onDrop = async (e, targetKey) => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData('text/plain');
+    if (!id) return;
+    await changeTaskStatus(id, targetKey);
   };
 
   // One card's markup, shared between the flat (groupBy='none') and
@@ -3449,6 +3457,14 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
       ? (pickI18n(tt.product.name_i18n, locale).value || tt.product.slug)
       : '';
     const ownerName = tt.assignee ? (displayPersonName(tt.assignee) || tt.assignee.email) : '';
+    // Same readiness summary as the Tasks list row — lets the card
+    // itself offer the Start action without opening the task or
+    // waiting on the TaskHover popover's hover delay.
+    const notStartedMissing = tt.status_key === 'not_started' ? [
+      !tt.assigned_employee_id && t('owner.tasks.field.owner'),
+      !tt.priority && t('owner.tasks.field.priority'),
+      !tt.due_date && t('owner.tasks.field.due'),
+    ].filter(Boolean) : [];
     return (
       <TaskHover key={tt.id} task={tt} statuses={statuses}
                  community={community} locale={locale} t={t}
@@ -3506,6 +3522,25 @@ function TasksKanban({ tasks, statuses, community, auth, onChange, onEdit, hideC
           {ownerName && (
             <div style={{ fontSize: 11, color: 'var(--tax-muted)', marginTop: 4 }}>
               {t('owner.tasks.owner')}: {ownerName}
+            </div>
+          )}
+          {tt.status_key === 'not_started' && (
+            <div style={{ marginTop: 6 }}>
+              {notStartedMissing.length > 0 && (
+                <div style={{ fontSize: 10, color: '#92400e', marginBottom: 4 }}>
+                  {t('owner.tasks.notStartedMissingShort', { fields: notStartedMissing.join(', ') })}
+                </div>
+              )}
+              <button type="button"
+                      onClick={e => { e.stopPropagation(); changeTaskStatus(tt.id, 'in_progress', 'owner.tasks.startNotesPrompt'); }}
+                      style={{
+                        width: '100%', border: 'none', borderRadius: 6, padding: '4px 0',
+                        cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                        background: notStartedMissing.length ? 'var(--tax-bg-alt)' : '#166534',
+                        color: notStartedMissing.length ? 'var(--tax-muted)' : '#fff',
+                      }}>
+                {t('owner.tasks.startTask')}
+              </button>
             </div>
           )}
         </div>
