@@ -5,7 +5,7 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 import TaskHover from '../components/TaskHover';
-import { ensureStatusChangeNotes, notStartedFieldsMissing } from './OwnerTasks';
+import { ensureStatusChangeNotes, notStartedFieldsMissing } from '../lib/taskStatus';
 import BookkeepingReportsSection from '../components/BookkeepingReports';
 
 import { formatLastSignIn } from '../lib/lastSignIn';

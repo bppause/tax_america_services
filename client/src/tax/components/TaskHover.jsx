@@ -8,6 +8,7 @@ import { formatDateTime } from '../lib/lastSignIn';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import { mailtoHref, whatsappHref, taskContactMessage } from '../lib/contactLinks';
+import { ensureStatusChangeNotes, notStartedFieldsMissing } from '../lib/taskStatus';
 
 // Hover card shared by every task surface in the employee portal —
 // Calendar pips, Kanban cards, Tasks list rows, Periods view, the
@@ -73,6 +74,8 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   const [coords, setCoords] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
+  const [startBusy, setStartBusy] = useState(false);
+  const [startErr, setStartErr] = useState('');
 
   // Latest collaborative note, fetched lazily the first time this
   // hover opens (not on every list render) — pulled from auth context
@@ -100,6 +103,15 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   // seeded owner account specifically. Mirrors the server-side check in
   // DELETE /admin/tasks/:id.
   const canDelete = !!employee && (task.status_key === 'not_started' || !!employee.is_seed_owner);
+  // Same readiness summary as the Tasks list row and the edit modal's
+  // checklist — lets the popover (the one surface shared by every task
+  // view: Calendar, Kanban, Dashboard, Periods, customer profile) offer
+  // the same quick Start action everywhere, not just on the Tasks page.
+  const notStartedMissing = task.status_key === 'not_started' ? [
+    !task.assigned_employee_id && t('owner.tasks.field.owner'),
+    !task.priority && t('owner.tasks.field.priority'),
+    !task.due_date && t('owner.tasks.field.due'),
+  ].filter(Boolean) : [];
 
   const reposition = () => {
     const rect = triggerRef.current?.getBoundingClientRect();
@@ -151,6 +163,33 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
     } catch (e) {
       setDelErr(e?.message || '');
       setDelBusy(false);
+    }
+  };
+
+  // Same status-change path every other surface uses (update the status,
+  // prompt for a note via the same shared helper) — `onDeleted` is reused
+  // here as a generic "something about this task changed, refresh" signal
+  // (every call site already wires it to a full list refetch, not an
+  // optimistic local removal by id, so reusing it for a non-delete change
+  // is safe).
+  const onStartClick = async () => {
+    if (startBusy) return;
+    const fieldsMsg = notStartedFieldsMissing({ task, patch: { statusKey: 'in_progress' }, t });
+    if (fieldsMsg) { window.alert(fieldsMsg); return; }
+    const finalPatch = ensureStatusChangeNotes({
+      statuses, task, patch: { statusKey: 'in_progress' }, t,
+      promptKey: 'owner.tasks.startNotesPrompt',
+      onNewNote: (body) => taxApi.adminCreateTaskNote(auth, task.id, { body }).catch(() => {}),
+    });
+    if (!finalPatch) return;
+    setStartBusy(true); setStartErr('');
+    try {
+      await taxApi.adminUpdateTask(auth, task.id, finalPatch);
+      hide();
+      onDeleted?.(task.id);
+    } catch (e) {
+      setStartErr(e?.message || '');
+      setStartBusy(false);
     }
   };
 
@@ -323,6 +362,27 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
           ) : (
             <div style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('owner.tasks.lastNote.none')}</div>
           )}
+        </div>
+      )}
+      {task.status_key === 'not_started' && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--tax-border)' }}>
+          {startErr && (
+            <div style={{ fontSize: 11, color: 'var(--tax-error)', marginBottom: 4 }}>{startErr}</div>
+          )}
+          {notStartedMissing.length > 0 && (
+            <div style={{ fontSize: 11, color: '#92400e', marginBottom: 4 }}>
+              {t('owner.tasks.notStartedMissingShort', { fields: notStartedMissing.join(', ') })}
+            </div>
+          )}
+          <button type="button" onClick={onStartClick} disabled={startBusy}
+                  style={{
+                    width: '100%', border: 'none', borderRadius: 6, padding: '6px 0',
+                    cursor: startBusy ? 'default' : 'pointer', fontSize: 12, fontWeight: 700,
+                    background: notStartedMissing.length ? 'var(--tax-bg-alt)' : '#166534',
+                    color: notStartedMissing.length ? 'var(--tax-muted)' : '#fff',
+                  }}>
+            {t('owner.tasks.startTask')}
+          </button>
         </div>
       )}
       {canDelete && (
