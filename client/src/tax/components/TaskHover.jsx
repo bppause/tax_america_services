@@ -66,7 +66,7 @@ function computeCoords(rect, side) {
   return { top, left };
 }
 
-export default function TaskHover({ task, statuses, community, locale, t, children, side = 'auto', onDeleted }) {
+export default function TaskHover({ task, statuses, community, locale, t, children, side = 'auto', onDeleted, hideStartAction }) {
   const triggerRef = useRef(null);
   const timerRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -110,8 +110,12 @@ export default function TaskHover({ task, statuses, community, locale, t, childr
   // Start is a personal "I'm beginning this" action, so it only shows
   // when the viewer is the task's own assigned owner — someone looking
   // at a teammate's task uses the Status field in the edit modal
-  // instead, same as any other admin status change.
-  const canStart = !!employee && task.status_key === 'not_started' && task.assigned_employee_id === employee.id;
+  // instead, same as any other admin status change. `hideStartAction`
+  // lets a trigger that already shows its own inline Start button (the
+  // Tasks list row, the Kanban card) skip it here too, so hovering
+  // doesn't stack a second, identical button right underneath the
+  // first one.
+  const canStart = !hideStartAction && !!employee && task.status_key === 'not_started' && task.assigned_employee_id === employee.id;
   const notStartedMissing = canStart ? [
     !task.assigned_employee_id && t('owner.tasks.field.owner'),
     !task.priority && t('owner.tasks.field.priority'),
