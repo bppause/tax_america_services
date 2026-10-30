@@ -1071,7 +1071,7 @@ function TaskRow({ task, auth, community, statuses, employees, customerById, emp
   return (
     <TaskHover task={task} statuses={statuses}
                community={community} locale={locale} t={t}
-               side="auto" onDeleted={onChange}>
+               side="auto" onDeleted={onChange} hideStartAction>
     <div className="tax-contact-item" style={{
       display: 'grid', gap: 8,
       background: selected ? 'color-mix(in srgb, var(--tax-brand-primary) 6%, #fff)' : undefined,
@@ -3473,7 +3473,7 @@ function TasksKanban({ tasks, statuses, community, auth, employeeId, onChange, o
     return (
       <TaskHover key={tt.id} task={tt} statuses={statuses}
                  community={community} locale={locale} t={t}
-                 onDeleted={onChange}>
+                 onDeleted={onChange} hideStartAction>
         {/* A real <button> can't contain a real <a> validly, so this is
             a div acting as one (role/tabIndex/onKeyDown) with the
             customer name split into its own link, stopping propagation
