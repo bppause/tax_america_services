@@ -279,23 +279,31 @@ export default function EmployeeShell({ community, active, children }) {
                     niche (Progress analytics, News, Testimonials, WhatsApp
                     template, Email templates, Audit) is reachable again
                     by switching back to Detailed. */}
-                {employee && perm('view_customers') && (
+                {employee && (perm('view_customers') || isTimesheetApprover) && (
                   <NavGroup groupKey="business" label={t('employee.nav.groupBusiness')}>
-                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
+                    {perm('view_customers') &&
+                      navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
                     {/* Messaging needs the customer portal — every
                         /portal/threads endpoint requires a signed-in
                         customer, so with the portal off nobody can ever
                         start or reply to anything here. */}
-                    {community?.tax_customer_portal_enabled &&
+                    {perm('view_customers') && community?.tax_customer_portal_enabled &&
                       navLink('inbox', `${base}/inbox`, t('employee.nav.inbox'), unread)}
-                    {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
-                    {isAdmin && perm('manage_leads') &&
+                    {perm('view_customers') &&
+                      navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
+                    {perm('view_customers') && isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
                     {/* Services aren't just public-site content — tagging a
                         customer with one, and the cadence that drives their
                         recurring tasks, is day-to-day operational work. */}
-                    {isAdmin && perm('manage_services') &&
+                    {perm('view_customers') && isAdmin && perm('manage_services') &&
                       navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
+                    {/* Timesheets belongs here for everyone who logs hours,
+                        and — unlike the items above — for a Timesheet
+                        Approver even without view_customers, since
+                        approving submitted timesheets isn't customer
+                        data access. */}
+                    {navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
                   </NavGroup>
                 )}
                 {isAdmin && (
@@ -315,23 +323,35 @@ export default function EmployeeShell({ community, active, children }) {
             ) : (
               <>
                 {/* Operations — the day-to-day work surfaces. Leads sits
-                    here because converting them IS operational work. Hidden
-                    entirely for an admin with view_customers revoked — a
-                    "site admin" account that never touches customer data. */}
-                {employee && perm('view_customers') && (
+                    here because converting them IS operational work. Every
+                    item but Timesheets is hidden for an admin with
+                    view_customers revoked — a "site admin" account that
+                    never touches customer data — but the group itself
+                    still renders for one who's also a Timesheet Approver,
+                    since that's not customer data access. */}
+                {employee && (perm('view_customers') || isTimesheetApprover) && (
                   <NavGroup groupKey="operations" label={t('employee.nav.groupOperations')}>
-                    {navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
-                    {community?.tax_customer_portal_enabled &&
+                    {perm('view_customers') &&
+                      navLink('tasks',     `${base}/tasks`,     t('employee.nav.tasks'), awaitingReview)}
+                    {perm('view_customers') && community?.tax_customer_portal_enabled &&
                       navLink('inbox', `${base}/inbox`, t('employee.nav.inbox'), unread)}
-                    {navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
-                    {navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
-                    {isAdmin && perm('manage_leads') &&
+                    {perm('view_customers') &&
+                      navLink('progress',  `${base}/progress`,  t('employee.nav.progress'))}
+                    {perm('view_customers') &&
+                      navLink('customers', `${base}/customers`, t('employee.nav.customers'))}
+                    {perm('view_customers') && isAdmin && perm('manage_leads') &&
                       navLink('leads', `${base}/leads`, t('employee.nav.leads'))}
                     {/* Services aren't just public-site content — tagging a
                         customer with one, and the cadence that drives their
                         recurring tasks, is day-to-day operational work. */}
-                    {isAdmin && perm('manage_services') &&
+                    {perm('view_customers') && isAdmin && perm('manage_services') &&
                       navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
+                    {/* Timesheets belongs here for everyone who logs hours,
+                        and — unlike the items above — for a Timesheet
+                        Approver even without view_customers, since
+                        approving submitted timesheets isn't customer
+                        data access. */}
+                    {navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
                   </NavGroup>
                 )}
 
@@ -369,7 +389,13 @@ export default function EmployeeShell({ community, active, children }) {
 
             {/* You group — personal / non-admin tools. */}
             <NavGroup groupKey="you" label={t('employee.nav.groupYou')}>
-              {navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
+              {/* Timesheets lives in Business/Operations above for anyone
+                  who can see that group (view_customers, or a Timesheet
+                  Approver). This is the fallback for the one account shape
+                  that sees neither — a plain site admin with no approver
+                  flag — so Timesheets is never completely unreachable. */}
+              {!perm('view_customers') && !isTimesheetApprover &&
+                navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
               {navLink('profile', `${base}/profile`, t('employee.nav.profile'))}
               {navLink('help',    `${base}/help`,    t('employee.nav.help'))}
             </NavGroup>

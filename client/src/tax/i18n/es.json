@@ -2412,6 +2412,8 @@
   "employee.timesheets.pendingApproval": "Pendientes de Aprobación",
   "employee.timesheets.noneAwaiting": "No hay nada esperando tu aprobación en este momento.",
   "employee.timesheets.weekOf": "Semana del",
+  "employee.timesheets.jumpToWeek": "Ir a otra semana",
+  "employee.timesheets.go": "Ir",
   "employee.timesheets.hours": "Horas",
   "employee.timesheets.hoursAbbrev": "hrs",
   "employee.timesheets.hoursInvalid": "Ingresa un número de horas entre 0 y 168.",

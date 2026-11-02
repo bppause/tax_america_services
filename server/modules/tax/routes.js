@@ -14233,16 +14233,49 @@ ${closingHtml}
     });
   });
 
+  // GET /employee/timesheets/:weekStart — a single week, for navigating
+  // back to a week that's never had an entry (so it doesn't show up in the
+  // recent-weeks list above) without creating a row just to look at it.
+  // Synthesizes the same blank draft shape GET /employee/timesheets does
+  // for the current week. Future weeks are refused — there's nothing to
+  // log or view yet.
+  router.get('/employee/timesheets/:weekStart', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const weekStart = trim(req.params.weekStart, 10);
+    if (weekStart !== mondayOf(weekStart)) {
+      return res.status(400).json({ error: 'weekStart must be a Monday (YYYY-MM-DD).' });
+    }
+    const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
+    if (weekStart > currentWeek) {
+      return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
+    }
+    const { data: existing, error } = await supabase.from('tax_timesheets')
+      .select('id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
+      .eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
+    if (error) return sendSupabaseError(res, error);
+    res.json({
+      timesheet: existing || {
+        id: null, week_start: weekStart, hours: 0, notes: '', status: 'draft',
+        submitted_at: null, approved_at: null, rejection_note: '', updated_at: null,
+      },
+    });
+  });
+
   // PUT /employee/timesheets/:weekStart — body: { hours, notes }. Create or
   // edit the caller's own entry for that week. Blocked once the week is
   // submitted or approved — editing after a rejection is allowed and resets
   // status back to draft (the rejection note stays visible until the next
-  // decision overwrites it).
+  // decision overwrites it). Staff can go back and log any past week that
+  // isn't already approved, but never a week that hasn't happened yet.
   router.put('/employee/timesheets/:weekStart', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const weekStart = trim(req.params.weekStart, 10);
     if (weekStart !== mondayOf(weekStart)) {
       return res.status(400).json({ error: 'weekStart must be a Monday (YYYY-MM-DD).' });
+    }
+    const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
+    if (weekStart > currentWeek) {
+      return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
     }
     const hours = Number((req.body || {}).hours);
     if (!Number.isFinite(hours) || hours < 0 || hours > 168) {
@@ -14280,10 +14313,16 @@ ${closingHtml}
 
   // POST /employee/timesheets/:weekStart/submit — moves a draft week to
   // submitted so it appears in approvers' queue. Requires at least some
-  // hours entered first.
+  // hours entered first. Same future-week guard as the PUT above — in
+  // practice redundant with it (a future week can never acquire a row to
+  // submit), but kept explicit here too.
   router.post('/employee/timesheets/:weekStart/submit', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const weekStart = trim(req.params.weekStart, 10);
+    const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
+    if (weekStart > currentWeek) {
+      return res.status(400).json({ error: 'future_week', message: 'You cannot submit time for a future week.' });
+    }
     const { data: existing } = await supabase.from('tax_timesheets')
       .select('id, status, hours').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Enter your hours before submitting.' });

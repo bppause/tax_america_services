@@ -578,6 +578,7 @@ export const taxApi = {
   // Weekly timesheets (Monday-Sunday, single hours total) — see
   // supabase/schema.sql's tax_timesheets comment and routes.js.
   employeeListTimesheets(auth)                { return request('GET',  '/employee/timesheets', undefined, auth); },
+  employeeGetTimesheetWeek(auth, weekStart)   { return request('GET',  `/employee/timesheets/${encodeURIComponent(weekStart)}`, undefined, auth); },
   employeeSaveTimesheet(auth, weekStart, payload) { return request('PUT', `/employee/timesheets/${encodeURIComponent(weekStart)}`, payload, auth); },
   employeeSubmitTimesheet(auth, weekStart)     { return request('POST', `/employee/timesheets/${encodeURIComponent(weekStart)}/submit`, {}, auth); },
   adminListTimesheets(auth, status)            { return request('GET',  `/admin/timesheets${status ? `?status=${encodeURIComponent(status)}` : ''}`, undefined, auth); },
