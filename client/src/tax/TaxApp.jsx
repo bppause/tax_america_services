@@ -5,6 +5,7 @@
 //   /tax/{community-slug}                      → that community's landing
 //   /tax/respond/{token}                       → magic-link customer response (Phase 1.5)
 //   /tax/review/{token}                        → magic-link Reviewer task approve/reject
+//   /tax/start/{token}                         → magic-link owner task start (Not started → In progress)
 //   /tax/{community-slug}/portal               → portal dashboard (Phase 2a)
 //   /tax/{community-slug}/portal/profile       → portal profile + preferences
 //   /tax/{community-slug}/portal/filings/{id}  → portal filing detail + response
@@ -17,6 +18,7 @@ import PublicArticles from './pages/PublicArticles';
 import PublicCalendar from './pages/PublicCalendar';
 import Respond from './pages/Respond';
 import TaskReview from './pages/TaskReview';
+import StartTask from './pages/StartTask';
 import PortalLogin from './pages/PortalLogin';
 import PortalDashboard from './pages/PortalDashboard';
 import PortalFiling from './pages/PortalFiling';
@@ -71,6 +73,9 @@ function parseTaxPath() {
   }
   if (parts[1] === 'review' && parts[2]) {
     return { route: 'task-review', token: decodeURIComponent(parts[2]) };
+  }
+  if (parts[1] === 'start' && parts[2]) {
+    return { route: 'task-start', token: decodeURIComponent(parts[2]) };
   }
   // Phase 5: platform admin lives at /tax/_platform/*. The underscore
   // prefix can't collide with a real community slug (slugs are
@@ -146,21 +151,23 @@ export default function TaxApp() {
         ? <Respond token={parsed.token} />
         : parsed.route === 'task-review'
           ? <TaskReview token={parsed.token} />
-          : parsed.route === 'report-access'
-            ? <TaxReport communitySlug={parsed.slug} token={parsed.token} />
-            : parsed.route.startsWith('platform')
-              ? <PlatformRoot parsed={parsed} />
-              : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))
-                ? <EmployeeRoot parsed={parsed} />
-                : parsed.route.startsWith('portal')
-                  ? <PortalRoot parsed={parsed} />
-                  : parsed.route === 'public-faqs'
-                  ? <PublicFaqs communitySlug={parsed.slug} />
-                  : parsed.route === 'public-articles'
-                    ? <PublicArticles communitySlug={parsed.slug} />
-                    : parsed.route === 'public-calendar'
-                      ? <PublicCalendar communitySlug={parsed.slug} />
-                      : <Landing communitySlug={parsed.slug} />}
+          : parsed.route === 'task-start'
+            ? <StartTask token={parsed.token} />
+            : parsed.route === 'report-access'
+              ? <TaxReport communitySlug={parsed.slug} token={parsed.token} />
+              : parsed.route.startsWith('platform')
+                ? <PlatformRoot parsed={parsed} />
+                : (parsed.route.startsWith('employee') || parsed.route.startsWith('owner-'))
+                  ? <EmployeeRoot parsed={parsed} />
+                  : parsed.route.startsWith('portal')
+                    ? <PortalRoot parsed={parsed} />
+                    : parsed.route === 'public-faqs'
+                    ? <PublicFaqs communitySlug={parsed.slug} />
+                    : parsed.route === 'public-articles'
+                      ? <PublicArticles communitySlug={parsed.slug} />
+                      : parsed.route === 'public-calendar'
+                        ? <PublicCalendar communitySlug={parsed.slug} />
+                        : <Landing communitySlug={parsed.slug} />}
     </TaxLocaleProvider>
   );
 }

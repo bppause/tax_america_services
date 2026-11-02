@@ -171,6 +171,8 @@ export const taxApi = {
   submitResponse(token, payload)  { return request('POST', `/respond/${encodeURIComponent(token)}`, payload); },
   getTaskReview(token)             { return request('GET',  `/review/${encodeURIComponent(token)}`); },
   submitTaskReview(token, payload){ return request('POST', `/review/${encodeURIComponent(token)}`, payload); },
+  getTaskStart(token)              { return request('GET',  `/start/${encodeURIComponent(token)}`); },
+  submitTaskStart(token, payload) { return request('POST', `/start/${encodeURIComponent(token)}`, payload); },
 
   // Portal (Phase 2a) — `auth = { uid, email, communitySlug }`
   authLink(payload)               { return request('POST', '/auth/link', payload); },

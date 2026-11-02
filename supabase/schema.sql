@@ -4005,3 +4005,24 @@ alter table public.tax_tasks
   add column if not exists time_in_progress_seconds integer not null default 0;
 alter table public.tax_tasks
   add column if not exists time_in_pending_review_seconds integer not null default 0;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Owner magic-link tokens — let an assignee start a Not-started task
+-- straight from the daily "tasks waiting to start" email
+-- (start-digest.js) without signing in, same trust model as
+-- tax_review_tokens for Reviewers. One row is minted per (task, owner)
+-- pair each time the digest sends; token stored hashed (sha-256 hex).
+-- Single-use OR until the task leaves Not started (checked live against
+-- tax_tasks at decision time, not just via used_at/expires_at).
+-- ═══════════════════════════════════════════════════════════════════════════════
+create table if not exists public.tax_start_tokens (
+  id text primary key,
+  task_id text not null references public.tax_tasks(id) on delete cascade,
+  employee_id text not null references public.tax_employees(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_start_tokens_task on public.tax_start_tokens(task_id);
+alter table public.tax_start_tokens disable row level security;
