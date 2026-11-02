@@ -2413,6 +2413,8 @@
   "employee.timesheets.pendingApproval": "Pending Approval",
   "employee.timesheets.noneAwaiting": "Nothing is waiting on your approval right now.",
   "employee.timesheets.weekOf": "Week of",
+  "employee.timesheets.jumpToWeek": "Go to a different week",
+  "employee.timesheets.go": "Go",
   "employee.timesheets.hours": "Hours",
   "employee.timesheets.hoursAbbrev": "hrs",
   "employee.timesheets.hoursInvalid": "Enter a number of hours between 0 and 168.",

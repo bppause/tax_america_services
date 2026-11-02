@@ -4,6 +4,18 @@ import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
 
+// Monday of the ISO week containing dateStr ('YYYY-MM-DD' in and out) —
+// mirrors mondayOf in server/modules/tax/routes.js so the week-jump
+// control below always lands on a date the server accepts.
+function mondayOf(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  const dow = d.getUTCDay();
+  const diff = dow === 0 ? -6 : 1 - dow;
+  d.setUTCDate(d.getUTCDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
 const STATUS_STYLE = {
   draft:     { bg: 'var(--tax-bg-alt)', fg: 'var(--tax-muted)' },
   submitted: { bg: '#fef3c7', fg: '#92400e' },
@@ -149,12 +161,13 @@ export default function EmployeeTimesheets() {
   const isApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
 
   const [mine, setMine] = useState(null);
+  const [currentWeek, setCurrentWeek] = useState('');
   const [pending, setPending] = useState(null);
   const [err, setErr] = useState('');
 
   const load = () => {
     taxApi.employeeListTimesheets(auth)
-      .then(d => setMine(d.timesheets || []))
+      .then(d => { setMine(d.timesheets || []); setCurrentWeek(d.currentWeek || ''); })
       .catch(e => setErr(e?.message || t('error.loadFailed')));
     if (isApprover) {
       taxApi.adminListTimesheets(auth, 'submitted')
@@ -167,6 +180,32 @@ export default function EmployeeTimesheets() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, isApprover]);
+
+  // "Go to a different week" — the recent-weeks list above only shows
+  // weeks that already have a saved row, so a week from further back
+  // that was never logged has no entry to click into. This fetches (and
+  // synthesizes, if blank) one arbitrary past week and merges it into the
+  // list so staff can go back and catch up on anything missed. The
+  // server (GET /employee/timesheets/:weekStart) refuses a future week;
+  // the date input is capped at today as a first line of defense.
+  const [jumpDate, setJumpDate] = useState('');
+  const [jumpErr, setJumpErr] = useState('');
+  const [jumpBusy, setJumpBusy] = useState(false);
+  const onJumpToWeek = async () => {
+    if (!jumpDate) return;
+    setJumpBusy(true); setJumpErr('');
+    try {
+      const weekStart = mondayOf(jumpDate);
+      const d = await taxApi.employeeGetTimesheetWeek(auth, weekStart);
+      setMine(prev => {
+        const rest = (prev || []).filter(x => x.week_start !== weekStart);
+        return [...rest, d.timesheet].sort((a, b) => (a.week_start < b.week_start ? 1 : -1));
+      });
+      setJumpDate('');
+    } catch (e) {
+      setJumpErr(e?.message || t('error.loadFailed'));
+    } finally { setJumpBusy(false); }
+  };
 
   return (
     <EmployeeShell community={community} active="timesheets">
@@ -189,6 +228,16 @@ export default function EmployeeTimesheets() {
 
       <section>
         <h3>{t('employee.timesheets.myTimesheets')}</h3>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--tax-muted)' }}>
+            {t('employee.timesheets.jumpToWeek')}
+            <input type="date" value={jumpDate} max={currentWeek || undefined}
+                   onChange={e => setJumpDate(e.target.value)} />
+          </label>
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={jumpBusy || !jumpDate}
+                  onClick={onJumpToWeek}>{t('employee.timesheets.go')}</button>
+          {jumpErr && <span className="tax-msg tax-msg--error" style={{ margin: 0 }}>{jumpErr}</span>}
+        </div>
         {mine === null ? <p>{t('loading')}</p>
           : <div style={{ display: 'grid', gap: 10 }}>
               {mine.map(ts => (
