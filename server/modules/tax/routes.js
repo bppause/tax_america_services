@@ -18,6 +18,11 @@
 //   GET  /review/:token            — public; verify token, return the task's review details
 //   POST /review/:token            — public; apply the Reviewer's approve/reject decision
 //
+// Owner magic-link endpoints (one-click Start from the daily email
+// reminder — see start-digest.js, applyTaskStart):
+//   GET  /start/:token             — public; verify token, return the task's details
+//   POST /start/:token             — public; move the task to In progress
+//
 // Phase 2+ will add: /auth/*, /engagements/*, /documents/*, /messages/*, /products/*.
 
 'use strict';
@@ -9359,6 +9364,154 @@ ${closingHtml}
       .update({ used_at: new Date().toISOString() })
       .eq('id', tokenRow.tokenId);
     res.json({ ok: true, decision: result.decision });
+  });
+
+  // Moves a Not-started task to In progress — the same transition the
+  // Start button (Tasks list row, Kanban card, task edit modal,
+  // TaskHover popover) performs, extracted so the token-gated
+  // POST /start/:token below can share it. `task` must carry at least
+  // id, community_id, status_changed_at, and the three
+  // time_in_*_seconds columns (status_key is always 'not_started' here).
+  async function applyTaskStart({ task, note, actor }) {
+    const nowIso = new Date().toISOString();
+    const update = {
+      updated_at: nowIso, status_key: 'in_progress', status_changed_at: nowIso, notes: note,
+    };
+    accrueStatusTime(task, update, nowIso);
+    const { error } = await supabase.from('tax_tasks').update(update).eq('id', task.id);
+    if (error) {
+      warn('[tax-task-start] update failed', error);
+      const parts = [error?.message, error?.details, error?.hint, error?.code].filter(Boolean);
+      return { ok: false, status: 500, error: parts.join(' | ') || 'Supabase error' };
+    }
+    try {
+      await auditLog({
+        entity: 'tax.task', entityId: task.id, action: 'start',
+        actorEmail: actor.email || '', actorName: actor.name || '',
+        after: { note: note ? note.slice(0, 200) : '' },
+      });
+    } catch (_e) {}
+    await notifyTaskStatusChanged({
+      taskId: task.id, oldStatusKey: 'not_started', newStatusKey: 'in_progress', actor,
+    });
+    return { ok: true };
+  }
+
+  // Internal helper — validates an owner's magic-link start token
+  // (minted daily by start-digest.js, one per task per owner) and
+  // returns everything the public /start/:token endpoints need. Mirrors
+  // fetchValidReviewToken's shape.
+  async function fetchValidStartToken(raw) {
+    const tokenHash = sha256(raw);
+    const { data: t, error: tErr } = await supabase
+      .from('tax_start_tokens')
+      .select('id, task_id, employee_id, expires_at, used_at')
+      .eq('token_hash', tokenHash)
+      .maybeSingle();
+    if (tErr) return { ok: false, status: 500, error: tErr.message };
+    if (!t) return { ok: false, status: 404, error: 'Invalid or expired link.' };
+    if (t.used_at) return { ok: false, status: 410, error: 'This link has already been used.' };
+    if (new Date(t.expires_at) < new Date()) {
+      return { ok: false, status: 410, error: 'This link has expired.' };
+    }
+
+    const { data: task, error: taskErr } = await supabase.from('tax_tasks')
+      .select(`
+        id, community_id, title, due_date, priority, status_key, notes,
+        assigned_employee_id, customer_id, status_changed_at,
+        time_in_not_started_seconds, time_in_progress_seconds, time_in_pending_review_seconds
+      `).eq('id', t.task_id).maybeSingle();
+    if (taskErr) return { ok: false, status: 500, error: taskErr.message };
+    if (!task) return { ok: false, status: 404, error: 'Task not found.' };
+
+    const { data: owner } = await supabase.from('tax_employees')
+      .select('id, email, name, first_name, last_name, status')
+      .eq('id', t.employee_id).maybeSingle();
+    if (!owner || owner.status === 'archived') {
+      return { ok: false, status: 403, error: 'This account is no longer active.' };
+    }
+    // The token is bound to whoever was the assignee when the digest
+    // sent — if the task's been reassigned since, this link is stale
+    // and shouldn't let the old owner start someone else's task.
+    if (task.assigned_employee_id !== owner.id) {
+      return { ok: false, status: 409, error: 'This task has since been reassigned to someone else.' };
+    }
+
+    const [{ data: community }, { data: customer }] = await Promise.all([
+      supabase.from('communities')
+        .select('id, name, logo_url, brand_primary_color, brand_secondary_color, default_locale')
+        .eq('id', task.community_id).maybeSingle(),
+      task.customer_id
+        ? supabase.from('tax_customers').select('id, name, business_name').eq('id', task.customer_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    if (!community) return { ok: false, status: 404, error: 'Community not found.' };
+
+    return { ok: true, tokenId: t.id, task, owner, community, customer };
+  }
+
+  // ── GET /start/:token ──
+  // Public. Verifies an owner's magic-link start token and returns the
+  // task's details — lets an assignee start a task straight from the
+  // daily email reminder (start-digest.js) without signing in.
+  router.get('/start/:token', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    if (!raw) return res.status(400).json({ error: 'Token required.' });
+    const tokenRow = await fetchValidStartToken(raw);
+    if (!tokenRow.ok) return res.status(tokenRow.status).json({ error: tokenRow.error });
+    const { task, community, customer } = tokenRow;
+    res.json({
+      community,
+      task: {
+        id: task.id, title: task.title, due_date: task.due_date, priority: task.priority,
+        status_key: task.status_key, notes: task.notes,
+      },
+      customer: customer ? { id: customer.id, name: customer.name, business_name: customer.business_name } : null,
+      readyToStart: task.status_key === 'not_started' && !!task.priority && !!task.due_date,
+      alreadyStarted: task.status_key !== 'not_started',
+    });
+  });
+
+  // ── POST /start/:token ──
+  // Public. Body: { note: string }. Moves the task to In progress —
+  // same transition and same required note as the Start button
+  // everywhere else. Refused if the task isn't actually ready (missing
+  // priority or due date — the landing page sends the owner to the
+  // full editor instead in that case) or has already moved past Not
+  // started. Single-use: invalidated right after a successful start.
+  router.post('/start/:token', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const raw = trim(req.params.token, MAX_TOKEN_LEN);
+    if (!raw) return res.status(400).json({ error: 'Token required.' });
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    if (!note) {
+      return res.status(400).json({
+        error: 'note_required',
+        message: 'Add a note describing the next steps before starting this task.',
+      });
+    }
+    const tokenRow = await fetchValidStartToken(raw);
+    if (!tokenRow.ok) return res.status(tokenRow.status).json({ error: tokenRow.error });
+    const { task, owner } = tokenRow;
+    if (task.status_key !== 'not_started') {
+      return res.status(409).json({ error: 'This task is not in Not started.' });
+    }
+    if (!task.priority || !task.due_date) {
+      const missing = [];
+      if (!task.priority) missing.push('a priority');
+      if (!task.due_date) missing.push('a due date');
+      return res.status(400).json({
+        error: 'fields_required_beyond_not_started',
+        message: `Add ${missing.join(' and ')} before starting this task.`,
+      });
+    }
+    const result = await applyTaskStart({ task, note, actor: owner });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    await supabase.from('tax_start_tokens')
+      .update({ used_at: new Date().toISOString() })
+      .eq('id', tokenRow.tokenId);
+    res.json({ ok: true });
   });
 
   // GET /admin/tasks/awaiting-review
