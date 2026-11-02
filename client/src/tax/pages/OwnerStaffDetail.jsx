@@ -110,6 +110,7 @@ export default function OwnerStaffDetail({ employeeId }) {
             <RoleSwitcher emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <StaffAdminToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <ReviewerToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
+            <TimesheetApproverToggle emp={emp} me={me} auth={auth} onSaved={loadEmployee} t={t} />
             <DetailAccessScopePill emp={emp} t={t} />
           </h2>
           {/* One-sentence summary of what this person can see, right under
@@ -1748,6 +1749,56 @@ function ReviewerToggle({ emp, me, auth, onSaved, t }) {
                onChange={e => onChange(e.target.checked)}
                style={{ margin: 0 }} />
         {t('employee.role.reviewer')}
+      </label>
+      {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
+    </span>
+  );
+}
+
+// "Timesheet Approver" — same seed-owner-only grant shape as
+// ReviewerToggle above, for the weekly-timesheet approval queue instead
+// of the task review queue (see isTimesheetApprover, GET
+// /admin/timesheets, POST /admin/timesheets/:id/review).
+function TimesheetApproverToggle({ emp, me, auth, onSaved, t }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const isSelf = emp.id === me?.id;
+
+  if (emp.is_seed_owner) return null;
+
+  if (!me?.is_seed_owner) {
+    return emp.is_timesheet_approver ? (
+      <span style={{
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', background: '#dbeafe', color: '#1e40af',
+      }} title={t('owner.staff.timesheetApproverHint')}>{t('employee.role.timesheetApprover')}</span>
+    ) : null;
+  }
+
+  const onChange = async (grant) => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminSetEmployeeTimesheetApprover(auth, emp.id, grant);
+      onSaved();
+    } catch (e) {
+      setErr(e?.message || t('respond.error.generic'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <label style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', cursor: (busy || isSelf) ? 'not-allowed' : 'pointer',
+        background: emp.is_timesheet_approver ? '#dbeafe' : 'var(--tax-bg-alt)',
+        color: emp.is_timesheet_approver ? '#1e40af' : 'var(--tax-muted)',
+      }} title={isSelf ? t('owner.staffDetail.role.selfHint') : t('owner.staff.timesheetApproverHint')}>
+        <input type="checkbox" checked={!!emp.is_timesheet_approver}
+               disabled={busy || isSelf}
+               onChange={e => onChange(e.target.checked)}
+               style={{ margin: 0 }} />
+        {t('employee.role.timesheetApprover')}
       </label>
       {err && <span style={{ fontSize: 11, color: 'var(--tax-error)' }}>{err}</span>}
     </span>

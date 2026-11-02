@@ -16,6 +16,7 @@ const NAV_ICON = {
   'service-catalog': '🏷️', articles: '📰', faqs: '❓', staff: '🧑‍💼',
   'email-templates': '✉️', settings: '⚙️', audit: '🗂️', news: '📣',
   testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔', inbox: '📨',
+  timesheets: '🕒',
 };
 
 // A plain "Staff" badge told everyone with an employee login the same
@@ -128,6 +129,33 @@ export default function EmployeeShell({ community, active, children }) {
     const id = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(id); };
   }, [fbUser, community, isReviewer]);
+
+  // Timesheet badge — counts the caller's own outstanding weeks (current
+  // week not yet entered, or last week overdue) plus, for an approver,
+  // the number of timesheets sitting in the approval queue. Mirrors the
+  // Reviewer badge above; polled the same way. Matches the server-side
+  // isTimesheetApprover gate on GET /admin/timesheets.
+  const isTimesheetApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
+  const [timesheetBadge, setTimesheetBadge] = useState(0);
+  useEffect(() => {
+    if (!fbUser || !community) { setTimesheetBadge(0); return; }
+    let cancelled = false;
+    const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
+    const load = () => {
+      const calls = [taxApi.employeeListTimesheets(auth).catch(() => ({ timesheets: [] }))];
+      if (isTimesheetApprover) calls.push(taxApi.adminListTimesheets(auth, 'submitted').catch(() => ({ timesheets: [] })));
+      Promise.all(calls).then(([mine, pending]) => {
+        if (cancelled) return;
+        const outstanding = (mine.timesheets || [])
+          .filter(ts => ts.status === 'draft' || ts.status === 'rejected').length;
+        const awaitingApproval = pending ? (pending.timesheets || []).length : 0;
+        setTimesheetBadge(outstanding + awaitingApproval);
+      }).catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [fbUser, community, isTimesheetApprover]);
 
   // Notification bell — surfaces tax_employee_notifications rows (new
   // messages, signed requests, task status changes, …). The endpoints
@@ -341,6 +369,7 @@ export default function EmployeeShell({ community, active, children }) {
 
             {/* You group — personal / non-admin tools. */}
             <NavGroup groupKey="you" label={t('employee.nav.groupYou')}>
+              {navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
               {navLink('profile', `${base}/profile`, t('employee.nav.profile'))}
               {navLink('help',    `${base}/help`,    t('employee.nav.help'))}
             </NavGroup>
