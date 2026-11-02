@@ -4026,3 +4026,45 @@ create table if not exists public.tax_start_tokens (
 );
 create index if not exists idx_tax_start_tokens_task on public.tax_start_tokens(task_id);
 alter table public.tax_start_tokens disable row level security;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Weekly timesheets — one row per (employee, week), Monday-to-Sunday,
+-- a single hours total (not per-day/per-task line items — kept simple
+-- on purpose). Submitted by the employee, then approved or rejected by
+-- the seeded owner or anyone the seeded owner has delegated the
+-- "Timesheet Approver" role to (is_timesheet_approver — same
+-- seed-owner-only grant pattern as is_task_reviewer; see
+-- PUT /admin/employees/:id/timesheet-approver-role). No self-approval,
+-- mirroring the task review queue's separation of duties.
+--
+-- status: draft (entered, not yet submitted — or editing after a
+-- rejection resets here) → submitted (awaiting approval) → approved |
+-- rejected. Editing after rejection moves it back to draft; the
+-- approver's rejection_note stays visible until the next decision
+-- overwrites or clears it.
+-- ═══════════════════════════════════════════════════════════════════════════════
+alter table public.tax_employees
+  add column if not exists is_timesheet_approver boolean not null default false;
+
+create table if not exists public.tax_timesheets (
+  id text primary key,
+  community_id text not null references public.communities(id) on delete cascade,
+  employee_id text not null references public.tax_employees(id) on delete cascade,
+  week_start date not null,
+  hours numeric(6,2) not null default 0,
+  notes text not null default '',
+  status text not null default 'draft'
+    check (status in ('draft','submitted','approved','rejected')),
+  submitted_at timestamptz,
+  approved_at timestamptz,
+  approved_by_employee_id text references public.tax_employees(id) on delete set null,
+  rejection_note text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (employee_id, week_start)
+);
+create index if not exists idx_tax_timesheets_community_status
+  on public.tax_timesheets(community_id, status, week_start);
+create index if not exists idx_tax_timesheets_employee
+  on public.tax_timesheets(employee_id, week_start desc);
+alter table public.tax_timesheets disable row level security;

@@ -302,6 +302,15 @@ function StaffRow({ e, me, auth, community, base, locale, t, onChange }) {
               {t('employee.role.reviewer')}
             </span>
           )}
+          {e.is_timesheet_approver && !e.is_seed_owner && (
+            <span style={{
+              marginLeft: 6, padding: '1px 8px', borderRadius: 999,
+              background: '#dbeafe', color: '#1e40af',
+              fontSize: 11, fontWeight: 700, textTransform: 'uppercase',
+            }} title={t('owner.staff.timesheetApproverHint')}>
+              {t('employee.role.timesheetApprover')}
+            </span>
+          )}
           <AccessScopePill emp={e} t={t} />
           {!e.firebase_uid && (
             <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--tax-muted)' }}>
@@ -345,6 +354,7 @@ const ROLE_LEGEND = [
   { key: 'seedOwner',   bg: '#fef3c7', fg: '#92400e' },
   { key: 'staffAdmin',  bg: '#e0f2fe', fg: '#075985' },
   { key: 'reviewer',    bg: '#dcfce7', fg: '#166534' },
+  { key: 'timesheetApprover', bg: '#dbeafe', fg: '#1e40af' },
 ];
 
 function RolesExplainer({ t }) {

@@ -58,6 +58,7 @@ import { TaxPlatformAuthProvider, useTaxPlatformAuth } from './auth/PlatformAuth
 import { signInWithGoogle, firebaseReady } from './auth/firebase';
 import PortalHelp from './pages/PortalHelp';
 import EmployeeHelp from './pages/EmployeeHelp';
+import EmployeeTimesheets from './pages/EmployeeTimesheets';
 import { TaxAuthProvider, useTaxAuth } from './auth/AuthProvider';
 import { TaxEmployeeAuthProvider, useEmployeeAuth } from './auth/EmployeeAuthProvider';
 import { taxApi } from './api';
@@ -120,6 +121,7 @@ function parseTaxPath() {
     if (parts[3] === 'service-catalog') return { route: 'owner-service-catalog', slug };
     if (parts[3] === 'audit')    return { route: 'owner-audit', slug };
     if (parts[3] === 'help')     return { route: 'employee-help', slug };
+    if (parts[3] === 'timesheets') return { route: 'employee-timesheets', slug };
     if (parts[3] === 'dashboard' || !parts[3]) return { route: 'owner-dashboard', slug };
     if (parts[3] === 'inbox')    return { route: 'employee-inbox', slug };
     return { route: 'owner-dashboard', slug };
@@ -291,6 +293,7 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-setup') return <OwnerSetup />;
   if (parsed.route === 'owner-whatsapp') return <OwnerWhatsApp />;
   if (parsed.route === 'employee-help') return <EmployeeHelp />;
+  if (parsed.route === 'employee-timesheets') return <EmployeeTimesheets />;
   if (parsed.route === 'employee-inbox') return <EmployeeInbox />;
   if (parsed.route === 'owner-dashboard') return <OwnerDashboard />;
   return <OwnerDashboard />;

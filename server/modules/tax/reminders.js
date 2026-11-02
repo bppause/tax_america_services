@@ -28,6 +28,8 @@ const { sendOwnerAiDigest } = require('./ai-digest');
 const { sendDailyTaskStatusDigest } = require('./task-digest');
 const { sendDailyReviewDigest } = require('./review-digest');
 const { sendDailyStartDigest } = require('./start-digest');
+const { sendDailyTimesheetDigest } = require('./timesheet-digest');
+const { sendDailyTimesheetApprovalDigest } = require('./timesheet-approval-digest');
 
 module.exports = function createTaxRemindersCron(deps) {
   const {
@@ -565,6 +567,10 @@ module.exports = function createTaxRemindersCron(deps) {
               .catch(e => warn('[review-digest] community', c.id, e?.message || e));
             sendDailyStartDigest(c.id, { supabase, sendSpanishEmail, publicAppUrl })
               .catch(e => warn('[start-digest] community', c.id, e?.message || e));
+            sendDailyTimesheetDigest(c.id, { supabase, sendSpanishEmail, publicAppUrl })
+              .catch(e => warn('[timesheet-digest] community', c.id, e?.message || e));
+            sendDailyTimesheetApprovalDigest(c.id, { supabase, sendSpanishEmail, publicAppUrl })
+              .catch(e => warn('[timesheet-approval-digest] community', c.id, e?.message || e));
           }
         }
       }

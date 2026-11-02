@@ -306,6 +306,7 @@ export const taxApi = {
   adminRevokeAllEmployeeSessions(auth, employeeId) { return request('POST', `/admin/employees/${encodeURIComponent(employeeId)}/sessions/revoke-all`, {}, auth, { admin: true }); },
   adminSetEmployeeSiteAdmin(auth, id, grant)    { return request('PUT', `/admin/employees/${encodeURIComponent(id)}/site-admin-role`, { grant }, auth, { admin: true }); },
   adminSetEmployeeTaskReviewer(auth, id, grant) { return request('PUT', `/admin/employees/${encodeURIComponent(id)}/reviewer-role`, { grant }, auth, { admin: true }); },
+  adminSetEmployeeTimesheetApprover(auth, id, grant) { return request('PUT', `/admin/employees/${encodeURIComponent(id)}/timesheet-approver-role`, { grant }, auth, { admin: true }); },
   adminGetEmployeeLoginHistory(auth, id)        { return request('GET', `/admin/employees/${encodeURIComponent(id)}/sessions`, undefined, auth, { admin: true }); },
   adminListPermissions(auth)                    { return request('GET', '/admin/permissions', undefined, auth, { admin: true }); },
   adminSetEmployeePermissions(auth, id, permissions) {
@@ -573,6 +574,14 @@ export const taxApi = {
   // signs off on a task sitting in pending-review state.
   adminReviewTask(auth, id, payload)          { return request('POST', `/admin/tasks/${encodeURIComponent(id)}/review`, payload, auth); },
   adminTasksAwaitingReview(auth)              { return request('GET',  '/admin/tasks/awaiting-review', undefined, auth); },
+
+  // Weekly timesheets (Monday-Sunday, single hours total) — see
+  // supabase/schema.sql's tax_timesheets comment and routes.js.
+  employeeListTimesheets(auth)                { return request('GET',  '/employee/timesheets', undefined, auth); },
+  employeeSaveTimesheet(auth, weekStart, payload) { return request('PUT', `/employee/timesheets/${encodeURIComponent(weekStart)}`, payload, auth); },
+  employeeSubmitTimesheet(auth, weekStart)     { return request('POST', `/employee/timesheets/${encodeURIComponent(weekStart)}/submit`, {}, auth); },
+  adminListTimesheets(auth, status)            { return request('GET',  `/admin/timesheets${status ? `?status=${encodeURIComponent(status)}` : ''}`, undefined, auth); },
+  adminReviewTimesheet(auth, id, payload)      { return request('POST', `/admin/timesheets/${encodeURIComponent(id)}/review`, payload, auth); },
 
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },

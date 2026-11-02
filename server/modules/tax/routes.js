@@ -391,6 +391,29 @@ module.exports = function createTaxRouter(deps) {
     return !!emp?.is_seed_owner || !!emp?.is_task_reviewer;
   }
 
+  // Timesheet Approver — same seed-owner-delegated shape as the Reviewer
+  // role above, for a different queue (weekly timesheets awaiting
+  // approval instead of tasks). The seed owner always counts. Takes an
+  // employee row (as returned by requireTaxEmployee), not a
+  // requireOwnerAdmin-style actor wrapper.
+  function isTimesheetApprover(emp) {
+    return !!emp?.is_seed_owner || !!emp?.is_timesheet_approver;
+  }
+
+  // Monday of the ISO week containing dateStr ('YYYY-MM-DD' in, 'YYYY-MM-DD'
+  // out). Used to normalize/validate weekStart params and to compute the
+  // "current week" / "previous week" boundaries for the timesheet digests.
+  // Dates are treated as plain UTC calendar dates throughout — no time
+  // component, no timezone math.
+  function mondayOf(dateStr) {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return null;
+    const dow = d.getUTCDay(); // 0=Sun..6=Sat
+    const diff = dow === 0 ? -6 : 1 - dow; // days to subtract to reach Monday
+    d.setUTCDate(d.getUTCDate() + diff);
+    return d.toISOString().slice(0, 10);
+  }
+
   // "Staff admin" gate — narrower than requireOwnerAdmin: lets through a
   // full owner-admin (same rule requireOwnerAdmin('manage_employees')
   // uses) OR any employee flagged is_employee_site_admin, regardless of
@@ -12560,7 +12583,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -12576,7 +12599,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -14140,6 +14163,201 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, isTaskReviewer: grant });
+  });
+
+  // ── PUT /admin/employees/:id/timesheet-approver-role ── grant/revoke
+  // "Timesheet Approver" — same seed-owner-only gate as the Reviewer role
+  // above (see isTimesheetApprover, GET /admin/timesheets, POST
+  // /admin/timesheets/:id/review).
+  router.put('/admin/employees/:id/timesheet-approver-role', async (req, res) => {
+    const actor = await requireOwnerAdmin(req, res); if (!actor) return;
+    if (!actorIsSeedOwner(actor)) {
+      return res.status(403).json({
+        error: 'seed_owner_required',
+        message: 'Only the seeded owner account can assign the Timesheet Approver role.',
+      });
+    }
+    const empId = trim(req.params.id, 200);
+    const grant = !!(req.body || {}).grant;
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, is_seed_owner, is_timesheet_approver').eq('id', empId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+    if (existing.is_seed_owner) {
+      return res.status(400).json({ error: 'Already has full access.' });
+    }
+    const { error } = await supabase.from('tax_employees')
+      .update({ is_timesheet_approver: grant, updated_at: new Date().toISOString() })
+      .eq('id', empId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: empId, action: 'set_timesheet_approver',
+        actorEmail: actor.email || '',
+        before: { isTimesheetApprover: !!existing.is_timesheet_approver },
+        after: { isTimesheetApprover: grant },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, isTimesheetApprover: grant });
+  });
+
+  // ── Weekly timesheets ───────────────────────────────────────────────────
+  // Single hours total per employee per Monday-Sunday week (see
+  // supabase/schema.sql's tax_timesheets comment for the full status
+  // lifecycle: draft -> submitted -> approved|rejected, with a rejection
+  // moving back to draft on the next edit).
+
+  // GET /employee/timesheets — the caller's own recent weeks, most recent
+  // first. Includes the current week even if it has no row yet (synthesized
+  // as an unsaved draft) so the entry form always has something to show.
+  router.get('/employee/timesheets', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
+    const { data, error } = await supabase.from('tax_timesheets')
+      .select('id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
+      .eq('employee_id', emp.id)
+      .order('week_start', { ascending: false })
+      .limit(26);
+    if (error) return sendSupabaseError(res, error);
+    const rows = data || [];
+    const hasCurrent = rows.some(r => r.week_start === currentWeek);
+    if (!hasCurrent) {
+      rows.unshift({
+        id: null, week_start: currentWeek, hours: 0, notes: '', status: 'draft',
+        submitted_at: null, approved_at: null, rejection_note: '', updated_at: null,
+      });
+    }
+    res.json({
+      timesheets: rows.sort((a, b) => (a.week_start < b.week_start ? 1 : -1)),
+      currentWeek,
+      isApprover: isTimesheetApprover(emp),
+    });
+  });
+
+  // PUT /employee/timesheets/:weekStart — body: { hours, notes }. Create or
+  // edit the caller's own entry for that week. Blocked once the week is
+  // submitted or approved — editing after a rejection is allowed and resets
+  // status back to draft (the rejection note stays visible until the next
+  // decision overwrites it).
+  router.put('/employee/timesheets/:weekStart', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const weekStart = trim(req.params.weekStart, 10);
+    if (weekStart !== mondayOf(weekStart)) {
+      return res.status(400).json({ error: 'weekStart must be a Monday (YYYY-MM-DD).' });
+    }
+    const hours = Number((req.body || {}).hours);
+    if (!Number.isFinite(hours) || hours < 0 || hours > 168) {
+      return res.status(400).json({ error: 'hours must be a number between 0 and 168.' });
+    }
+    const notes = trim((req.body || {}).notes, MAX_TEXT_LEN);
+
+    const { data: existing } = await supabase.from('tax_timesheets')
+      .select('id, status').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
+    if (existing && ['submitted', 'approved'].includes(existing.status)) {
+      return res.status(409).json({
+        error: 'locked',
+        message: existing.status === 'approved'
+          ? 'This week is already approved and can no longer be edited.'
+          : 'This week is awaiting approval and can no longer be edited.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const row = {
+      id: existing?.id || ('tsh_' + uuidv4().slice(0, 12)),
+      community_id: emp.community_id,
+      employee_id: emp.id,
+      week_start: weekStart,
+      hours: Math.round(hours * 100) / 100,
+      notes,
+      status: 'draft',
+      updated_at: now,
+    };
+    const { error } = await supabase.from('tax_timesheets')
+      .upsert(row, { onConflict: 'employee_id,week_start' });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, timesheet: row });
+  });
+
+  // POST /employee/timesheets/:weekStart/submit — moves a draft week to
+  // submitted so it appears in approvers' queue. Requires at least some
+  // hours entered first.
+  router.post('/employee/timesheets/:weekStart/submit', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const weekStart = trim(req.params.weekStart, 10);
+    const { data: existing } = await supabase.from('tax_timesheets')
+      .select('id, status, hours').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Enter your hours before submitting.' });
+    if (existing.status === 'submitted') return res.status(409).json({ error: 'Already submitted.' });
+    if (existing.status === 'approved') return res.status(409).json({ error: 'Already approved.' });
+    if (!existing.hours || Number(existing.hours) <= 0) {
+      return res.status(400).json({ error: 'Enter hours greater than 0 before submitting.' });
+    }
+    const { error } = await supabase.from('tax_timesheets')
+      .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq('id', existing.id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // GET /admin/timesheets — the approval queue: every submitted timesheet
+  // in the caller's community, oldest first. Empty for anyone who isn't a
+  // Timesheet Approver, same convention as GET /admin/tasks/awaiting-review.
+  router.get('/admin/timesheets', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) return res.json({ timesheets: [] });
+    const status = ['submitted', 'approved', 'rejected', 'all'].includes(req.query.status)
+      ? req.query.status : 'submitted';
+    let q = supabase.from('tax_timesheets')
+      .select(`
+        id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note,
+        employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
+      `)
+      .eq('community_id', emp.community_id)
+      .order('submitted_at', { ascending: true })
+      .limit(100);
+    if (status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return sendSupabaseError(res, error);
+    res.json({ timesheets: data || [] });
+  });
+
+  // POST /admin/timesheets/:id/review — body: { decision: 'approve'|'reject',
+  // note?: string }. Only a Timesheet Approver can decide, and never on
+  // their own timesheet — same separation-of-duties rule as task review.
+  router.post('/admin/timesheets/:id/review', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) {
+      return res.status(403).json({ error: 'approver_required', message: 'Only a Timesheet Approver can review this.' });
+    }
+    const id = trim(req.params.id, 200);
+    const decision = trim(req.body?.decision, 40);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    if (!['approve', 'reject'].includes(decision)) {
+      return res.status(400).json({ error: 'decision must be approve or reject.' });
+    }
+    if (decision === 'reject' && !note) {
+      return res.status(400).json({
+        error: 'note_required',
+        message: 'Add a note explaining why this timesheet is being sent back.',
+      });
+    }
+    const { data: cur } = await supabase.from('tax_timesheets')
+      .select('id, community_id, employee_id, status').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Timesheet not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (cur.employee_id === emp.id) {
+      return res.status(403).json({ error: 'self_approval', message: 'You cannot review your own timesheet.' });
+    }
+    if (cur.status !== 'submitted') {
+      return res.status(409).json({ error: 'This timesheet is not awaiting approval.' });
+    }
+    const now = new Date().toISOString();
+    const update = decision === 'approve'
+      ? { status: 'approved', approved_at: now, approved_by_employee_id: emp.id, rejection_note: '', updated_at: now }
+      : { status: 'rejected', rejection_note: note, approved_at: null, approved_by_employee_id: null, updated_at: now };
+    const { error } = await supabase.from('tax_timesheets').update(update).eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true, decision });
   });
 
   // POST /admin/employees/:id/send-welcome
