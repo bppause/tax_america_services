@@ -414,6 +414,19 @@ module.exports = function createTaxRouter(deps) {
     return d.toISOString().slice(0, 10);
   }
 
+  // The 7 calendar dates (Monday..Sunday, 'YYYY-MM-DD') making up the week
+  // that starts on weekStart. Used to validate a timesheet's per-day
+  // breakdown against the actual week it belongs to.
+  function weekDates(weekStart) {
+    const out = [];
+    const d = new Date(`${weekStart}T00:00:00Z`);
+    for (let i = 0; i < 7; i++) {
+      out.push(d.toISOString().slice(0, 10));
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return out;
+  }
+
   // "Staff admin" gate — narrower than requireOwnerAdmin: lets through a
   // full owner-admin (same rule requireOwnerAdmin('manage_employees')
   // uses) OR any employee flagged is_employee_site_admin, regardless of
@@ -14213,7 +14226,7 @@ ${closingHtml}
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
     const { data, error } = await supabase.from('tax_timesheets')
-      .select('id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
+      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
       .eq('employee_id', emp.id)
       .order('week_start', { ascending: false })
       .limit(26);
@@ -14222,7 +14235,7 @@ ${closingHtml}
     const hasCurrent = rows.some(r => r.week_start === currentWeek);
     if (!hasCurrent) {
       rows.unshift({
-        id: null, week_start: currentWeek, hours: 0, notes: '', status: 'draft',
+        id: null, week_start: currentWeek, hours: 0, daily_hours: {}, notes: '', status: 'draft',
         submitted_at: null, approved_at: null, rejection_note: '', updated_at: null,
       });
     }
@@ -14250,23 +14263,26 @@ ${closingHtml}
       return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
     }
     const { data: existing, error } = await supabase.from('tax_timesheets')
-      .select('id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
+      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
       .eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
     if (error) return sendSupabaseError(res, error);
     res.json({
       timesheet: existing || {
-        id: null, week_start: weekStart, hours: 0, notes: '', status: 'draft',
+        id: null, week_start: weekStart, hours: 0, daily_hours: {}, notes: '', status: 'draft',
         submitted_at: null, approved_at: null, rejection_note: '', updated_at: null,
       },
     });
   });
 
-  // PUT /employee/timesheets/:weekStart — body: { hours, notes }. Create or
-  // edit the caller's own entry for that week. Blocked once the week is
-  // submitted or approved — editing after a rejection is allowed and resets
-  // status back to draft (the rejection note stays visible until the next
-  // decision overwrites it). Staff can go back and log any past week that
-  // isn't already approved, but never a week that hasn't happened yet.
+  // PUT /employee/timesheets/:weekStart — body: { dailyHours: { 'YYYY-MM-DD':
+  // number, ... }, notes }. Create or edit the caller's own entry for that
+  // week, one day at a time — the weekly `hours` total is derived
+  // server-side as the sum, never trusted from the client. Blocked once
+  // the week is submitted or approved — editing after a rejection is
+  // allowed and resets status back to draft (the rejection note stays
+  // visible until the next decision overwrites it). Staff can go back and
+  // log any past week that isn't already approved, but never a week that
+  // hasn't happened yet.
   router.put('/employee/timesheets/:weekStart', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const weekStart = trim(req.params.weekStart, 10);
@@ -14277,9 +14293,25 @@ ${closingHtml}
     if (weekStart > currentWeek) {
       return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
     }
-    const hours = Number((req.body || {}).hours);
-    if (!Number.isFinite(hours) || hours < 0 || hours > 168) {
-      return res.status(400).json({ error: 'hours must be a number between 0 and 168.' });
+    const rawDaily = (req.body || {}).dailyHours;
+    if (!rawDaily || typeof rawDaily !== 'object') {
+      return res.status(400).json({ error: 'dailyHours is required.' });
+    }
+    const days = weekDates(weekStart);
+    const dailyHours = {};
+    let total = 0;
+    for (const day of days) {
+      const v = Number(rawDaily[day]);
+      const h = Number.isFinite(v) ? v : 0;
+      if (h < 0 || h > 24) {
+        return res.status(400).json({ error: 'Each day must be between 0 and 24 hours.' });
+      }
+      dailyHours[day] = Math.round(h * 100) / 100;
+      total += dailyHours[day];
+    }
+    total = Math.round(total * 100) / 100;
+    if (total > 168) {
+      return res.status(400).json({ error: 'Weekly hours cannot exceed 168.' });
     }
     const notes = trim((req.body || {}).notes, MAX_TEXT_LEN);
 
@@ -14300,7 +14332,8 @@ ${closingHtml}
       community_id: emp.community_id,
       employee_id: emp.id,
       week_start: weekStart,
-      hours: Math.round(hours * 100) / 100,
+      hours: total,
+      daily_hours: dailyHours,
       notes,
       status: 'draft',
       updated_at: now,
