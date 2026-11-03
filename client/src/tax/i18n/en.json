@@ -2422,6 +2422,7 @@
   "employee.timesheets.subtitle": "Log your hours Monday through Sunday and submit each week for approval.",
   "employee.timesheets.myTimesheets": "My Timesheets",
   "employee.timesheets.pendingApproval": "Pending Approval",
+  "employee.timesheets.pendingFrom": "Pending from",
   "employee.timesheets.noneAwaiting": "Nothing is waiting on your approval right now.",
   "employee.timesheets.weekOf": "Week of",
   "employee.timesheets.jumpToWeek": "Go to a different week",

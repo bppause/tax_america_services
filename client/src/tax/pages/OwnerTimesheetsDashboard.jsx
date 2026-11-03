@@ -40,6 +40,23 @@ function formatRangeLabel(rangeStart, rangeEnd, period, locale) {
   return `${start.getUTCFullYear()}`; // year
 }
 
+// Groups the approval queue by employee for the "pending from" summary
+// line — e.g. [{ name: 'Brian Pause', count: 2 }, ...], in the order
+// each employee first appears (the queue itself is already oldest-first,
+// so this reads as "who's been waiting longest" too).
+function pendingByEmployee(pending) {
+  const order = [];
+  const counts = new Map();
+  for (const ts of pending) {
+    const name = ts.employee?.name
+      || [ts.employee?.first_name, ts.employee?.last_name].filter(Boolean).join(' ')
+      || ts.employee?.email || '';
+    if (!counts.has(name)) { counts.set(name, 0); order.push(name); }
+    counts.set(name, counts.get(name) + 1);
+  }
+  return order.map(name => ({ name, count: counts.get(name) }));
+}
+
 const STATUS_STYLE = {
   draft:     { bg: 'var(--tax-bg-alt)', fg: 'var(--tax-muted)' },
   submitted: { bg: '#fef3c7', fg: '#92400e' },
@@ -263,11 +280,21 @@ export default function OwnerTimesheetsDashboard() {
         <h3>{t('employee.timesheets.pendingApproval')}</h3>
         {pending === null ? <p>{t('loading')}</p>
           : pending.length === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.noneAwaiting')}</p>
-          : <div style={{ display: 'grid', gap: 10 }}>
-              {pending.map(ts => (
-                <ApprovalRow key={ts.id} ts={ts} auth={auth} t={t} locale={locale} onChanged={refreshAll} />
-              ))}
-            </div>}
+          : <>
+              {/* At-a-glance "who" before the full cards below — each card
+                  already names its own employee, but scanning N cards to
+                  see who's waiting isn't as fast as one summary line. */}
+              <p style={{ fontSize: 13, color: 'var(--tax-muted)', marginTop: 0 }}>
+                {t('employee.timesheets.pendingFrom')}: {pendingByEmployee(pending).map(({ name, count }) => (
+                  count > 1 ? `${name} (${count})` : name
+                )).join(', ')}
+              </p>
+              <div style={{ display: 'grid', gap: 10 }}>
+                {pending.map(ts => (
+                  <ApprovalRow key={ts.id} ts={ts} auth={auth} t={t} locale={locale} onChanged={refreshAll} />
+                ))}
+              </div>
+            </>}
       </section>
 
       <section style={{ marginBottom: 28 }}>
