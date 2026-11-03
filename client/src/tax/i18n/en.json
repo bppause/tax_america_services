@@ -2420,6 +2420,7 @@
   "employee.timesheets.hoursInvalid": "Enter a number of hours between 0 and 168.",
   "employee.timesheets.dailyHoursInvalid": "Enter a number of hours between 0 and 24 for each day.",
   "employee.timesheets.weeklyHoursInvalid": "Weekly hours cannot exceed 168.",
+  "employee.timesheets.hoursRequiredToSubmit": "Enter hours greater than 0 before submitting.",
   "employee.timesheets.weekTotal": "Week total",
   "employee.timesheets.previousWeek": "Previous week",
   "employee.timesheets.nextWeek": "Next week",
