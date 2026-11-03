@@ -25,12 +25,14 @@ export default function OwnerDashboard() {
   // Timesheet alert — own outstanding weeks (current or prior, draft or
   // sent back) plus, for a Timesheet Approver, anything waiting on their
   // decision or still sitting rejected/unfixed. See TimesheetAlert below.
-  // Timesheets are required only for staff who manage customers — a
-  // website-only Site Admin (view_customers revoked) never clocks
-  // billable work, so they're exempt from the "own" line (same gate as
-  // the Timesheets nav link in EmployeeShell.jsx).
+  // Timesheets are required only for staff who manage customers and
+  // haven't been individually exempted by a Timesheet Approver — a
+  // website-only Site Admin (view_customers revoked), or anyone with
+  // timesheet_required turned off, is exempt from the "own" line (same
+  // gate as the Timesheets nav link in EmployeeShell.jsx).
   const isTimesheetApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
-  const managesCustomers = employee?.permissions?.view_customers !== false;
+  const timesheetRequired = employee?.permissions?.view_customers !== false
+    && employee?.timesheet_required !== false;
   const [timesheetCounts, setTimesheetCounts] = useState(null);
 
   const reload = () => {
@@ -48,7 +50,7 @@ export default function OwnerDashboard() {
   const reloadTimesheetCounts = () => {
     if (!employee || !community) return;
     const calls = [
-      managesCustomers
+      timesheetRequired
         ? taxApi.employeeListTimesheets(auth).catch(() => ({ timesheets: [] }))
         : Promise.resolve({ timesheets: [] }),
       isTimesheetApprover

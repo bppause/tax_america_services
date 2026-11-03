@@ -70,15 +70,18 @@ async function sendDailyTimesheetDigest(communityId, deps) {
 
   const { data: allEmployees, error: eErr } = await supabase
     .from('tax_employees')
-    .select('id, email, locale, permissions')
+    .select('id, email, locale, permissions, timesheet_required')
     .eq('community_id', communityId).eq('status', 'active')
     .not('email', 'is', null);
   if (eErr) { warn('[timesheet-digest] employees fetch error', eErr.message); return; }
   // Timesheets are required only for staff who manage customers — a
   // website-only "Site Admin" (view_customers revoked) never clocks
-  // billable work, so they're skipped here same as the in-app nav link
-  // and badge (see managesCustomers in EmployeeShell.jsx).
-  const employees = (allEmployees || []).filter(e => e.permissions?.view_customers !== false);
+  // billable work — and who haven't been individually exempted by a
+  // Timesheet Approver (timesheet_required). Either way they're skipped
+  // here same as the in-app nav link and badge (see timesheetRequired
+  // in EmployeeShell.jsx).
+  const employees = (allEmployees || [])
+    .filter(e => e.permissions?.view_customers !== false && e.timesheet_required !== false);
   if (!employees.length) { lastSentDateByCommunity.set(communityId, today); return; }
 
   const { data: sheets, error: sErr } = await supabase

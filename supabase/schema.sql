@@ -4084,3 +4084,13 @@ alter table public.tax_timesheets
 alter table public.communities
   add column if not exists tax_staff_email_timesheet_submitted_enabled boolean not null default true,
   add column if not exists tax_staff_email_timesheet_sent_back_enabled boolean not null default true;
+
+-- Per-employee override on top of the managesCustomers default (staff
+-- who manage customers are required to submit timesheets; a
+-- website-only Site Admin never is — see EmployeeShell.jsx's
+-- managesCustomers / timesheetRequired). Any Timesheet Approver — not
+-- just the seed owner — can flip this off for an individual staff
+-- member who'd otherwise be required (e.g. salaried, not billable).
+-- Default true so nothing changes for anyone until an approver acts.
+alter table public.tax_employees
+  add column if not exists timesheet_required boolean not null default true;

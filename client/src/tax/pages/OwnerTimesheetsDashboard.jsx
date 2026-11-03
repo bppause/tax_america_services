@@ -3,6 +3,7 @@ import { useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { CollapsibleSection } from './OwnerSettings';
 
 function addDays(dateStr, n) {
   const d = new Date(`${dateStr}T00:00:00Z`);
@@ -190,6 +191,48 @@ function PendingSubmissionRow({ e, auth, t }) {
   );
 }
 
+// One row in the "Timesheet Requirement" list — a checkbox any
+// Timesheet Approver can flip to exempt an individual customer-managing
+// employee from the submission requirement (e.g. salaried, not
+// billable), on top of the default (required for everyone who manages
+// customers). Unchecking doesn't delete their history — it just stops
+// counting them in reminders, badges, and Pending Submission going
+// forward.
+function RequirementRow({ e, auth, t, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const onToggle = async (required) => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminSetTimesheetRequirement(auth, e.employeeId, required);
+      onChanged(e.employeeId, required);
+    } catch (err2) { setErr(err2?.message || t('error.loadFailed')); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
+    }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: busy ? 'not-allowed' : 'pointer' }}>
+        <input type="checkbox" checked={e.timesheetRequired} disabled={busy}
+               onChange={ev => onToggle(ev.target.checked)} />
+        <span style={{ fontWeight: 600 }}>{e.name}</span>
+      </label>
+      {!e.timesheetRequired && (
+        <span style={{
+          padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+          textTransform: 'uppercase', background: 'var(--tax-bg-alt)', color: 'var(--tax-muted)',
+          border: '1px solid var(--tax-border)',
+        }}>{t('employee.timesheets.requirementExempt')}</span>
+      )}
+      {err && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{err}</span>}
+    </div>
+  );
+}
+
 // One employee's row in the period summary — click to expand the
 // individual weeks that make up the total; click a week to expand its
 // own daily breakdown. Two-level drill-down: period total -> weeks ->
@@ -332,6 +375,27 @@ export default function OwnerTimesheetsDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, isApprover, historyStatus]);
 
+  // ── Timesheet Requirement ─────────────────────────────────────────────
+  const [requirement, setRequirement] = useState(null);
+  const loadRequirement = () => {
+    if (!isApprover) return;
+    taxApi.adminTimesheetsRequirement(auth)
+      .then(d => setRequirement(d.employees || []))
+      .catch(() => setRequirement([]));
+  };
+  useEffect(() => {
+    if (!fbUser || !community || !isApprover) return;
+    loadRequirement();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community, isApprover]);
+  const onRequirementChanged = (employeeId, required) => {
+    setRequirement(prev => (prev || []).map(e => e.employeeId === employeeId ? { ...e, timesheetRequired: required } : e));
+    // A newly-exempted employee may have been the only reason they
+    // appeared in Pending Submission — refresh that list too so it
+    // doesn't keep nagging about someone no longer required to submit.
+    loadPendingSubmission();
+  };
+
   const refreshAll = () => { loadPending(); loadHistory(); loadPendingSubmission(); };
 
   if (employee && !isApprover) {
@@ -449,6 +513,18 @@ export default function OwnerTimesheetsDashboard() {
               })}
             </div>}
       </section>
+
+      <CollapsibleSection storageKey="timesheetRequirement"
+                           title={t('employee.timesheets.requirementTitle')}
+                           subtitle={t('employee.timesheets.requirementSubtitle')}>
+        {requirement === null ? <p>{t('loading')}</p>
+          : requirement.length === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.requirementEmpty')}</p>
+          : <div style={{ display: 'grid', gap: 6 }}>
+              {requirement.map(e => (
+                <RequirementRow key={e.employeeId} e={e} auth={auth} t={t} onChanged={onRequirementChanged} />
+              ))}
+            </div>}
+      </CollapsibleSection>
     </EmployeeShell>
   );
 }

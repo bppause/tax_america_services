@@ -132,11 +132,14 @@ export default function EmployeeShell({ community, active, children }) {
 
   // Timesheets are required only for staff who manage customers — a
   // website-only "Site Admin" (view_customers revoked) never clocks
-  // billable customer work, so they're exempt from the nav link, the
-  // badge below, and the daily reminder emails (see timesheet-digest.js
-  // and the Dashboard's TimesheetAlert). Being a Timesheet Approver is
-  // independent of this and still works either way.
+  // billable customer work — AND who haven't been individually exempted
+  // by a Timesheet Approver (timesheet_required, see GET/PUT
+  // /admin/timesheets/requirement). Either way exempts them from the
+  // nav link, the badge below, and the daily reminder emails (see
+  // timesheet-digest.js and the Dashboard's TimesheetAlert). Being a
+  // Timesheet Approver is independent of this and still works either way.
   const managesCustomers = perm('view_customers');
+  const timesheetRequired = managesCustomers && employee?.timesheet_required !== false;
 
   // Timesheet badge — the caller's own outstanding weeks (current week
   // not yet entered, or a past week overdue/rejected). Mirrors the
@@ -151,7 +154,7 @@ export default function EmployeeShell({ community, active, children }) {
   const [timesheetBadge, setTimesheetBadge] = useState(0);
   const [urgentTimesheet, setUrgentTimesheet] = useState(false);
   useEffect(() => {
-    if (!fbUser || !community || !managesCustomers) { setTimesheetBadge(0); setUrgentTimesheet(false); return; }
+    if (!fbUser || !community || !timesheetRequired) { setTimesheetBadge(0); setUrgentTimesheet(false); return; }
     let cancelled = false;
     const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
     const load = () => taxApi.employeeListTimesheets(auth)
@@ -167,7 +170,7 @@ export default function EmployeeShell({ community, active, children }) {
     load();
     const id = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [fbUser, community, managesCustomers]);
+  }, [fbUser, community, timesheetRequired]);
 
   // Timesheet Dashboard badge — for a Timesheet Approver, the number of
   // timesheets currently sitting in the approval queue (GET
@@ -335,10 +338,10 @@ export default function EmployeeShell({ community, active, children }) {
                     {perm('view_customers') && isAdmin && perm('manage_services') &&
                       navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                     {/* Timesheets are required only for staff who manage
-                        customers — a website-only Site Admin never
-                        clocks billable work, so they don't see this
-                        link at all (see managesCustomers above). */}
-                    {managesCustomers &&
+                        customers and haven't been individually exempted
+                        by an approver, so they don't see this link at
+                        all otherwise (see timesheetRequired above). */}
+                    {timesheetRequired &&
                       navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
                     {isTimesheetApprover &&
                       navLink('timesheets-dashboard', `${base}/timesheets-dashboard`, t('employee.nav.timesheetsDashboard'), approvalQueueBadge)}
@@ -385,10 +388,10 @@ export default function EmployeeShell({ community, active, children }) {
                     {perm('view_customers') && isAdmin && perm('manage_services') &&
                       navLink('service-catalog', `${base}/service-catalog`, t('employee.nav.services'))}
                     {/* Timesheets are required only for staff who manage
-                        customers — a website-only Site Admin never
-                        clocks billable work, so they don't see this
-                        link at all (see managesCustomers above). */}
-                    {managesCustomers &&
+                        customers and haven't been individually exempted
+                        by an approver, so they don't see this link at
+                        all otherwise (see timesheetRequired above). */}
+                    {timesheetRequired &&
                       navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
                     {isTimesheetApprover &&
                       navLink('timesheets-dashboard', `${base}/timesheets-dashboard`, t('employee.nav.timesheetsDashboard'), approvalQueueBadge)}
@@ -428,10 +431,10 @@ export default function EmployeeShell({ community, active, children }) {
             )}
 
             {/* You group — personal / non-admin tools. Timesheets
-                deliberately isn't here even as a fallback — a
-                website-only Site Admin without the Approver flag isn't
-                required to track time at all (see managesCustomers
-                above), so there's nothing to surface for them. */}
+                deliberately isn't here even as a fallback — anyone not
+                required to track time (not managing customers, or
+                individually exempted) and not a Timesheet Approver has
+                nothing to surface here (see timesheetRequired above). */}
             <NavGroup groupKey="you" label={t('employee.nav.groupYou')}>
               {navLink('profile', `${base}/profile`, t('employee.nav.profile'))}
               {navLink('help',    `${base}/help`,    t('employee.nav.help'))}
