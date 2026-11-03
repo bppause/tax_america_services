@@ -14668,11 +14668,18 @@ ${closingHtml}
     res.json({ period, rangeStart, rangeEnd, rows, totalHours });
   });
 
-  // POST /admin/timesheets/:id/review — body: { decision: 'approve'|'reject',
-  // note?: string }. Only a Timesheet Approver can decide — including on
-  // their own timesheet. Unlike task review, self-approval is allowed
-  // here (a sole owner/approver would otherwise have no one to approve
-  // their own hours).
+  // POST /admin/timesheets/:id/review — body: { decision:
+  // 'approve'|'reject'|'remove', note?: string }. Only a Timesheet
+  // Approver can decide — including on their own timesheet. Unlike task
+  // review, self-approval is allowed here (a sole owner/approver would
+  // otherwise have no one to approve their own hours).
+  //
+  // 'remove' is a stronger version of 'reject': same send-back
+  // notification, but it also wipes the entered hours/notes back to
+  // blank instead of leaving them for the employee to edit, so the week
+  // starts over from scratch. Scoped to 'submitted' only, same as
+  // 'reject' — the status guard below already blocks acting on an
+  // 'approved' week, so there's no path to wiping one after the fact.
   router.post('/admin/timesheets/:id/review', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) {
@@ -14681,13 +14688,15 @@ ${closingHtml}
     const id = trim(req.params.id, 200);
     const decision = trim(req.body?.decision, 40);
     const note = trim(req.body?.note, MAX_TEXT_LEN);
-    if (!['approve', 'reject'].includes(decision)) {
-      return res.status(400).json({ error: 'decision must be approve or reject.' });
+    if (!['approve', 'reject', 'remove'].includes(decision)) {
+      return res.status(400).json({ error: 'decision must be approve, reject, or remove.' });
     }
-    if (decision === 'reject' && !note) {
+    if ((decision === 'reject' || decision === 'remove') && !note) {
       return res.status(400).json({
         error: 'note_required',
-        message: 'Add a note explaining why this timesheet is being sent back.',
+        message: decision === 'remove'
+          ? 'Add a note explaining why this timesheet is being removed.'
+          : 'Add a note explaining why this timesheet is being sent back.',
       });
     }
     const { data: cur } = await supabase.from('tax_timesheets')
@@ -14700,10 +14709,12 @@ ${closingHtml}
     const now = new Date().toISOString();
     const update = decision === 'approve'
       ? { status: 'approved', approved_at: now, approved_by_employee_id: emp.id, rejection_note: '', updated_at: now }
+      : decision === 'remove'
+      ? { status: 'rejected', rejection_note: note, hours: 0, daily_hours: {}, notes: '', approved_at: null, approved_by_employee_id: null, updated_at: now }
       : { status: 'rejected', rejection_note: note, approved_at: null, approved_by_employee_id: null, updated_at: now };
     const { error } = await supabase.from('tax_timesheets').update(update).eq('id', id);
     if (error) return sendSupabaseError(res, error);
-    if (decision === 'reject') {
+    if (decision === 'reject' || decision === 'remove') {
       await notifyEmployeeTimesheetSentBack({ timesheetId: id, note, actor: emp });
     }
     res.json({ ok: true, decision });
