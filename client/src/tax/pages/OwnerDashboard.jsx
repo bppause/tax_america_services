@@ -22,6 +22,11 @@ export default function OwnerDashboard() {
   // specifically delegated to them (GET /admin/tasks/awaiting-review
   // applies that scoping server-side).
   const [awaitingReview, setAwaitingReview] = useState([]);
+  // Timesheet alert — own outstanding weeks (current or prior, draft or
+  // sent back) plus, for a Timesheet Approver, anything waiting on their
+  // decision or still sitting rejected/unfixed. See TimesheetAlert below.
+  const isTimesheetApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
+  const [timesheetCounts, setTimesheetCounts] = useState(null);
 
   const reload = () => {
     if (!employee || !community) return;
@@ -35,12 +40,32 @@ export default function OwnerDashboard() {
       .then(d => setAwaitingReview(d.tasks || []))
       .catch(() => {});
   };
+  const reloadTimesheetCounts = () => {
+    if (!employee || !community) return;
+    const calls = [
+      taxApi.employeeListTimesheets(auth).catch(() => ({ timesheets: [] })),
+      isTimesheetApprover
+        ? taxApi.adminListTimesheets(auth, 'submitted').catch(() => ({ timesheets: [] }))
+        : Promise.resolve({ timesheets: [] }),
+      isTimesheetApprover
+        ? taxApi.adminListTimesheets(auth, 'rejected', { limit: 100 }).catch(() => ({ timesheets: [] }))
+        : Promise.resolve({ timesheets: [] }),
+    ];
+    Promise.all(calls).then(([mine, pending, rejected]) => {
+      setTimesheetCounts({
+        own: (mine.timesheets || []).filter(ts => ts.status === 'draft' || ts.status === 'rejected').length,
+        pendingApproval: (pending.timesheets || []).length,
+        unfixedRejections: (rejected.timesheets || []).length,
+      });
+    }).catch(() => {});
+  };
 
   useEffect(() => {
     // Gate on `employee` (set after both Firebase link AND impersonation
     // resolve) instead of `fbUser`, which stays null during impersonation.
     reload();
     reloadAwaitingReview();
+    reloadTimesheetCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [employee, community]);
 
@@ -110,6 +135,7 @@ export default function OwnerDashboard() {
           : 'minmax(0, 1fr)',
       }}>
         <div style={{ display: 'grid', gap: 16, minWidth: 0 }}>
+          <TimesheetAlert counts={timesheetCounts} base={base} t={t} />
           <UrgentTasks tasks={data.urgentTasks || []}
                        base={base} community={community} onDeleted={reload} locale={locale} t={t} />
           {awaitingReview.length > 0 && (
@@ -345,6 +371,54 @@ function UrgentTasks({ tasks, base, community, onDeleted, locale, t }) {
           })}
         </ul>
       )}
+    </section>
+  );
+}
+
+// Timesheet pending-action banner — the whole point is that "you need to
+// submit" or "you need to approve" shouldn't only be visible to someone
+// who happens to open the Timesheets page. Three independent lines, each
+// shown only when its count is nonzero: the viewer's own outstanding
+// weeks (current or prior, draft or sent back), and — for a Timesheet
+// Approver — timesheets awaiting their decision and ones they've
+// rejected that are still sitting unfixed (status stays 'rejected'
+// until the employee edits and resaves it). Renders nothing at all when
+// every count is zero or the counts haven't loaded yet.
+function TimesheetAlert({ counts, base, t }) {
+  if (!counts) return null;
+  const { own, pendingApproval, unfixedRejections } = counts;
+  if (!own && !pendingApproval && !unfixedRejections) return null;
+  return (
+    <section style={{ border: '1px solid #fde68a', borderRadius: 10,
+                       background: '#fffbeb', overflow: 'hidden' }}>
+      <header style={{ padding: '12px 14px', borderBottom: (pendingApproval || unfixedRejections) ? '1px solid #fde68a' : 0 }}>
+        <strong style={{ fontSize: 14, color: '#92400e' }}>
+          {t('owner.dashboard.timesheetAlert.heading')}
+        </strong>
+      </header>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {own > 0 && (
+          <li style={{ borderTop: '1px solid #fde68a' }}>
+            <a href={`${base}/timesheets`} style={{ display: 'block', padding: '10px 14px', textDecoration: 'none', color: 'inherit' }}>
+              {t('owner.dashboard.timesheetAlert.own', { count: own })}
+            </a>
+          </li>
+        )}
+        {pendingApproval > 0 && (
+          <li style={{ borderTop: '1px solid #fde68a' }}>
+            <a href={`${base}/timesheets-dashboard`} style={{ display: 'block', padding: '10px 14px', textDecoration: 'none', color: 'inherit' }}>
+              {t('owner.dashboard.timesheetAlert.pendingApproval', { count: pendingApproval })}
+            </a>
+          </li>
+        )}
+        {unfixedRejections > 0 && (
+          <li style={{ borderTop: '1px solid #fde68a' }}>
+            <a href={`${base}/timesheets-dashboard`} style={{ display: 'block', padding: '10px 14px', textDecoration: 'none', color: 'inherit' }}>
+              {t('owner.dashboard.timesheetAlert.unfixedRejections', { count: unfixedRejections })}
+            </a>
+          </li>
+        )}
+      </ul>
     </section>
   );
 }
