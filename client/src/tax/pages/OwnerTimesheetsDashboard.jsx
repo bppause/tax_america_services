@@ -220,6 +220,24 @@ export default function OwnerTimesheetsDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, isApprover]);
 
+  // ── Pending submission ──────────────────────────────────────────────
+  // Team-wide compliance, not just what's already in the approval queue
+  // above — which staff haven't even submitted yet. Only covers staff
+  // who manage customers (same scope as the nav badge/reminder emails);
+  // a website-only Site Admin never shows up here.
+  const [pendingSubmission, setPendingSubmission] = useState(null);
+  const loadPendingSubmission = () => {
+    if (!isApprover) return;
+    taxApi.adminTimesheetsPendingSubmission(auth)
+      .then(d => setPendingSubmission(d.employees || []))
+      .catch(() => setPendingSubmission([]));
+  };
+  useEffect(() => {
+    if (!fbUser || !community || !isApprover) return;
+    loadPendingSubmission();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community, isApprover]);
+
   // ── Period summary ──────────────────────────────────────────────────
   const [period, setPeriod] = useState('month');
   const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
@@ -263,7 +281,7 @@ export default function OwnerTimesheetsDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, isApprover, historyStatus]);
 
-  const refreshAll = () => { loadPending(); loadHistory(); };
+  const refreshAll = () => { loadPending(); loadHistory(); loadPendingSubmission(); };
 
   if (employee && !isApprover) {
     return <EmployeeShell community={community}>
@@ -295,6 +313,34 @@ export default function OwnerTimesheetsDashboard() {
                 ))}
               </div>
             </>}
+      </section>
+
+      <section style={{ marginBottom: 28 }}>
+        <h3>{t('employee.timesheets.pendingSubmission')}</h3>
+        {pendingSubmission === null ? <p>{t('loading')}</p>
+          : pendingSubmission.length === 0
+            ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionEmpty')}</p>
+            : <div style={{ display: 'grid', gap: 6 }}>
+                {pendingSubmission.map(e => (
+                  <div key={e.employeeId} style={{
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                    padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
+                  }}>
+                    <span style={{ fontWeight: 600 }}>{e.name}</span>
+                    {e.overduePrev && (
+                      <span style={{
+                        padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
+                      }}>
+                        {e.prevRejected ? t('employee.timesheets.status.rejected') : t('employee.timesheets.notice.overdue')}
+                      </span>
+                    )}
+                    {e.needsCurrent && (
+                      <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>
+                    )}
+                  </div>
+                ))}
+              </div>}
       </section>
 
       <section style={{ marginBottom: 28 }}>

@@ -604,6 +604,9 @@ export const taxApi = {
     const s = qs.toString();
     return request('GET', `/admin/timesheets/summary${s ? `?${s}` : ''}`, undefined, auth);
   },
+  adminTimesheetsPendingSubmission(auth) {
+    return request('GET', '/admin/timesheets/pending-submission', undefined, auth);
+  },
 
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
