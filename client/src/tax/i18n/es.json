@@ -369,6 +369,7 @@
   "employee.role.scope.none": "Sin acceso a clientes — solo administra el sitio público",
   "employee.role.scope.assigned": "Solo sus clientes asignados",
   "employee.greeting": "Bienvenido/a, {name}",
+  "employee.urgentTimesheetHint": "Tienes una hoja de horas vencida o devuelta — haz clic para abrirla",
   "employee.nav.inbox": "Bandeja",
   "employee.nav.tasks": "Tareas",
   "employee.nav.dashboard": "Hoy",
