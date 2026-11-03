@@ -58,9 +58,11 @@ function StatusBadge({ status, t }) {
 }
 
 // One row in the approval queue — approve/reject with a required note on
-// reject, mirroring the task review queue's UX. Never shown for the
-// approver's own timesheet — the server blocks self-approval too.
-function ApprovalRow({ ts, auth, t, onChanged }) {
+// reject, mirroring the task review queue's UX. Shows the day-by-day
+// breakdown (not just the weekly total) so the approver can see exactly
+// what's being approved. An approver may act on their own timesheet
+// here too.
+function ApprovalRow({ ts, auth, t, locale, onChanged }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -88,6 +90,16 @@ function ApprovalRow({ ts, auth, t, onChanged }) {
         <span style={{ color: 'var(--tax-muted)', fontSize: 13 }}>
           {t('employee.timesheets.weekOf')} {ts.week_start} &mdash; {ts.hours} {t('employee.timesheets.hoursAbbrev')}
         </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 6 }}>
+        {Object.keys(ts.daily_hours || {}).length === 0
+          ? <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('employee.timesheets.noDailyBreakdown')}</span>
+          : Array.from({ length: 7 }, (_, i) => addDays(ts.week_start, i)).map(d => (
+              <div key={d} style={{ fontSize: 12 }}>
+                <div style={{ color: 'var(--tax-muted)' }}>{formatDayLabel(d, locale)}</div>
+                <div style={{ fontWeight: 600 }}>{(ts.daily_hours?.[d] || 0)} {t('employee.timesheets.hoursAbbrev')}</div>
+              </div>
+            ))}
       </div>
       {ts.notes && <div style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{ts.notes}</div>}
       <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={4000}
@@ -247,7 +259,7 @@ export default function OwnerTimesheetsDashboard() {
           : pending.length === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.noneAwaiting')}</p>
           : <div style={{ display: 'grid', gap: 10 }}>
               {pending.map(ts => (
-                <ApprovalRow key={ts.id} ts={ts} auth={auth} t={t} onChanged={refreshAll} />
+                <ApprovalRow key={ts.id} ts={ts} auth={auth} t={t} locale={locale} onChanged={refreshAll} />
               ))}
             </div>}
       </section>
