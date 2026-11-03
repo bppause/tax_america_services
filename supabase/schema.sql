@@ -4052,6 +4052,7 @@ create table if not exists public.tax_timesheets (
   employee_id text not null references public.tax_employees(id) on delete cascade,
   week_start date not null,
   hours numeric(6,2) not null default 0,
+  daily_hours jsonb not null default '{}'::jsonb,
   notes text not null default '',
   status text not null default 'draft'
     check (status in ('draft','submitted','approved','rejected')),
@@ -4068,3 +4069,8 @@ create index if not exists idx_tax_timesheets_community_status
 create index if not exists idx_tax_timesheets_employee
   on public.tax_timesheets(employee_id, week_start desc);
 alter table public.tax_timesheets disable row level security;
+-- Re-run-safe for databases that already created tax_timesheets before
+-- daily_hours existed (the create table above only adds it on a fresh
+-- install).
+alter table public.tax_timesheets
+  add column if not exists daily_hours jsonb not null default '{}'::jsonb;
