@@ -2427,6 +2427,7 @@
   "employee.timesheets.previousWeek": "Previous week",
   "employee.timesheets.nextWeek": "Next week",
   "employee.timesheets.noFutureWeeks": "You cannot log time for a future week",
+  "employee.timesheets.noFuturePeriods": "There's no data for a future period yet",
   "employee.timesheets.history": "Other weeks",
   "employee.timesheets.view": "View",
   "employee.timesheets.notice.overdue": "Overdue — this week ended without being submitted",

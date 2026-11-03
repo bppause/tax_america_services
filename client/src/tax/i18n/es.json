@@ -2426,6 +2426,7 @@
   "employee.timesheets.previousWeek": "Semana anterior",
   "employee.timesheets.nextWeek": "Semana siguiente",
   "employee.timesheets.noFutureWeeks": "No puedes registrar horas para una semana futura",
+  "employee.timesheets.noFuturePeriods": "Aún no hay datos para un período futuro",
   "employee.timesheets.history": "Otras semanas",
   "employee.timesheets.view": "Ver",
   "employee.timesheets.notice.overdue": "Vencida — esta semana terminó sin enviarse",
