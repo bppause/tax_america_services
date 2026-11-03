@@ -94,6 +94,8 @@ module.exports = function createTaxRouter(deps) {
     sendTaxTaskStatusChangedEmail,
     sendTaxTaskPendingReviewEmail,
     sendTaxTaskReviewDecisionEmail,
+    sendTaxTimesheetSubmittedEmail,
+    sendTaxTimesheetSentBackEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
@@ -4301,6 +4303,8 @@ ${closingHtml}
     task_assigned:     'tax_staff_email_task_assigned_enabled',
     task_status_changed: 'tax_staff_email_task_status_changed_enabled',
     task_pending_review: 'tax_staff_email_task_pending_review_enabled',
+    timesheet_submitted: 'tax_staff_email_timesheet_submitted_enabled',
+    timesheet_sent_back: 'tax_staff_email_timesheet_sent_back_enabled',
     message:           'tax_staff_email_message_enabled',
     signature_signed:  'tax_staff_email_signature_signed_enabled',
     staff_welcome:     'tax_staff_email_welcome_enabled',
@@ -4570,6 +4574,7 @@ ${closingHtml}
         tax_staff_emails_master_enabled,
         tax_staff_email_lead_enabled, tax_staff_email_lead_assigned_enabled, tax_staff_email_task_assigned_enabled,
         tax_staff_email_task_status_changed_enabled, tax_staff_email_task_pending_review_enabled,
+        tax_staff_email_timesheet_submitted_enabled, tax_staff_email_timesheet_sent_back_enabled,
         tax_staff_email_message_enabled, tax_staff_email_signature_signed_enabled,
         tax_staff_email_welcome_enabled, tax_staff_email_digest_enabled,
         tax_lead_default_assignee_id,
@@ -12713,6 +12718,7 @@ ${closingHtml}
       is_seed_owner: !!e.is_seed_owner,
       is_employee_site_admin: !!e.is_employee_site_admin,
       is_task_reviewer: !!e.is_task_reviewer,
+      is_timesheet_approver: !!e.is_timesheet_approver,
       notificationChannels: Array.isArray(e.notification_channels) ? e.notification_channels : ['in_app'],
       notificationPrefs: (e.notification_prefs && typeof e.notification_prefs === 'object') ? e.notification_prefs : {},
       // Effective permissions map. Only revoked keys are stored
@@ -12782,6 +12788,26 @@ ${closingHtml}
       // unassigned-in-spirit until someone happens to check the bell
       // defeats the whole point of assigning it, so this defaults to
       // both channels.
+      default_channels: ['in_app', 'email'],
+    },
+    {
+      key: 'timesheet_submitted',
+      label_i18n: { en: 'Timesheet submitted for approval', es: 'Hoja de horas enviada para aprobación' },
+      description_i18n: {
+        en: 'Timesheet Approver only. When a timesheet is submitted or resubmitted and needs your approval.',
+        es: 'Solo Aprobador de Horas. Cuando se envía o reenvía una hoja de horas y necesita su aprobación.',
+      },
+      // Same reasoning as task_pending_review/lead_assigned — a
+      // timesheet sits stuck until an approver acts.
+      default_channels: ['in_app', 'email'],
+    },
+    {
+      key: 'timesheet_sent_back',
+      label_i18n: { en: 'Your timesheet was sent back', es: 'Tu hoja de horas fue devuelta' },
+      description_i18n: {
+        en: 'When a timesheet you submitted is sent back and needs correction before it can be resubmitted.',
+        es: 'Cuando una hoja de horas que enviaste es devuelta y necesita corrección antes de poder reenviarse.',
+      },
       default_channels: ['in_app', 'email'],
     },
   ];
@@ -13047,7 +13073,7 @@ ${closingHtml}
     } catch (_e) {}
 
     const { data: refreshed } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
       .eq('id', emp.id).maybeSingle();
     res.json({ ok: true, employee: pickEmployee(refreshed) });
   });
@@ -13580,7 +13606,7 @@ ${closingHtml}
     if (!(await requireStaffManager(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -14045,7 +14071,7 @@ ${closingHtml}
     } catch (_e) {}
 
     const { data: refreshed } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
       .eq('id', empId).maybeSingle();
     res.json({ ok: true, employee: pickEmployee(refreshed) });
   });
@@ -14256,6 +14282,110 @@ ${closingHtml}
   // lifecycle: draft -> submitted -> approved|rejected, with a rejection
   // moving back to draft on the next edit).
 
+  // Notify every Timesheet Approver in a community the moment a
+  // timesheet is submitted (or resubmitted after a rejection) — mirrors
+  // notifyOwnersTaskPendingReview above. Fires from POST
+  // /employee/timesheets/:weekStart/submit. Unlike that task-review
+  // notifier, the actor isn't excluded from the recipient list: an
+  // approver may approve their own timesheet (see POST
+  // /admin/timesheets/:id/review), so they still need to be told their
+  // own submission is sitting in the queue.
+  async function notifyApproversTimesheetSubmitted({ timesheetId, actor }) {
+    try {
+      const { data: ts } = await supabase.from('tax_timesheets')
+        .select(`
+          id, community_id, employee_id, week_start, hours, status,
+          employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
+        `).eq('id', timesheetId).maybeSingle();
+      if (!ts) return;
+      const { data: approvers } = await supabase.from('tax_employees')
+        .select('id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs')
+        .eq('community_id', ts.community_id)
+        .or('is_timesheet_approver.eq.true,is_seed_owner.eq.true')
+        .neq('status', 'archived');
+      if (!approvers || !approvers.length) return;
+      const { data: community } = await supabase.from('communities')
+        .select('id, name').eq('id', ts.community_id).maybeSingle();
+      for (const approver of approvers) {
+        const channels = getEmployeeChannels(approver, 'timesheet_submitted');
+        if (channels.includes('in_app')) {
+          await supabase.from('tax_employee_notifications').insert({
+            id: 'tenot_' + uuidv4().slice(0, 12),
+            community_id: ts.community_id,
+            employee_id: approver.id,
+            type: 'timesheet_submitted',
+            title_i18n: {
+              es: `Hoja de horas enviada: ${displayNameOf(ts.employee) || ts.employee?.email || ''}`,
+              en: `Timesheet submitted: ${displayNameOf(ts.employee) || ts.employee?.email || ''}`,
+            },
+            body_i18n: {
+              es: `Semana del ${ts.week_start} — ${ts.hours} hrs. Esperando tu aprobación.`,
+              en: `Week of ${ts.week_start} — ${ts.hours} hrs. Awaiting your approval.`,
+            },
+            payload: { timesheetId },
+          });
+        }
+        if (channels.includes('email')
+            && approver.email
+            && typeof sendTaxTimesheetSubmittedEmail === 'function'
+            && await communityStaffEmailFlag(ts.community_id, 'tax_staff_email_timesheet_submitted_enabled')) {
+          await sendTaxTimesheetSubmittedEmail({
+            community: community || { id: ts.community_id, name: '' },
+            timesheet: ts, employee: ts.employee, approver,
+          });
+        }
+      }
+    } catch (e) {
+      warn('[tax-timesheet] approver notify failed', e?.message || e);
+    }
+  }
+
+  // Notify the employee the moment their submitted timesheet is sent
+  // back — mirrors notifyTaskReviewDecision above, but reject-only
+  // (approval isn't part of this ask). Fires from POST
+  // /admin/timesheets/:id/review.
+  async function notifyEmployeeTimesheetSentBack({ timesheetId, note, actor }) {
+    try {
+      const { data: ts } = await supabase.from('tax_timesheets')
+        .select(`
+          id, community_id, employee_id, week_start, hours,
+          employee:tax_employees!tax_timesheets_employee_id_fkey ( id, email, name, first_name, last_name, locale, status, notification_channels, notification_prefs )
+        `).eq('id', timesheetId).maybeSingle();
+      if (!ts || !ts.employee || ts.employee.status === 'archived') return;
+      const { data: community } = await supabase.from('communities')
+        .select('id, name').eq('id', ts.community_id).maybeSingle();
+      const channels = getEmployeeChannels(ts.employee, 'timesheet_sent_back');
+      if (channels.includes('in_app')) {
+        await supabase.from('tax_employee_notifications').insert({
+          id: 'tenot_' + uuidv4().slice(0, 12),
+          community_id: ts.community_id,
+          employee_id: ts.employee_id,
+          type: 'timesheet_sent_back',
+          title_i18n: {
+            es: `Hoja de horas devuelta: semana del ${ts.week_start}`,
+            en: `Timesheet sent back: week of ${ts.week_start}`,
+          },
+          body_i18n: {
+            es: note ? `Necesita corrección. Nota: ${note}` : 'Necesita corrección.',
+            en: note ? `Needs correction. Note: ${note}` : 'Needs correction.',
+          },
+          payload: { timesheetId, note: note || '' },
+        });
+      }
+      if (channels.includes('email')
+          && ts.employee.email
+          && typeof sendTaxTimesheetSentBackEmail === 'function'
+          && await communityStaffEmailFlag(ts.community_id, 'tax_staff_email_timesheet_sent_back_enabled')) {
+        await sendTaxTimesheetSentBackEmail({
+          community: community || { id: ts.community_id, name: '' },
+          timesheet: ts, employee: ts.employee, actor, note,
+        });
+      }
+    } catch (e) {
+      warn('[tax-timesheet] employee notify failed', e?.message || e);
+    }
+  }
+
   // GET /employee/timesheets — the caller's own recent weeks, most recent
   // first. Includes the current week even if it has no row yet (synthesized
   // as an unsaved draft) so the entry form always has something to show.
@@ -14437,6 +14567,7 @@ ${closingHtml}
       .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
       .eq('id', existing.id);
     if (error) return sendSupabaseError(res, error);
+    await notifyApproversTimesheetSubmitted({ timesheetId: existing.id, actor: emp });
     res.json({ ok: true });
   });
 
@@ -14565,6 +14696,9 @@ ${closingHtml}
       : { status: 'rejected', rejection_note: note, approved_at: null, approved_by_employee_id: null, updated_at: now };
     const { error } = await supabase.from('tax_timesheets').update(update).eq('id', id);
     if (error) return sendSupabaseError(res, error);
+    if (decision === 'reject') {
+      await notifyEmployeeTimesheetSentBack({ timesheetId: id, note, actor: emp });
+    }
     res.json({ ok: true, decision });
   });
 

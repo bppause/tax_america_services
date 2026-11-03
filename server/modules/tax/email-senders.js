@@ -2283,6 +2283,171 @@ module.exports = function createTaxSenders(deps) {
     return result;
   };
 
+  // Notification to a Timesheet Approver the moment a timesheet is
+  // submitted or resubmitted — mirrors sendTaxTaskPendingReviewEmail
+  // above. Fired once per approver per submission; self-approval is
+  // allowed so an approver IS notified about their own submission too.
+  // See notifyApproversTimesheetSubmitted in routes.js.
+  const sendTaxTimesheetSubmittedEmail = async ({ community, timesheet, employee, approver }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(approver?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Approver has no email.' };
+
+    const lang = (approver && approver.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const dashboardUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/timesheets-dashboard`;
+    const approverFirst = firstNameOf(approver) || '';
+    const employeeLabel = displayNameOf(employee) || employee?.email || '';
+
+    const subjectDefault = lang === 'en'
+      ? `Timesheet submitted for approval: ${employeeLabel}`
+      : `Hoja de horas enviada para aprobación: ${employeeLabel}`;
+    const greeting = lang === 'en'
+      ? (approverFirst ? `Hi ${approverFirst},` : 'Hi,')
+      : (approverFirst ? `Hola ${approverFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? `${employeeLabel} submitted a timesheet for your approval on ${community.name}.`
+      : `${employeeLabel} envió una hoja de horas para tu aprobación en ${community.name}.`;
+    const cta = lang === 'en' ? 'Review this timesheet →' : 'Revisar esta hoja de horas →';
+    const weekLabel = lang === 'en' ? 'Week of' : 'Semana del';
+    const hoursLabel = lang === 'en' ? 'Hours' : 'Horas';
+
+    const textLines = [
+      greeting, '', intro, '',
+      `${weekLabel} ${timesheet.week_start}`,
+      `${hoursLabel}: ${timesheet.hours}`,
+      '', `${cta} ${dashboardUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#fffbeb;padding:14px 16px;border-radius:8px;margin:14px 0;border:1px solid #fde68a">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(employeeLabel)}</div>
+          <div style="margin-top:4px;color:#555"><strong>${escapeHtml(weekLabel)}:</strong> ${escapeHtml(timesheet.week_start)}</div>
+          <div style="margin-top:4px;color:#555"><strong>${escapeHtml(hoursLabel)}:</strong> ${escapeHtml(String(timesheet.hours))}</div>
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(dashboardUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      approver_name: displayNameOf(approver) || approver.email || '',
+      approver_first_name: approverFirst,
+      employee_name: employeeLabel,
+      week_start: timesheet.week_start,
+      hours: String(timesheet.hours),
+      dashboard_url: dashboardUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'timesheet_submitted', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    const result = await sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: '',
+          eventType: 'timesheet_submitted', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.timesheet', relatedId: timesheet?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
+  };
+
+  // Notification to an employee the moment their submitted timesheet is
+  // sent back for correction. See notifyEmployeeTimesheetSentBack in
+  // routes.js.
+  const sendTaxTimesheetSentBackEmail = async ({ community, timesheet, employee, actor, note }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(employee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Employee has no email.' };
+
+    const lang = (employee && employee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const timesheetsUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/timesheets`;
+    const actorLabel = (actor && (actor.name || displayNameOf(actor) || actor.email)) || '';
+    const employeeFirst = firstNameOf(employee) || '';
+
+    const subjectDefault = lang === 'en'
+      ? `Timesheet sent back: week of ${timesheet.week_start}`
+      : `Hoja de horas devuelta: semana del ${timesheet.week_start}`;
+    const greeting = lang === 'en'
+      ? (employeeFirst ? `Hi ${employeeFirst},` : 'Hi,')
+      : (employeeFirst ? `Hola ${employeeFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? `${actorLabel || 'Your approver'} reviewed your timesheet on ${community.name} and sent it back — it needs correction before it can be resubmitted.`
+      : `${actorLabel || 'Tu aprobador'} revisó tu hoja de horas en ${community.name} y la devolvió — necesita corrección antes de poder reenviarse.`;
+    const cta = lang === 'en' ? 'Open this timesheet →' : 'Abrir esta hoja de horas →';
+    const weekLabel = lang === 'en' ? 'Week of' : 'Semana del';
+    const noteLabel = lang === 'en' ? 'Note from your approver' : 'Nota de tu aprobador';
+
+    const textLines = [
+      greeting, '', intro, '',
+      `${weekLabel} ${timesheet.week_start}`,
+      note ? `${noteLabel}: ${note}` : '',
+      '', `${cta} ${timesheetsUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#fef2f2;padding:14px 16px;border-radius:8px;margin:14px 0;border:1px solid #fecaca">
+          <div style="font-weight:700;font-size:16px;margin-bottom:6px">${escapeHtml(weekLabel)} ${escapeHtml(timesheet.week_start)}</div>
+          ${note ? `<div style="margin-top:8px;color:#333"><strong>${escapeHtml(noteLabel)}:</strong><br>${escapeHtml(note)}</div>` : ''}
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(timesheetsUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      employee_name: displayNameOf(employee) || employee.email || '',
+      employee_first_name: employeeFirst,
+      actor_name: actorLabel,
+      week_start: timesheet.week_start,
+      note: note || '',
+      timesheets_url: timesheetsUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'timesheet_sent_back', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    const result = await sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: '',
+          eventType: 'timesheet_sent_back', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.timesheet', relatedId: timesheet?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
+  };
+
   // Daily digest for owners + staff. Composed by the digest cron from
   // counts + a list of priority items the employee should act on today.
   // Skipped at the caller level when there's nothing to report (no
@@ -2645,6 +2810,8 @@ module.exports = function createTaxSenders(deps) {
     sendTaxTaskStatusChangedEmail,
     sendTaxTaskPendingReviewEmail,
     sendTaxTaskReviewDecisionEmail,
+    sendTaxTimesheetSubmittedEmail,
+    sendTaxTimesheetSentBackEmail,
     sendTaxDailyDigestEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,

@@ -169,9 +169,11 @@ function noticeFor(ts, weekStart, currentWeek, t) {
   if (status === 'rejected') return { tone: 'error', text: t('employee.timesheets.notice.rejected') };
   if (status === 'submitted') return { tone: 'warning', text: t('employee.timesheets.notice.submitted') };
   if (status === 'approved') return { tone: 'success', text: t('employee.timesheets.notice.approved') };
-  // draft
+  // draft — not yet submitted. Warning tone even for the current week
+  // (not just overdue past weeks) so "you still need to submit this"
+  // never blends in as a neutral, easy-to-skip note.
   if (weekStart < currentWeek) return { tone: 'error', text: t('employee.timesheets.notice.overdue') };
-  return { tone: 'info', text: t('employee.timesheets.notice.currentDraft') };
+  return { tone: 'warning', text: t('employee.timesheets.notice.currentDraft') };
 }
 
 // The week editor — one focused week at a time, Prev/Next navigation,

@@ -4074,3 +4074,13 @@ alter table public.tax_timesheets disable row level security;
 -- install).
 alter table public.tax_timesheets
   add column if not exists daily_hours jsonb not null default '{}'::jsonb;
+
+-- Staff email toggles for the two real-time timesheet notifications —
+-- an approver emailed the moment a timesheet is submitted/resubmitted,
+-- and an employee emailed the moment theirs is sent back. Mirrors the
+-- task_pending_review / task_status_changed staff-email columns
+-- (STAFF_EMAIL_TYPE_COLUMNS in routes.js). Default ON like those
+-- siblings, since both are time-sensitive.
+alter table public.communities
+  add column if not exists tax_staff_email_timesheet_submitted_enabled boolean not null default true,
+  add column if not exists tax_staff_email_timesheet_sent_back_enabled boolean not null default true;
