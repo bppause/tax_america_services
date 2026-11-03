@@ -79,7 +79,13 @@ function HoursSummary({ auth, t, locale }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, anchor]);
 
+  // The period containing today is as far forward as this can go — once
+  // it's on screen, "Next" would only show weeks that haven't happened.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const atOrPastCurrentPeriod = summary ? summary.rangeEnd >= todayStr : false;
+
   const shiftAnchor = (dir) => {
+    if (dir > 0 && atOrPastCurrentPeriod) return;
     const d = new Date(`${anchor}T00:00:00Z`);
     if (period === 'week') { setAnchor(addDays(anchor, dir * 7)); return; }
     if (period === 'month') { d.setUTCMonth(d.getUTCMonth() + dir, 1); setAnchor(d.toISOString().slice(0, 10)); return; }
@@ -100,7 +106,9 @@ function HoursSummary({ auth, t, locale }) {
         </div>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={() => shiftAnchor(-1)}>&larr;</button>
         <strong>{summary ? formatRangeLabel(summary.rangeStart, summary.rangeEnd, period, locale) : '…'}</strong>
-        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={() => shiftAnchor(1)}>&rarr;</button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={() => shiftAnchor(1)}
+                disabled={atOrPastCurrentPeriod}
+                title={atOrPastCurrentPeriod ? t('employee.timesheets.noFuturePeriods') : ''}>&rarr;</button>
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
                 onClick={() => setAnchor(new Date().toISOString().slice(0, 10))}>
           {t('employee.timesheets.today')}
