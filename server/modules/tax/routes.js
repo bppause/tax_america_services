@@ -14544,10 +14544,14 @@ ${closingHtml}
   });
 
   // POST /employee/timesheets/:weekStart/submit — moves a draft week to
-  // submitted so it appears in approvers' queue. Requires at least some
-  // hours entered first. Same future-week guard as the PUT above — in
-  // practice redundant with it (a future week can never acquire a row to
-  // submit), but kept explicit here too.
+  // submitted so it appears in approvers' queue. Requires either some
+  // hours entered, or — for a week genuinely not worked (PTO, holiday,
+  // not yet hired) — a note explaining why it's zero, so a blank week
+  // can be cleared out of the "overdue" nagging without the approver
+  // having to guess whether it's a real zero or just forgotten. Same
+  // future-week guard as the PUT above — in practice redundant with it
+  // (a future week can never acquire a row to submit), but kept
+  // explicit here too.
   router.post('/employee/timesheets/:weekStart/submit', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const weekStart = trim(req.params.weekStart, 10);
@@ -14556,12 +14560,15 @@ ${closingHtml}
       return res.status(400).json({ error: 'future_week', message: 'You cannot submit time for a future week.' });
     }
     const { data: existing } = await supabase.from('tax_timesheets')
-      .select('id, status, hours').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
+      .select('id, status, hours, notes').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
     if (!existing) return res.status(404).json({ error: 'Enter your hours before submitting.' });
     if (existing.status === 'submitted') return res.status(409).json({ error: 'Already submitted.' });
     if (existing.status === 'approved') return res.status(409).json({ error: 'Already approved.' });
-    if (!existing.hours || Number(existing.hours) <= 0) {
-      return res.status(400).json({ error: 'Enter hours greater than 0 before submitting.' });
+    if ((!existing.hours || Number(existing.hours) <= 0) && !trim(existing.notes, MAX_TEXT_LEN)) {
+      return res.status(400).json({
+        error: 'note_required',
+        message: 'Enter hours, or add a note explaining why this week has none (e.g. PTO, holiday), before submitting.',
+      });
     }
     const { error } = await supabase.from('tax_timesheets')
       .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })

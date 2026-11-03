@@ -2425,7 +2425,7 @@
   "employee.timesheets.hoursInvalid": "Ingresa un número de horas entre 0 y 168.",
   "employee.timesheets.dailyHoursInvalid": "Ingresa un número de horas entre 0 y 24 para cada día.",
   "employee.timesheets.weeklyHoursInvalid": "Las horas semanales no pueden superar 168.",
-  "employee.timesheets.hoursRequiredToSubmit": "Ingresa horas mayores a 0 antes de enviar.",
+  "employee.timesheets.hoursOrNoteRequired": "Ingresa horas, o agrega una nota explicando por qué esta semana no tiene horas (p. ej. vacaciones, feriado), antes de enviar.",
   "employee.timesheets.weekTotal": "Total de la semana",
   "employee.timesheets.previousWeek": "Semana anterior",
   "employee.timesheets.nextWeek": "Semana siguiente",
