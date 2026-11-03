@@ -14668,6 +14668,54 @@ ${closingHtml}
     res.json({ period, rangeStart, rangeEnd, rows, totalHours });
   });
 
+  // GET /admin/timesheets/pending-submission — team-wide submission
+  // compliance for the Timesheet Dashboard: every active,
+  // customer-managing employee (same managesCustomers scope as the nav
+  // link/badge/reminder emails — a website-only Site Admin isn't
+  // required to submit, so they're excluded) who still has the current
+  // week unsubmitted or the previous week overdue/rejected. Same
+  // current/previous-week check as timesheet-digest.js's staff reminder,
+  // just surfaced here instead of only in an email. Empty for anyone
+  // who isn't a Timesheet Approver.
+  router.get('/admin/timesheets/pending-submission', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) return res.json({ employees: [] });
+    const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
+    const prevWeek = addDaysIso(currentWeek, -7);
+
+    const { data: staff, error: sErr } = await supabase.from('tax_employees')
+      .select('id, name, first_name, last_name, email, permissions')
+      .eq('community_id', emp.community_id).eq('status', 'active');
+    if (sErr) return sendSupabaseError(res, sErr);
+    const required = (staff || []).filter(e => e.permissions?.view_customers !== false);
+    if (!required.length) return res.json({ employees: [], currentWeek, prevWeek });
+
+    const { data: sheets, error: tErr } = await supabase.from('tax_timesheets')
+      .select('employee_id, week_start, status')
+      .eq('community_id', emp.community_id)
+      .in('week_start', [currentWeek, prevWeek]);
+    if (tErr) return sendSupabaseError(res, tErr);
+    const byEmpWeek = new Map((sheets || []).map(s => [`${s.employee_id}|${s.week_start}`, s]));
+
+    const employees = [];
+    for (const e of required) {
+      const curRow = byEmpWeek.get(`${e.id}|${currentWeek}`);
+      const prevRow = byEmpWeek.get(`${e.id}|${prevWeek}`);
+      const needsCurrent = !curRow || curRow.status === 'draft';
+      const overduePrev = !prevRow || ['draft', 'rejected'].includes(prevRow.status);
+      if (!needsCurrent && !overduePrev) continue;
+      employees.push({
+        employeeId: e.id,
+        name: e.name || [e.first_name, e.last_name].filter(Boolean).join(' ') || e.email || '',
+        email: e.email || '',
+        needsCurrent,
+        overduePrev,
+        prevRejected: prevRow?.status === 'rejected',
+      });
+    }
+    res.json({ employees, currentWeek, prevWeek });
+  });
+
   // POST /admin/timesheets/:id/review — body: { decision:
   // 'approve'|'reject'|'remove', note?: string }. Only a Timesheet
   // Approver can decide — including on their own timesheet. Unlike task
