@@ -4034,8 +4034,8 @@ alter table public.tax_start_tokens disable row level security;
 -- the seeded owner or anyone the seeded owner has delegated the
 -- "Timesheet Approver" role to (is_timesheet_approver — same
 -- seed-owner-only grant pattern as is_task_reviewer; see
--- PUT /admin/employees/:id/timesheet-approver-role). No self-approval,
--- mirroring the task review queue's separation of duties.
+-- PUT /admin/employees/:id/timesheet-approver-role). An approver may
+-- approve their own timesheet (unlike the task review queue).
 --
 -- status: draft (entered, not yet submitted — or editing after a
 -- rejection resets here) → submitted (awaiting approval) → approved |

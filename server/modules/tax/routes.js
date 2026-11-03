@@ -14455,7 +14455,7 @@ ${closingHtml}
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     let q = supabase.from('tax_timesheets')
       .select(`
-        id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note,
+        id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note,
         employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
       .eq('community_id', emp.community_id)
@@ -14531,8 +14531,10 @@ ${closingHtml}
   });
 
   // POST /admin/timesheets/:id/review — body: { decision: 'approve'|'reject',
-  // note?: string }. Only a Timesheet Approver can decide, and never on
-  // their own timesheet — same separation-of-duties rule as task review.
+  // note?: string }. Only a Timesheet Approver can decide — including on
+  // their own timesheet. Unlike task review, self-approval is allowed
+  // here (a sole owner/approver would otherwise have no one to approve
+  // their own hours).
   router.post('/admin/timesheets/:id/review', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) {
@@ -14554,9 +14556,6 @@ ${closingHtml}
       .select('id, community_id, employee_id, status').eq('id', id).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Timesheet not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
-    if (cur.employee_id === emp.id) {
-      return res.status(403).json({ error: 'self_approval', message: 'You cannot review your own timesheet.' });
-    }
     if (cur.status !== 'submitted') {
       return res.status(409).json({ error: 'This timesheet is not awaiting approval.' });
     }
