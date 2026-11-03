@@ -49,6 +49,76 @@ function formatDayLabel(dateStr, locale) {
   return `${weekday} ${numeric}`;
 }
 
+function formatRangeLabel(rangeStart, rangeEnd, period, locale) {
+  const loc = locale === 'es' ? 'es-ES' : 'en-US';
+  const start = new Date(`${rangeStart}T00:00:00Z`);
+  if (period === 'week') return formatWeekRange(rangeStart, locale);
+  if (period === 'month') return start.toLocaleDateString(loc, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  if (period === 'quarter') return `Q${Math.floor(start.getUTCMonth() / 3) + 1} ${start.getUTCFullYear()}`;
+  return `${start.getUTCFullYear()}`; // year
+}
+
+const SUMMARY_PERIODS = ['week', 'month', 'quarter', 'year'];
+
+// "My Hours Summary" — a quick period total (week/month/quarter/year)
+// with Prev/Next navigation, so staff can see how many hours they've
+// logged without doing the arithmetic themselves. Scoped to the caller
+// only (GET /employee/timesheets/summary), unlike the cross-staff
+// version on the Timesheet Approver dashboard.
+function HoursSummary({ auth, t, locale }) {
+  const [period, setPeriod] = useState('month');
+  const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
+  const [summary, setSummary] = useState(null);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    setSummary(null); setErr('');
+    taxApi.employeeTimesheetsSummary(auth, period, anchor)
+      .then(setSummary)
+      .catch(e => setErr(e?.message || t('error.loadFailed')));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, anchor]);
+
+  const shiftAnchor = (dir) => {
+    const d = new Date(`${anchor}T00:00:00Z`);
+    if (period === 'week') { setAnchor(addDays(anchor, dir * 7)); return; }
+    if (period === 'month') { d.setUTCMonth(d.getUTCMonth() + dir, 1); setAnchor(d.toISOString().slice(0, 10)); return; }
+    if (period === 'quarter') { d.setUTCMonth(d.getUTCMonth() + dir * 3, 1); setAnchor(d.toISOString().slice(0, 10)); return; }
+    d.setUTCFullYear(d.getUTCFullYear() + dir, 0, 1); setAnchor(d.toISOString().slice(0, 10));
+  };
+
+  return (
+    <section style={{ marginBottom: 28 }}>
+      <h3>{t('employee.timesheets.mySummary')}</h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {SUMMARY_PERIODS.map(p => (
+            <button key={p} type="button"
+                    className={`tax-btn tax-btn--sm ${period === p ? 'tax-btn--primary' : 'tax-btn--ghost'}`}
+                    onClick={() => setPeriod(p)}>{t(`employee.timesheets.period.${p}`)}</button>
+          ))}
+        </div>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={() => shiftAnchor(-1)}>&larr;</button>
+        <strong>{summary ? formatRangeLabel(summary.rangeStart, summary.rangeEnd, period, locale) : '…'}</strong>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" onClick={() => shiftAnchor(1)}>&rarr;</button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm"
+                onClick={() => setAnchor(new Date().toISOString().slice(0, 10))}>
+          {t('employee.timesheets.today')}
+        </button>
+      </div>
+      {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      {summary && (
+        <div style={{ fontWeight: 700, fontSize: 15 }}>
+          {t('employee.timesheets.periodTotal')}: {summary.totalHours.toFixed(2)} {t('employee.timesheets.hoursAbbrev')}
+          <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--tax-muted)', marginLeft: 8 }}>
+            ({summary.weeks.length} {t('employee.timesheets.weeksWord')})
+          </span>
+        </div>
+      )}
+    </section>
+  );
+}
+
 const STATUS_STYLE = {
   draft:     { bg: 'var(--tax-bg-alt)', fg: 'var(--tax-muted)' },
   submitted: { bg: '#fef3c7', fg: '#92400e' },
@@ -242,54 +312,6 @@ function HistoryRow({ ts, locale, currentWeek, t, onView }) {
   );
 }
 
-// One row in "Pending Approval" — shown only to a Timesheet Approver
-// (is_timesheet_approver || is_seed_owner), mirroring the task review
-// queue's approve/reject UX. Never shown for the approver's own
-// timesheet — the server blocks self-approval too.
-function ApprovalRow({ ts, auth, t, onChanged }) {
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
-  const who = ts.employee?.name
-    || [ts.employee?.first_name, ts.employee?.last_name].filter(Boolean).join(' ')
-    || ts.employee?.email || '';
-
-  const decide = async (decision) => {
-    if (decision === 'reject' && !note.trim()) {
-      setErr(t('employee.timesheets.rejectNoteRequired'));
-      return;
-    }
-    setBusy(true); setErr('');
-    try {
-      await taxApi.adminReviewTimesheet(auth, ts.id, { decision, note: note.trim() });
-      onChanged();
-    } catch (e) { setErr(e?.message || t('error.loadFailed')); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <div className="tax-contact-item" style={{ padding: 14, display: 'grid', gap: 8 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6 }}>
-        <strong>{who}</strong>
-        <span style={{ color: 'var(--tax-muted)', fontSize: 13 }}>
-          {t('employee.timesheets.weekOf')} {ts.week_start} &mdash; {ts.hours} {t('employee.timesheets.hoursAbbrev')}
-        </span>
-      </div>
-      {ts.notes && <div style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{ts.notes}</div>}
-      <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={4000}
-                placeholder={t('employee.timesheets.rejectNotePlaceholder')} />
-      {err && <div className="tax-msg tax-msg--error" style={{ margin: 0 }}>{err}</div>}
-      <div style={{ display: 'flex', gap: 6 }}>
-        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm" disabled={busy}
-                onClick={() => decide('approve')}>{t('employee.timesheets.approve')}</button>
-        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
-                style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
-                onClick={() => decide('reject')}>{t('employee.timesheets.reject')}</button>
-      </div>
-    </div>
-  );
-}
-
 export default function EmployeeTimesheets() {
   const { t, locale } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
@@ -299,7 +321,6 @@ export default function EmployeeTimesheets() {
   const [mine, setMine] = useState(null);
   const [currentWeek, setCurrentWeek] = useState('');
   const [focusedWeek, setFocusedWeek] = useState('');
-  const [pending, setPending] = useState(null);
   const [err, setErr] = useState('');
 
   const load = () => {
@@ -310,17 +331,12 @@ export default function EmployeeTimesheets() {
         setFocusedWeek(prev => prev || d.currentWeek || '');
       })
       .catch(e => setErr(e?.message || t('error.loadFailed')));
-    if (isApprover) {
-      taxApi.adminListTimesheets(auth, 'submitted')
-        .then(d => setPending(d.timesheets || []))
-        .catch(() => setPending([]));
-    }
   };
   useEffect(() => {
     if (!fbUser || !community) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fbUser, community, isApprover]);
+  }, [fbUser, community]);
 
   // Fetches one week (synthesizing a blank draft if it's never been
   // touched) and merges it into `mine` — used both to load a week the
@@ -366,17 +382,15 @@ export default function EmployeeTimesheets() {
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
 
       {isApprover && (
-        <section style={{ marginBottom: 28 }}>
-          <h3>{t('employee.timesheets.pendingApproval')}</h3>
-          {pending === null ? <p>{t('loading')}</p>
-            : pending.length === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.noneAwaiting')}</p>
-            : <div style={{ display: 'grid', gap: 10 }}>
-                {pending.map(ts => (
-                  <ApprovalRow key={ts.id} ts={ts} auth={auth} t={t} onChanged={load} />
-                ))}
-              </div>}
-        </section>
+        <p style={{ margin: '0 0 20px' }}>
+          <a href={`${community ? `/tax/${community.id}/employee/timesheets-dashboard` : '#'}`}
+             className="tax-btn tax-btn--ghost tax-btn--sm">
+            {t('employee.timesheets.goToDashboard')}
+          </a>
+        </p>
       )}
+
+      <HoursSummary auth={auth} t={t} locale={locale} />
 
       <section>
         <h3>{t('employee.timesheets.myTimesheets')}</h3>

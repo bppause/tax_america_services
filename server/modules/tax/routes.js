@@ -427,6 +427,43 @@ module.exports = function createTaxRouter(deps) {
     return out;
   }
 
+  function addDaysIso(dateStr, n) {
+    const d = new Date(`${dateStr}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  // Calendar range (inclusive 'YYYY-MM-DD' start/end) for the bucket
+  // containing anchorDateStr, used by the timesheet summary dashboard
+  // (GET /admin/timesheets/summary) to roll weekly rows up into
+  // week/month/quarter/year totals. A week is attributed to the period
+  // containing its Monday — simple, and never splits one week's hours
+  // across two periods.
+  function periodRange(period, anchorDateStr) {
+    const d = new Date(`${anchorDateStr}T00:00:00Z`);
+    if (period === 'week') {
+      const start = mondayOf(anchorDateStr);
+      return { rangeStart: start, rangeEnd: addDaysIso(start, 6) };
+    }
+    if (period === 'quarter') {
+      const y = d.getUTCFullYear();
+      const q = Math.floor(d.getUTCMonth() / 3);
+      const start = new Date(Date.UTC(y, q * 3, 1));
+      const end = new Date(Date.UTC(y, q * 3 + 3, 0));
+      return { rangeStart: start.toISOString().slice(0, 10), rangeEnd: end.toISOString().slice(0, 10) };
+    }
+    if (period === 'year') {
+      const y = d.getUTCFullYear();
+      return { rangeStart: `${y}-01-01`, rangeEnd: `${y}-12-31` };
+    }
+    // month (default)
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth();
+    const start = new Date(Date.UTC(y, m, 1));
+    const end = new Date(Date.UTC(y, m + 1, 0));
+    return { rangeStart: start.toISOString().slice(0, 10), rangeEnd: end.toISOString().slice(0, 10) };
+  }
+
   // "Staff admin" gate — narrower than requireOwnerAdmin: lets through a
   // full owner-admin (same rule requireOwnerAdmin('manage_employees')
   // uses) OR any employee flagged is_employee_site_admin, regardless of
@@ -14246,6 +14283,38 @@ ${closingHtml}
     });
   });
 
+  // GET /employee/timesheets/summary?period=week|month|quarter|year&date=
+  // YYYY-MM-DD — the caller's own hours total for the period containing
+  // `date` (default today), with each contributing week attached for
+  // drill-down. Mirrors GET /admin/timesheets/summary but scoped to one
+  // employee (the caller) and open to every employee, not gated on
+  // being a Timesheet Approver. Registered before the /:weekStart route
+  // below so "summary" is never swallowed as a weekStart value.
+  router.get('/employee/timesheets/summary', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period)
+      ? req.query.period : 'month';
+    const anchor = trim(req.query.date, 10) || new Date().toISOString().slice(0, 10);
+    if (Number.isNaN(new Date(`${anchor}T00:00:00Z`).getTime())) {
+      return res.status(400).json({ error: 'Invalid date.' });
+    }
+    const { rangeStart, rangeEnd } = periodRange(period, anchor);
+    const { data, error } = await supabase.from('tax_timesheets')
+      .select('id, week_start, hours, daily_hours, status, submitted_at, approved_at, rejection_note')
+      .eq('employee_id', emp.id)
+      .gte('week_start', rangeStart)
+      .lte('week_start', rangeEnd)
+      .order('week_start', { ascending: true });
+    if (error) return sendSupabaseError(res, error);
+    const weeks = (data || []).map(r => ({
+      weekStart: r.week_start, hours: Number(r.hours) || 0, status: r.status,
+      dailyHours: r.daily_hours || {}, submittedAt: r.submitted_at, approvedAt: r.approved_at,
+      rejectionNote: r.rejection_note || '',
+    }));
+    const totalHours = Math.round(weeks.reduce((s, w) => s + w.hours, 0) * 100) / 100;
+    res.json({ period, rangeStart, rangeEnd, totalHours, weeks });
+  });
+
   // GET /employee/timesheets/:weekStart — a single week, for navigating
   // back to a week that's never had an entry (so it doesn't show up in the
   // recent-weeks list above) without creating a row just to look at it.
@@ -14371,26 +14440,94 @@ ${closingHtml}
     res.json({ ok: true });
   });
 
-  // GET /admin/timesheets — the approval queue: every submitted timesheet
-  // in the caller's community, oldest first. Empty for anyone who isn't a
+  // GET /admin/timesheets — status=submitted (default) is the approval
+  // queue: oldest first, so the longest-waiting timesheet surfaces first.
+  // Any other status (or 'all') is a history view instead: most recent
+  // week first. Optional employeeId narrows to one person — the
+  // dashboard's drill-down uses this. Empty for anyone who isn't a
   // Timesheet Approver, same convention as GET /admin/tasks/awaiting-review.
   router.get('/admin/timesheets', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) return res.json({ timesheets: [] });
     const status = ['submitted', 'approved', 'rejected', 'all'].includes(req.query.status)
       ? req.query.status : 'submitted';
+    const employeeId = trim(req.query.employeeId, 200);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     let q = supabase.from('tax_timesheets')
       .select(`
         id, week_start, hours, notes, status, submitted_at, approved_at, rejection_note,
         employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
       .eq('community_id', emp.community_id)
-      .order('submitted_at', { ascending: true })
-      .limit(100);
+      .limit(limit);
     if (status !== 'all') q = q.eq('status', status);
+    if (employeeId) q = q.eq('employee_id', employeeId);
+    q = status === 'submitted'
+      ? q.order('submitted_at', { ascending: true })
+      : q.order('week_start', { ascending: false });
     const { data, error } = await q;
     if (error) return sendSupabaseError(res, error);
     res.json({ timesheets: data || [] });
+  });
+
+  // GET /admin/timesheets/summary?period=week|month|quarter|year&date=
+  // YYYY-MM-DD — the dashboard rollup: total hours per employee for the
+  // period containing `date` (default today), with each contributing
+  // week (and that week's daily breakdown) attached for drill-down.
+  // Counts every week whose Monday falls in the period, approved or not
+  // — this is a hours-worked view, not an approval-status view (use GET
+  // /admin/timesheets for that). Empty for anyone who isn't a Timesheet
+  // Approver.
+  router.get('/admin/timesheets/summary', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) return res.json({ rows: [], totalHours: 0 });
+    const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period)
+      ? req.query.period : 'month';
+    const anchor = trim(req.query.date, 10) || new Date().toISOString().slice(0, 10);
+    if (Number.isNaN(new Date(`${anchor}T00:00:00Z`).getTime())) {
+      return res.status(400).json({ error: 'Invalid date.' });
+    }
+    const { rangeStart, rangeEnd } = periodRange(period, anchor);
+
+    const { data, error } = await supabase.from('tax_timesheets')
+      .select(`
+        id, week_start, hours, daily_hours, status, submitted_at, approved_at, rejection_note, employee_id,
+        employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
+      `)
+      .eq('community_id', emp.community_id)
+      .gte('week_start', rangeStart)
+      .lte('week_start', rangeEnd)
+      .order('week_start', { ascending: true });
+    if (error) return sendSupabaseError(res, error);
+
+    const byEmployee = new Map();
+    for (const row of data || []) {
+      const e = row.employee;
+      if (!e) continue;
+      if (!byEmployee.has(row.employee_id)) {
+        byEmployee.set(row.employee_id, {
+          employeeId: row.employee_id,
+          name: e.name || [e.first_name, e.last_name].filter(Boolean).join(' ') || e.email || '',
+          email: e.email || '',
+          totalHours: 0,
+          weeks: [],
+        });
+      }
+      const bucket = byEmployee.get(row.employee_id);
+      const hours = Number(row.hours) || 0;
+      bucket.totalHours += hours;
+      bucket.weeks.push({
+        weekStart: row.week_start, hours, status: row.status,
+        dailyHours: row.daily_hours || {}, submittedAt: row.submitted_at,
+        approvedAt: row.approved_at, rejectionNote: row.rejection_note || '',
+      });
+    }
+    const rows = Array.from(byEmployee.values())
+      .map(r => ({ ...r, totalHours: Math.round(r.totalHours * 100) / 100 }))
+      .sort((a, b) => b.totalHours - a.totalHours);
+    const totalHours = Math.round(rows.reduce((s, r) => s + r.totalHours, 0) * 100) / 100;
+
+    res.json({ period, rangeStart, rangeEnd, rows, totalHours });
   });
 
   // POST /admin/timesheets/:id/review — body: { decision: 'approve'|'reject',

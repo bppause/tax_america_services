@@ -579,10 +579,31 @@ export const taxApi = {
   // supabase/schema.sql's tax_timesheets comment and routes.js.
   employeeListTimesheets(auth)                { return request('GET',  '/employee/timesheets', undefined, auth); },
   employeeGetTimesheetWeek(auth, weekStart)   { return request('GET',  `/employee/timesheets/${encodeURIComponent(weekStart)}`, undefined, auth); },
+  employeeTimesheetsSummary(auth, period, date) {
+    const qs = new URLSearchParams();
+    if (period) qs.set('period', period);
+    if (date) qs.set('date', date);
+    const s = qs.toString();
+    return request('GET', `/employee/timesheets/summary${s ? `?${s}` : ''}`, undefined, auth);
+  },
   employeeSaveTimesheet(auth, weekStart, payload) { return request('PUT', `/employee/timesheets/${encodeURIComponent(weekStart)}`, payload, auth); },
   employeeSubmitTimesheet(auth, weekStart)     { return request('POST', `/employee/timesheets/${encodeURIComponent(weekStart)}/submit`, {}, auth); },
-  adminListTimesheets(auth, status)            { return request('GET',  `/admin/timesheets${status ? `?status=${encodeURIComponent(status)}` : ''}`, undefined, auth); },
+  adminListTimesheets(auth, status, opts = {}) {
+    const qs = new URLSearchParams();
+    if (status) qs.set('status', status);
+    if (opts.employeeId) qs.set('employeeId', opts.employeeId);
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    const s = qs.toString();
+    return request('GET', `/admin/timesheets${s ? `?${s}` : ''}`, undefined, auth);
+  },
   adminReviewTimesheet(auth, id, payload)      { return request('POST', `/admin/timesheets/${encodeURIComponent(id)}/review`, payload, auth); },
+  adminTimesheetsSummary(auth, period, date) {
+    const qs = new URLSearchParams();
+    if (period) qs.set('period', period);
+    if (date) qs.set('date', date);
+    const s = qs.toString();
+    return request('GET', `/admin/timesheets/summary${s ? `?${s}` : ''}`, undefined, auth);
+  },
 
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
