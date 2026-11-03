@@ -203,6 +203,13 @@ export default function EmployeeShell({ community, active, children }) {
       window.location.href = `/tax/${community.id}/employee/inbox`;
     } else if (n.payload?.customerId && community) {
       window.location.href = `/tax/${community.id}/employee/customers/${encodeURIComponent(n.payload.customerId)}`;
+    } else if (n.payload?.timesheetId && community) {
+      // "submitted" notifications go to the approver — land on the
+      // dashboard's queue. "sent back" notifications go to the employee
+      // who owns the timesheet — land on their own Timesheets page.
+      window.location.href = n.type === 'timesheet_submitted'
+        ? `/tax/${community.id}/employee/timesheets-dashboard`
+        : `/tax/${community.id}/employee/timesheets`;
     } else {
       setNotifOpen(false);
     }
