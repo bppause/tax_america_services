@@ -16,7 +16,7 @@ const NAV_ICON = {
   'service-catalog': '🏷️', articles: '📰', faqs: '❓', staff: '🧑‍💼',
   'email-templates': '✉️', settings: '⚙️', audit: '🗂️', news: '📣',
   testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔', inbox: '📨',
-  timesheets: '🕒',
+  timesheets: '🕒', 'timesheets-dashboard': '📊',
 };
 
 // A plain "Staff" badge told everyone with an employee login the same
@@ -130,28 +130,39 @@ export default function EmployeeShell({ community, active, children }) {
     return () => { cancelled = true; clearInterval(id); };
   }, [fbUser, community, isReviewer]);
 
-  // Timesheet badge — counts the caller's own outstanding weeks (current
-  // week not yet entered, or last week overdue) plus, for an approver,
-  // the number of timesheets sitting in the approval queue. Mirrors the
-  // Reviewer badge above; polled the same way. Matches the server-side
-  // isTimesheetApprover gate on GET /admin/timesheets.
+  // Timesheet badge — the caller's own outstanding weeks (current week
+  // not yet entered, or a past week overdue/rejected). Mirrors the
+  // Reviewer badge above; polled the same way.
   const isTimesheetApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
   const [timesheetBadge, setTimesheetBadge] = useState(0);
   useEffect(() => {
     if (!fbUser || !community) { setTimesheetBadge(0); return; }
     let cancelled = false;
     const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
-    const load = () => {
-      const calls = [taxApi.employeeListTimesheets(auth).catch(() => ({ timesheets: [] }))];
-      if (isTimesheetApprover) calls.push(taxApi.adminListTimesheets(auth, 'submitted').catch(() => ({ timesheets: [] })));
-      Promise.all(calls).then(([mine, pending]) => {
+    const load = () => taxApi.employeeListTimesheets(auth)
+      .then(d => {
         if (cancelled) return;
-        const outstanding = (mine.timesheets || [])
+        const outstanding = (d.timesheets || [])
           .filter(ts => ts.status === 'draft' || ts.status === 'rejected').length;
-        const awaitingApproval = pending ? (pending.timesheets || []).length : 0;
-        setTimesheetBadge(outstanding + awaitingApproval);
+        setTimesheetBadge(outstanding);
       }).catch(() => {});
-    };
+    load();
+    const id = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [fbUser, community]);
+
+  // Timesheet Dashboard badge — for a Timesheet Approver, the number of
+  // timesheets currently sitting in the approval queue (GET
+  // /admin/timesheets?status=submitted). Separate from the badge above
+  // since it's a different page (the team dashboard, not "my timesheet").
+  const [approvalQueueBadge, setApprovalQueueBadge] = useState(0);
+  useEffect(() => {
+    if (!fbUser || !community || !isTimesheetApprover) { setApprovalQueueBadge(0); return; }
+    let cancelled = false;
+    const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
+    const load = () => taxApi.adminListTimesheets(auth, 'submitted')
+      .then(d => { if (!cancelled) setApprovalQueueBadge((d.timesheets || []).length); })
+      .catch(() => {});
     load();
     const id = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(id); };
@@ -304,6 +315,8 @@ export default function EmployeeShell({ community, active, children }) {
                         approving submitted timesheets isn't customer
                         data access. */}
                     {navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
+                    {isTimesheetApprover &&
+                      navLink('timesheets-dashboard', `${base}/timesheets-dashboard`, t('employee.nav.timesheetsDashboard'), approvalQueueBadge)}
                   </NavGroup>
                 )}
                 {isAdmin && (
@@ -352,6 +365,8 @@ export default function EmployeeShell({ community, active, children }) {
                         approving submitted timesheets isn't customer
                         data access. */}
                     {navLink('timesheets', `${base}/timesheets`, t('employee.nav.timesheets'), timesheetBadge)}
+                    {isTimesheetApprover &&
+                      navLink('timesheets-dashboard', `${base}/timesheets-dashboard`, t('employee.nav.timesheetsDashboard'), approvalQueueBadge)}
                   </NavGroup>
                 )}
 
