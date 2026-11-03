@@ -2448,6 +2448,97 @@ module.exports = function createTaxSenders(deps) {
     return result;
   };
 
+  // Manual, on-demand reminder a Timesheet Approver sends to one
+  // employee about their pending timesheet(s) — current week
+  // unsubmitted (or sent back), previous week overdue, or previous week
+  // sent back and not yet corrected. `items` is a list of { weekStart,
+  // kind: 'current'|'overdue'|'rejected' }. See POST
+  // /admin/timesheets/remind/:employeeId in routes.js. Always sends —
+  // no staff-email toggle gate and no once-per-day cap, since it's an
+  // explicit manual action, not an automatic digest.
+  const sendTaxTimesheetReminderEmail = async ({ community, employee, actor, items }) => {
+    if (!emailConfigured) return { sent: false, skipped: true, reason: 'Email not configured.' };
+    const to = String(employee?.email || '').trim();
+    if (!to) return { sent: false, skipped: true, reason: 'Employee has no email.' };
+
+    const lang = (employee && employee.locale === 'en') ? 'en' : 'es';
+    const langTag = lang === 'en' ? 'en' : 'es-CO';
+    const timesheetsUrl = `${appBase()}/tax/${encodeURIComponent(community.id)}/employee/timesheets`;
+    const actorLabel = (actor && (actor.name || displayNameOf(actor) || actor.email)) || '';
+    const employeeFirst = firstNameOf(employee) || '';
+    const weekLabel = lang === 'en' ? 'Week of' : 'Semana del';
+
+    const itemLabel = (it) => {
+      if (it.kind === 'rejected') {
+        return lang === 'en'
+          ? `${weekLabel} ${it.weekStart} — sent back, needs correction`
+          : `${weekLabel} ${it.weekStart} — devuelta, necesita corrección`;
+      }
+      if (it.kind === 'overdue') {
+        return lang === 'en' ? `${weekLabel} ${it.weekStart} — overdue` : `${weekLabel} ${it.weekStart} — vencida`;
+      }
+      return lang === 'en' ? `${weekLabel} ${it.weekStart} — not yet submitted` : `${weekLabel} ${it.weekStart} — aún no enviada`;
+    };
+
+    const subjectDefault = lang === 'en' ? 'Reminder: timesheet pending' : 'Recordatorio: hoja de horas pendiente';
+    const greeting = lang === 'en'
+      ? (employeeFirst ? `Hi ${employeeFirst},` : 'Hi,')
+      : (employeeFirst ? `Hola ${employeeFirst},` : 'Hola,');
+    const intro = lang === 'en'
+      ? `${actorLabel || 'Your approver'} is reminding you that you have a timesheet pending on ${community.name}.`
+      : `${actorLabel || 'Tu aprobador'} te recuerda que tienes una hoja de horas pendiente en ${community.name}.`;
+    const cta = lang === 'en' ? 'Open your timesheets →' : 'Abrir tus hojas de horas →';
+
+    const textLines = [
+      greeting, '', intro, '',
+      ...items.map(itemLabel),
+      '', `${cta} ${timesheetsUrl}`,
+    ].filter(Boolean);
+    const text = textLines.join('\n');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px">
+        <p>${escapeHtml(greeting)}</p>
+        <p>${escapeHtml(intro)}</p>
+        <div style="background:#fffbeb;padding:14px 16px;border-radius:8px;margin:14px 0;border:1px solid #fde68a">
+          ${items.map(it => `<div style="margin-top:4px;color:#555">${escapeHtml(itemLabel(it))}</div>`).join('')}
+        </div>
+        <p style="margin:20px 0">
+          <a href="${escapeHtml(timesheetsUrl)}"
+             style="display:inline-block;padding:10px 18px;border-radius:8px;background:#1d3a6d;color:#fff;text-decoration:none;font-weight:600">
+            ${escapeHtml(cta)}
+          </a>
+        </p>
+      </div>
+    `;
+
+    const vars = {
+      practice_name: community.name,
+      employee_name: displayNameOf(employee) || employee.email || '',
+      employee_first_name: employeeFirst,
+      actor_name: actorLabel,
+      timesheets_url: timesheetsUrl,
+    };
+    const finalCopy = await applyOverride({
+      communityId: community.id, key: 'timesheet_reminder', lang, vars,
+      defaults: { subject: subjectDefault, text, html },
+    });
+    const result = await sendSpanishEmail({
+      to, subject: finalCopy.subject, text: finalCopy.text, html: finalCopy.html, lang: langTag,
+    });
+    if (result && result.sent && typeof logTaxEmailDelivery === 'function') {
+      try {
+        await logTaxEmailDelivery({
+          resendId: result.id || '', outboundMessageId: result.messageId || '',
+          communityId: community.id || '', customerId: '',
+          eventType: 'timesheet_reminder', recipients: [to], subject: finalCopy.subject,
+          relatedEntity: 'tax.employee', relatedId: employee?.id || '',
+        });
+      } catch (_e) { /* logging must never break a send */ }
+    }
+    return result;
+  };
+
   // Daily digest for owners + staff. Composed by the digest cron from
   // counts + a list of priority items the employee should act on today.
   // Skipped at the caller level when there's nothing to report (no
@@ -2812,6 +2903,7 @@ module.exports = function createTaxSenders(deps) {
     sendTaxTaskReviewDecisionEmail,
     sendTaxTimesheetSubmittedEmail,
     sendTaxTimesheetSentBackEmail,
+    sendTaxTimesheetReminderEmail,
     sendTaxDailyDigestEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,

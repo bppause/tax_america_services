@@ -96,6 +96,7 @@ module.exports = function createTaxRouter(deps) {
     sendTaxTaskReviewDecisionEmail,
     sendTaxTimesheetSubmittedEmail,
     sendTaxTimesheetSentBackEmail,
+    sendTaxTimesheetReminderEmail,
     sendTaxReminderEmail,
     sendTaxDocumentEmail,
     sendTaxMessageEmail,
@@ -14701,7 +14702,10 @@ ${closingHtml}
     for (const e of required) {
       const curRow = byEmpWeek.get(`${e.id}|${currentWeek}`);
       const prevRow = byEmpWeek.get(`${e.id}|${prevWeek}`);
-      const needsCurrent = !curRow || curRow.status === 'draft';
+      // A rejected current week still needs re-submission just like an
+      // overdue past one — not just the plain "never touched" draft
+      // case — so both statuses count toward needsCurrent.
+      const needsCurrent = !curRow || curRow.status === 'draft' || curRow.status === 'rejected';
       const overduePrev = !prevRow || ['draft', 'rejected'].includes(prevRow.status);
       if (!needsCurrent && !overduePrev) continue;
       employees.push({
@@ -14710,10 +14714,71 @@ ${closingHtml}
         email: e.email || '',
         needsCurrent,
         overduePrev,
+        currentRejected: curRow?.status === 'rejected',
         prevRejected: prevRow?.status === 'rejected',
       });
     }
     res.json({ employees, currentWeek, prevWeek });
+  });
+
+  // POST /admin/timesheets/remind/:employeeId — a Timesheet Approver's
+  // manual, on-demand reminder email to one employee about whatever is
+  // currently pending for them (current week unsubmitted, current week
+  // sent back, previous week overdue, or previous week sent back) —
+  // recomputed fresh here rather than trusting the Pending Submission
+  // list's snapshot. Unlike the automatic daily reminder, this always
+  // sends: no staff-email toggle, no once-per-day cap, since the
+  // approver explicitly asked for it.
+  router.post('/admin/timesheets/remind/:employeeId', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) {
+      return res.status(403).json({ error: 'approver_required', message: 'Only a Timesheet Approver can send reminders.' });
+    }
+    const employeeId = trim(req.params.employeeId, 200);
+    const { data: target } = await supabase.from('tax_employees')
+      .select('id, community_id, email, name, first_name, last_name, locale, status')
+      .eq('id', employeeId).maybeSingle();
+    if (!target || target.community_id !== emp.community_id) {
+      return res.status(404).json({ error: 'Employee not found.' });
+    }
+    if (!target.email) return res.status(400).json({ error: 'This employee has no email on file.' });
+
+    const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
+    const prevWeek = addDaysIso(currentWeek, -7);
+    const { data: sheets } = await supabase.from('tax_timesheets')
+      .select('week_start, status')
+      .eq('employee_id', employeeId)
+      .in('week_start', [currentWeek, prevWeek]);
+    const curRow = (sheets || []).find(s => s.week_start === currentWeek);
+    const prevRow = (sheets || []).find(s => s.week_start === prevWeek);
+
+    const items = [];
+    if (!curRow || curRow.status === 'draft') {
+      items.push({ weekStart: currentWeek, kind: 'current' });
+    } else if (curRow.status === 'rejected') {
+      items.push({ weekStart: currentWeek, kind: 'rejected' });
+    }
+    if (prevRow?.status === 'rejected') {
+      items.push({ weekStart: prevWeek, kind: 'rejected' });
+    } else if (!prevRow || prevRow.status === 'draft') {
+      items.push({ weekStart: prevWeek, kind: 'overdue' });
+    }
+    if (!items.length) {
+      return res.status(409).json({ error: 'nothing_pending', message: 'This employee has nothing pending right now.' });
+    }
+
+    const { data: community } = await supabase.from('communities')
+      .select('id, name').eq('id', emp.community_id).maybeSingle();
+    const result = typeof sendTaxTimesheetReminderEmail === 'function'
+      ? await sendTaxTimesheetReminderEmail({
+          community: community || { id: emp.community_id, name: '' },
+          employee: target, actor: emp, items,
+        })
+      : { sent: false, reason: 'not_configured' };
+    if (!result || !result.sent) {
+      return res.status(502).json({ error: 'send_failed', message: result?.reason || 'Could not send the email.' });
+    }
+    res.json({ ok: true });
   });
 
   // POST /admin/timesheets/:id/review — body: { decision:

@@ -2425,6 +2425,8 @@
   "employee.timesheets.pendingSubmission": "Pendientes de Envío",
   "employee.timesheets.pendingSubmissionEmpty": "Todos están al día — no hay hojas de horas pendientes.",
   "employee.timesheets.pendingSubmissionCurrentWeek": "semana actual aún no enviada",
+  "employee.timesheets.sendReminder": "Enviar Recordatorio",
+  "employee.timesheets.reminderSent": "Recordatorio enviado",
   "employee.timesheets.noneAwaiting": "No hay nada esperando tu aprobación en este momento.",
   "employee.timesheets.weekOf": "Semana del",
   "employee.timesheets.jumpToWeek": "Ir a otra semana",
