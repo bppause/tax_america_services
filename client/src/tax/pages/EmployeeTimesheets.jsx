@@ -228,7 +228,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
       if (!Number.isFinite(n) || n < 0 || n > 24) { setErr(t('employee.timesheets.dailyHoursInvalid')); return; }
     }
     if (total > 168) { setErr(t('employee.timesheets.weeklyHoursInvalid')); return; }
-    if (total <= 0) { setErr(t('employee.timesheets.hoursRequiredToSubmit')); return; }
+    if (total <= 0 && !notes.trim()) { setErr(t('employee.timesheets.hoursOrNoteRequired')); return; }
     setBusy(true); setErr('');
     try {
       const dailyHours = {};
@@ -291,8 +291,8 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
               <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy || !dirty}
                       onClick={save}>{t('employee.timesheets.save')}</button>
               <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                      disabled={busy || total <= 0}
-                      title={total <= 0 ? t('employee.timesheets.hoursRequiredToSubmit') : ''}
+                      disabled={busy || (total <= 0 && !notes.trim())}
+                      title={(total <= 0 && !notes.trim()) ? t('employee.timesheets.hoursOrNoteRequired') : ''}
                       onClick={submit}>{t('employee.timesheets.submit')}</button>
             </div>
           )}
