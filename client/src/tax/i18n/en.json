@@ -369,6 +369,7 @@
   "employee.role.scope.none": "No customer access — manages the public site only",
   "employee.role.scope.assigned": "Your assigned customers only",
   "employee.greeting": "Welcome, {name}",
+  "employee.urgentTimesheetHint": "You have an overdue or sent-back timesheet — click to open it",
   "employee.nav.inbox": "Inbox",
   "employee.nav.tasks": "Tasks",
   "employee.nav.dashboard": "Today",

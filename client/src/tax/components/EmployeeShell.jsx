@@ -140,19 +140,29 @@ export default function EmployeeShell({ community, active, children }) {
 
   // Timesheet badge — the caller's own outstanding weeks (current week
   // not yet entered, or a past week overdue/rejected). Mirrors the
-  // Reviewer badge above; polled the same way.
+  // Reviewer badge above; polled the same way. `urgentTimesheet` is a
+  // narrower signal off the same fetch — only a genuinely overdue past
+  // week (draft after its week ended) or a rejected one, not just the
+  // current week sitting in its ordinary in-progress state — driving a
+  // small red dot on the greeting (see the topbar below) so it's visible
+  // on every page, not only wherever the badge itself is scrolled into
+  // view.
   const isTimesheetApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
   const [timesheetBadge, setTimesheetBadge] = useState(0);
+  const [urgentTimesheet, setUrgentTimesheet] = useState(false);
   useEffect(() => {
-    if (!fbUser || !community || !managesCustomers) { setTimesheetBadge(0); return; }
+    if (!fbUser || !community || !managesCustomers) { setTimesheetBadge(0); setUrgentTimesheet(false); return; }
     let cancelled = false;
     const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
     const load = () => taxApi.employeeListTimesheets(auth)
       .then(d => {
         if (cancelled) return;
-        const outstanding = (d.timesheets || [])
-          .filter(ts => ts.status === 'draft' || ts.status === 'rejected').length;
+        const rows = d.timesheets || [];
+        const outstanding = rows.filter(ts => ts.status === 'draft' || ts.status === 'rejected').length;
         setTimesheetBadge(outstanding);
+        const currentWeek = d.currentWeek || '';
+        setUrgentTimesheet(rows.some(ts => ts.status === 'rejected'
+          || (ts.status === 'draft' && currentWeek && ts.week_start < currentWeek)));
       }).catch(() => {});
     load();
     const id = setInterval(load, 60000);
@@ -539,6 +549,17 @@ export default function EmployeeShell({ community, active, children }) {
                         "Welcome, you@x.com (you@x.com)". */}
                     {name && employee.email && (
                       <span style={{ marginLeft: 6 }}>({employee.email})</span>
+                    )}
+                    {/* Red dot — a timesheet that's genuinely overdue or was
+                        sent back, not just the current week's ordinary
+                        in-progress state. Visible on every page via this
+                        shared header, title gives the detail on hover. */}
+                    {urgentTimesheet && (
+                      <a href={`${base}/timesheets`} title={t('employee.urgentTimesheetHint')}
+                         style={{
+                           display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+                           background: '#dc2626', marginLeft: 8, verticalAlign: 'middle',
+                         }} aria-label={t('employee.urgentTimesheetHint')} />
                     )}
                   </span>
                   {info && (
