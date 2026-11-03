@@ -68,13 +68,18 @@ async function sendDailyTimesheetDigest(communityId, deps) {
   prevWeekDate.setUTCDate(prevWeekDate.getUTCDate() - 7);
   const prevWeek = prevWeekDate.toISOString().slice(0, 10);
 
-  const { data: employees, error: eErr } = await supabase
+  const { data: allEmployees, error: eErr } = await supabase
     .from('tax_employees')
-    .select('id, email, locale')
+    .select('id, email, locale, permissions')
     .eq('community_id', communityId).eq('status', 'active')
     .not('email', 'is', null);
   if (eErr) { warn('[timesheet-digest] employees fetch error', eErr.message); return; }
-  if (!employees || !employees.length) { lastSentDateByCommunity.set(communityId, today); return; }
+  // Timesheets are required only for staff who manage customers — a
+  // website-only "Site Admin" (view_customers revoked) never clocks
+  // billable work, so they're skipped here same as the in-app nav link
+  // and badge (see managesCustomers in EmployeeShell.jsx).
+  const employees = (allEmployees || []).filter(e => e.permissions?.view_customers !== false);
+  if (!employees.length) { lastSentDateByCommunity.set(communityId, today); return; }
 
   const { data: sheets, error: sErr } = await supabase
     .from('tax_timesheets')
