@@ -138,9 +138,22 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
     finally { setBusy(false); }
   };
 
+  // Submit saves whatever's currently in the boxes first, then submits —
+  // so a stray unsaved edit (or never having clicked Save at all) can't
+  // leave the button stuck disabled. "Save" stays around separately for
+  // parking a part-finished week without submitting it yet.
   const submit = async () => {
+    for (const v of values) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0 || n > 24) { setErr(t('employee.timesheets.dailyHoursInvalid')); return; }
+    }
+    if (total > 168) { setErr(t('employee.timesheets.weeklyHoursInvalid')); return; }
+    if (total <= 0) { setErr(t('employee.timesheets.hoursRequiredToSubmit')); return; }
     setBusy(true); setErr('');
     try {
+      const dailyHours = {};
+      days.forEach((d, i) => { dailyHours[d] = Number(values[i]) || 0; });
+      await taxApi.employeeSaveTimesheet(auth, weekStart, { dailyHours, notes });
       await taxApi.employeeSubmitTimesheet(auth, weekStart);
       onChanged(weekStart);
     } catch (e) { setErr(e?.message || t('error.loadFailed')); }
@@ -198,8 +211,8 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
               <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy || !dirty}
                       onClick={save}>{t('employee.timesheets.save')}</button>
               <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                      disabled={busy || dirty || !ts?.id || total <= 0}
-                      title={dirty ? t('employee.timesheets.saveBeforeSubmit') : ''}
+                      disabled={busy || total <= 0}
+                      title={total <= 0 ? t('employee.timesheets.hoursRequiredToSubmit') : ''}
                       onClick={submit}>{t('employee.timesheets.submit')}</button>
             </div>
           )}
