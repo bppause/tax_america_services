@@ -2421,6 +2421,7 @@
   "employee.timesheets.subtitle": "Registra tus horas de lunes a domingo y envía cada semana para aprobación.",
   "employee.timesheets.myTimesheets": "Mis Hojas de Horas",
   "employee.timesheets.pendingApproval": "Pendientes de Aprobación",
+  "employee.timesheets.pendingFrom": "Pendientes de",
   "employee.timesheets.noneAwaiting": "No hay nada esperando tu aprobación en este momento.",
   "employee.timesheets.weekOf": "Semana del",
   "employee.timesheets.jumpToWeek": "Ir a otra semana",
