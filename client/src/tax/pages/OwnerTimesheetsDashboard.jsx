@@ -71,8 +71,10 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
     || ts.employee?.email || '';
 
   const decide = async (decision) => {
-    if (decision === 'reject' && !note.trim()) {
-      setErr(t('employee.timesheets.rejectNoteRequired'));
+    if ((decision === 'reject' || decision === 'remove') && !note.trim()) {
+      setErr(decision === 'remove'
+        ? t('employee.timesheets.removeNoteRequired')
+        : t('employee.timesheets.rejectNoteRequired'));
       return;
     }
     setBusy(true); setErr('');
@@ -111,6 +113,10 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
                 style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
                 onClick={() => decide('reject')}>{t('employee.timesheets.reject')}</button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                title={t('employee.timesheets.removeHint')}
+                style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
+                onClick={() => decide('remove')}>{t('employee.timesheets.remove')}</button>
       </div>
     </div>
   );
