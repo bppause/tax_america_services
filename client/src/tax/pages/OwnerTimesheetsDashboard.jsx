@@ -139,6 +139,57 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
   );
 }
 
+// One row in "Pending Submission" — flags which week(s) are outstanding
+// for this employee (current unsubmitted/sent-back, previous
+// overdue/sent-back) and lets the approver fire off a one-off reminder
+// email on demand. The server recomputes what's actually pending at
+// send time rather than trusting this row's snapshot, so the button
+// stays correct even if the list is a little stale.
+function PendingSubmissionRow({ e, auth, t }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(''); // '' | 'sent' | error message
+
+  const sendReminder = async () => {
+    setBusy(true); setResult('');
+    try {
+      await taxApi.adminRemindTimesheet(auth, e.employeeId);
+      setResult('sent');
+    } catch (err) {
+      setResult(err?.message || t('error.loadFailed'));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
+    }}>
+      <span style={{ fontWeight: 600 }}>{e.name}</span>
+      {e.overduePrev && (
+        <span style={{
+          padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+          textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
+        }}>
+          {e.prevRejected ? t('employee.timesheets.status.rejected') : t('employee.timesheets.notice.overdue')}
+        </span>
+      )}
+      {e.needsCurrent && (
+        e.currentRejected
+          ? <span style={{
+              padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+              textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
+            }}>{t('employee.timesheets.status.rejected')}</span>
+          : <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>
+      )}
+      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+              style={{ marginLeft: 'auto' }}
+              onClick={sendReminder}>{t('employee.timesheets.sendReminder')}</button>
+      {result === 'sent' && <span style={{ color: '#166534', fontSize: 12 }}>{t('employee.timesheets.reminderSent')}</span>}
+      {result && result !== 'sent' && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{result}</span>}
+    </div>
+  );
+}
+
 // One employee's row in the period summary — click to expand the
 // individual weeks that make up the total; click a week to expand its
 // own daily breakdown. Two-level drill-down: period total -> weeks ->
@@ -322,23 +373,7 @@ export default function OwnerTimesheetsDashboard() {
             ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionEmpty')}</p>
             : <div style={{ display: 'grid', gap: 6 }}>
                 {pendingSubmission.map(e => (
-                  <div key={e.employeeId} style={{
-                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                    padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
-                  }}>
-                    <span style={{ fontWeight: 600 }}>{e.name}</span>
-                    {e.overduePrev && (
-                      <span style={{
-                        padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-                        textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
-                      }}>
-                        {e.prevRejected ? t('employee.timesheets.status.rejected') : t('employee.timesheets.notice.overdue')}
-                      </span>
-                    )}
-                    {e.needsCurrent && (
-                      <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>
-                    )}
-                  </div>
+                  <PendingSubmissionRow key={e.employeeId} e={e} auth={auth} t={t} />
                 ))}
               </div>}
       </section>

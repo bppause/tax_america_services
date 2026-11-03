@@ -2426,6 +2426,8 @@
   "employee.timesheets.pendingSubmission": "Pending Submission",
   "employee.timesheets.pendingSubmissionEmpty": "Everyone is caught up — no outstanding timesheets.",
   "employee.timesheets.pendingSubmissionCurrentWeek": "current week not yet submitted",
+  "employee.timesheets.sendReminder": "Send Reminder",
+  "employee.timesheets.reminderSent": "Reminder sent",
   "employee.timesheets.noneAwaiting": "Nothing is waiting on your approval right now.",
   "employee.timesheets.weekOf": "Week of",
   "employee.timesheets.jumpToWeek": "Go to a different week",
