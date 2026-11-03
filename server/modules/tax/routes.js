@@ -12639,7 +12639,7 @@ ${closingHtml}
     if (imp === false) return null;
     if (imp) {
       const { data: emp, error } = await supabase.from('tax_employees')
-        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
+        .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver, timesheet_required')
         .eq('id', imp.target_id).maybeSingle();
       if (error) { sendSupabaseError(res, error); return null; }
       if (!emp) { res.status(404).json({ error: 'Impersonation target not found.' }); return null; }
@@ -12655,7 +12655,7 @@ ${closingHtml}
       return null;
     }
     const { data: emp, error } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver, timesheet_required')
       .eq('email', email).eq('community_id', communitySlug).maybeSingle();
     if (error) { sendSupabaseError(res, error); return null; }
     if (!emp) {
@@ -12720,6 +12720,7 @@ ${closingHtml}
       is_employee_site_admin: !!e.is_employee_site_admin,
       is_task_reviewer: !!e.is_task_reviewer,
       is_timesheet_approver: !!e.is_timesheet_approver,
+      timesheet_required: e.timesheet_required !== false,
       notificationChannels: Array.isArray(e.notification_channels) ? e.notification_channels : ['in_app'],
       notificationPrefs: (e.notification_prefs && typeof e.notification_prefs === 'object') ? e.notification_prefs : {},
       // Effective permissions map. Only revoked keys are stored
@@ -13074,7 +13075,7 @@ ${closingHtml}
     } catch (_e) {}
 
     const { data: refreshed } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver, timesheet_required')
       .eq('id', emp.id).maybeSingle();
     res.json({ ok: true, employee: pickEmployee(refreshed) });
   });
@@ -13607,7 +13608,7 @@ ${closingHtml}
     if (!(await requireStaffManager(req, res))) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     let q = supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, role, status, notification_channels, permissions, show_on_homepage, photo_url, title_i18n, bio_i18n, role_i18n, highlights_i18n, education_i18n, experience_i18n, homepage_display_order, certifications, created_at, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver, timesheet_required')
       .order('created_at', { ascending: false }).limit(200);
     if (communitySlug) q = q.eq('community_id', communitySlug);
     const { data, error } = await q;
@@ -14072,7 +14073,7 @@ ${closingHtml}
     } catch (_e) {}
 
     const { data: refreshed } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver')
+      .select('id, community_id, email, name, first_name, middle_name, last_name, phone, whatsapp, address, preferred_communication_email, locale, notification_channels, notification_prefs, permissions, role, status, firebase_uid, last_sign_in_at, is_seed_owner, is_employee_site_admin, is_task_reviewer, is_timesheet_approver, timesheet_required')
       .eq('id', empId).maybeSingle();
     res.json({ ok: true, employee: pickEmployee(refreshed) });
   });
@@ -14685,10 +14686,11 @@ ${closingHtml}
     const prevWeek = addDaysIso(currentWeek, -7);
 
     const { data: staff, error: sErr } = await supabase.from('tax_employees')
-      .select('id, name, first_name, last_name, email, permissions')
+      .select('id, name, first_name, last_name, email, permissions, timesheet_required')
       .eq('community_id', emp.community_id).eq('status', 'active');
     if (sErr) return sendSupabaseError(res, sErr);
-    const required = (staff || []).filter(e => e.permissions?.view_customers !== false);
+    const required = (staff || [])
+      .filter(e => e.permissions?.view_customers !== false && e.timesheet_required !== false);
     if (!required.length) return res.json({ employees: [], currentWeek, prevWeek });
 
     const { data: sheets, error: tErr } = await supabase.from('tax_timesheets')
@@ -14779,6 +14781,63 @@ ${closingHtml}
       return res.status(502).json({ error: 'send_failed', message: result?.reason || 'Could not send the email.' });
     }
     res.json({ ok: true });
+  });
+
+  // GET /admin/timesheets/requirement — every active, customer-managing
+  // employee in the community (the ones timesheets are required for by
+  // default — see managesCustomers in EmployeeShell.jsx) with their
+  // current timesheet_required override, for the Timesheet Dashboard's
+  // requirement toggle list below. Open to any Timesheet Approver, not
+  // just the seed owner — unlike the role-grant routes
+  // (reviewer-role/timesheet-approver-role), this is a day-to-day
+  // operational toggle, not a permission grant.
+  router.get('/admin/timesheets/requirement', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) return res.json({ employees: [] });
+    const { data: staff, error } = await supabase.from('tax_employees')
+      .select('id, name, first_name, last_name, email, permissions, timesheet_required')
+      .eq('community_id', emp.community_id).eq('status', 'active')
+      .order('created_at', { ascending: true });
+    if (error) return sendSupabaseError(res, error);
+    const employees = (staff || [])
+      .filter(e => e.permissions?.view_customers !== false)
+      .map(e => ({
+        employeeId: e.id,
+        name: e.name || [e.first_name, e.last_name].filter(Boolean).join(' ') || e.email || '',
+        email: e.email || '',
+        timesheetRequired: e.timesheet_required !== false,
+      }));
+    res.json({ employees });
+  });
+
+  // PUT /admin/timesheets/requirement/:employeeId — body: { required:
+  // boolean }. Flips the per-employee override. Any Timesheet Approver
+  // can change this, same open-to-any-approver reasoning as the GET
+  // above.
+  router.put('/admin/timesheets/requirement/:employeeId', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) {
+      return res.status(403).json({ error: 'approver_required', message: 'Only a Timesheet Approver can change this.' });
+    }
+    const employeeId = trim(req.params.employeeId, 200);
+    const required = !!(req.body || {}).required;
+    const { data: existing } = await supabase.from('tax_employees')
+      .select('id, community_id, timesheet_required').eq('id', employeeId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'Employee not found.' });
+    if (existing.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    const { error } = await supabase.from('tax_employees')
+      .update({ timesheet_required: required, updated_at: new Date().toISOString() })
+      .eq('id', employeeId);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.employee', entityId: employeeId, action: 'set_timesheet_required',
+        actorEmail: emp.email || '',
+        before: { timesheetRequired: existing.timesheet_required !== false },
+        after: { timesheetRequired: required },
+      });
+    } catch (_e) {}
+    res.json({ ok: true, timesheetRequired: required });
   });
 
   // POST /admin/timesheets/:id/review — body: { decision:

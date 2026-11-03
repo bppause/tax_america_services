@@ -610,6 +610,12 @@ export const taxApi = {
   adminRemindTimesheet(auth, employeeId) {
     return request('POST', `/admin/timesheets/remind/${encodeURIComponent(employeeId)}`, {}, auth);
   },
+  adminTimesheetsRequirement(auth) {
+    return request('GET', '/admin/timesheets/requirement', undefined, auth);
+  },
+  adminSetTimesheetRequirement(auth, employeeId, required) {
+    return request('PUT', `/admin/timesheets/requirement/${encodeURIComponent(employeeId)}`, { required }, auth);
+  },
 
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
