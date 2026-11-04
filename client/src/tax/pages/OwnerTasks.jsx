@@ -3446,6 +3446,18 @@ function TasksKanban({ tasks, statuses, community, auth, employeeId, onChange, o
     if (next.has(gid)) next.delete(gid); else next.add(gid);
     return next;
   });
+
+  // Per-status-column collapse — independent of the per-group collapse
+  // above. Lets the owner shrink a lane they don't need to see right
+  // now (e.g. a big "Not started" backlog) down to a thin strip so the
+  // columns they care about get more room, without losing the count.
+  // In-memory only, same convention as the group collapse state.
+  const [collapsedCols, setCollapsedCols] = useState(() => new Set());
+  const toggleCol = (key) => setCollapsedCols(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
   let cols = statuses.length
     ? statuses.slice().sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
     : [{ id: 'fallback', key: 'not_started', label_i18n: { en: 'Not started', es: 'Sin iniciar' } }];
@@ -3641,7 +3653,7 @@ function TasksKanban({ tasks, statuses, community, auth, employeeId, onChange, o
       )}
       <div style={{
         display: 'grid', gap: 12,
-        gridTemplateColumns: `repeat(${cols.length}, minmax(220px, 1fr))`,
+        gridTemplateColumns: cols.map(col => collapsedCols.has(col.key) ? '44px' : 'minmax(220px, 1fr)').join(' '),
         overflowX: 'auto',
       }}>
       {cols.map(col => {
@@ -3682,6 +3694,42 @@ function TasksKanban({ tasks, statuses, community, auth, employeeId, onChange, o
         const isInProgress = col.key === 'in_progress';
         const colColor = col.color || '#9ca3af';
         const hintKey = KANBAN_STATUS_HINT_KEY[col.key];
+        const colLabel = pickI18n(col.label_i18n, locale).value || col.key;
+        const isColCollapsed = collapsedCols.has(col.key);
+
+        if (isColCollapsed) {
+          // Narrow strip — dot, count, and the label rotated vertically
+          // (same chevron convention as the per-group toggle, just
+          // horizontal) so the lane stays identifiable without eating
+          // the width the owner collapsed it to reclaim.
+          return (
+            <div key={col.id || col.key}
+                 role="button" tabIndex={0}
+                 onClick={() => toggleCol(col.key)}
+                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.key); } }}
+                 title={t('owner.tasks.kanban.colExpand', { status: colLabel })}
+                 aria-expanded={false}
+                 style={{
+                   background: 'var(--tax-bg-alt)',
+                   borderRadius: 8, cursor: 'pointer',
+                   padding: '8px 4px', minHeight: 200,
+                   borderTop: `3px solid ${colColor}`,
+                   display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                 }}>
+              <span aria-hidden="true" style={{ fontSize: 10, color: 'var(--tax-muted)' }}>▸</span>
+              <span style={{
+                width: 10, height: 10, borderRadius: 999, flexShrink: 0,
+                background: colColor,
+              }} />
+              <span style={{
+                writingMode: 'vertical-rl', transform: 'rotate(180deg)',
+                fontSize: 11, fontWeight: 700, color: 'var(--tax-muted)',
+                textTransform: 'uppercase', letterSpacing: '.04em',
+              }}>{colLabel}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--tax-muted)' }}>{items.length}</span>
+            </div>
+          );
+        }
 
         return (
           <div key={col.id || col.key}
@@ -3699,21 +3747,27 @@ function TasksKanban({ tasks, statuses, community, auth, employeeId, onChange, o
                  // uses in the List view.
                  borderTop: `${isInProgress ? 5 : 3}px solid ${colColor}`,
                }}>
-            <div style={{
-              padding: '4px 6px 2px', fontSize: 12,
-              fontWeight: isInProgress ? 800 : 700,
-              color: isInProgress ? colColor : 'var(--tax-muted)',
-              textTransform: 'uppercase', letterSpacing: '.04em',
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <div role="button" tabIndex={0}
+                 onClick={() => toggleCol(col.key)}
+                 onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleCol(col.key); } }}
+                 title={t('owner.tasks.kanban.colCollapse', { status: colLabel })}
+                 aria-expanded={true}
+                 style={{
+                   padding: '4px 6px 2px', fontSize: 12, cursor: 'pointer',
+                   fontWeight: isInProgress ? 800 : 700,
+                   color: isInProgress ? colColor : 'var(--tax-muted)',
+                   textTransform: 'uppercase', letterSpacing: '.04em',
+                   display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                <span aria-hidden="true" style={{ fontSize: 9, flexShrink: 0 }}>▾</span>
                 <span style={{
-                  width: 10, height: 10, borderRadius: 999,
+                  width: 10, height: 10, borderRadius: 999, flexShrink: 0,
                   background: colColor,
                 }} />
-                {pickI18n(col.label_i18n, locale).value || col.key}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{colLabel}</span>
               </span>
-              <span style={{ fontWeight: 500 }}>· {items.length}</span>
+              <span style={{ fontWeight: 500, flexShrink: 0 }}>· {items.length}</span>
             </div>
             {hintKey && (
               <div style={{
