@@ -28,6 +28,56 @@ const NAV_ICON = {
 // OwnerStaffDetail's RoleSwitcher) onto one label + one plain-language
 // scope line, shown wherever the signed-in employee needs to know what
 // they're looking at.
+function addDays(dateStr, n) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function formatWeekRange(weekStart, locale) {
+  const loc = locale === 'es' ? 'es-ES' : 'en-US';
+  const start = new Date(`${weekStart}T00:00:00Z`);
+  const end = new Date(`${addDays(weekStart, 6)}T00:00:00Z`);
+  const startLabel = start.toLocaleDateString(loc, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const endLabel = end.toLocaleDateString(loc, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  return `${startLabel} – ${endLabel}`;
+}
+
+// One-time popup for a genuinely overdue or sent-back timesheet — see
+// showUrgentTimesheetPopup above for when this fires. Lists each
+// problem week with its status, same copy convention as the Timesheets
+// page's own notices.
+function UrgentTimesheetPopup({ weeks, base, locale, t, onClose }) {
+  return (
+    <div className="tax-modal" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="tax-modal__panel" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
+        <button type="button" className="tax-modal__close" onClick={onClose} aria-label={t('preview.close')}>×</button>
+        <h3 className="tax-modal__title">{t('employee.urgentTimesheetPopup.title')}</h3>
+        <p style={{ color: 'var(--tax-muted)', fontSize: 13, marginTop: 0 }}>
+          {t('employee.urgentTimesheetPopup.body')}
+        </p>
+        <div style={{ display: 'grid', gap: 6, marginBottom: 16 }}>
+          {weeks.map(w => (
+            <div key={w.week_start} style={{
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+              padding: '6px 10px', borderRadius: 6, background: 'var(--tax-bg-alt)', fontSize: 13,
+            }}>
+              <span style={{
+                padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
+              }}>{t(w.status === 'rejected' ? 'employee.timesheets.status.rejected' : 'employee.timesheets.notice.overdue')}</span>
+              <span>{formatWeekRange(w.week_start, locale)}</span>
+            </div>
+          ))}
+        </div>
+        <a href={`${base}/timesheets`} className="tax-btn tax-btn--primary" onClick={onClose}>
+          {t('employee.urgentTimesheetPopup.cta')}
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function employeeRoleInfo(employee, t) {
   if (!employee) return null;
   if (employee.is_seed_owner) {
@@ -153,8 +203,12 @@ export default function EmployeeShell({ community, active, children }) {
   const isTimesheetApprover = !!employee?.is_timesheet_approver || !!employee?.is_seed_owner;
   const [timesheetBadge, setTimesheetBadge] = useState(0);
   const [urgentTimesheet, setUrgentTimesheet] = useState(false);
+  const [urgentTimesheetWeeks, setUrgentTimesheetWeeks] = useState([]);
   useEffect(() => {
-    if (!fbUser || !community || !timesheetRequired) { setTimesheetBadge(0); setUrgentTimesheet(false); return; }
+    if (!fbUser || !community || !timesheetRequired) {
+      setTimesheetBadge(0); setUrgentTimesheet(false); setUrgentTimesheetWeeks([]);
+      return;
+    }
     let cancelled = false;
     const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
     const load = () => taxApi.employeeListTimesheets(auth)
@@ -164,13 +218,32 @@ export default function EmployeeShell({ community, active, children }) {
         const outstanding = rows.filter(ts => ts.status === 'draft' || ts.status === 'rejected').length;
         setTimesheetBadge(outstanding);
         const currentWeek = d.currentWeek || '';
-        setUrgentTimesheet(rows.some(ts => ts.status === 'rejected'
-          || (ts.status === 'draft' && currentWeek && ts.week_start < currentWeek)));
+        const urgent = rows.filter(ts => ts.status === 'rejected'
+          || (ts.status === 'draft' && currentWeek && ts.week_start < currentWeek));
+        setUrgentTimesheet(urgent.length > 0);
+        setUrgentTimesheetWeeks(urgent);
       }).catch(() => {});
     load();
     const id = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(id); };
   }, [fbUser, community, timesheetRequired]);
+
+  // One-time popup the first time an overdue/sent-back timesheet shows
+  // up in a given browser session — deliberately narrower than the red
+  // dot/badge above (which stay up persistently): this fires once, not
+  // on every page load, and never for the current week's ordinary
+  // in-progress state, only a genuinely missed past week or one sent
+  // back for correction. sessionStorage (not localStorage) is exactly
+  // "once per session" — a fresh tab/window sees it again.
+  const [showUrgentTimesheetPopup, setShowUrgentTimesheetPopup] = useState(false);
+  useEffect(() => {
+    if (!urgentTimesheet) return;
+    try {
+      if (sessionStorage.getItem('tax.urgentTimesheetPopup.shown') === '1') return;
+      sessionStorage.setItem('tax.urgentTimesheetPopup.shown', '1');
+    } catch { /* ignore */ }
+    setShowUrgentTimesheetPopup(true);
+  }, [urgentTimesheet]);
 
   // Timesheet Dashboard badge — for a Timesheet Approver, the number of
   // timesheets currently sitting in the approval queue (GET
@@ -256,6 +329,10 @@ export default function EmployeeShell({ community, active, children }) {
 
   return (
     <>
+      {showUrgentTimesheetPopup && (
+        <UrgentTimesheetPopup weeks={urgentTimesheetWeeks} base={base} locale={locale} t={t}
+                               onClose={() => setShowUrgentTimesheetPopup(false)} />
+      )}
       <ImpersonationBanner impersonation={impersonation} onExit={exitImpersonation} />
       <div className="tax-shell">
         {mobileOpen && <div className="tax-shell__backdrop tax-shell__backdrop--open" onClick={closeMobile} />}
