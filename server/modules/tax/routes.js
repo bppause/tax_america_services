@@ -436,6 +436,25 @@ module.exports = function createTaxRouter(deps) {
     return d.toISOString().slice(0, 10);
   }
 
+  // Timesheets went into effect this week — nobody should ever be
+  // flagged "overdue" for a week before the feature existed. Combined
+  // per-employee with their own hire week (mondayOf(created_at)) in
+  // timesheetEffectiveWeek below, so a brand-new hire's first week on
+  // the job is never treated as a missed prior week either. See GET
+  // /admin/timesheets/pending-submission and timesheet-digest.js, which
+  // both apply the same rule.
+  const TIMESHEETS_EFFECTIVE_WEEK = '2026-11-02';
+
+  // The earliest week a given employee can be considered "overdue" for
+  // — whichever is later: the system-wide effective week above, or the
+  // Monday of the week they were added to tax_employees. A week before
+  // this never counts as missed, since they either weren't employed yet
+  // or timesheets didn't exist yet.
+  function timesheetEffectiveWeek(createdAt) {
+    const hireWeek = createdAt ? mondayOf(String(createdAt).slice(0, 10)) : null;
+    return (hireWeek && hireWeek > TIMESHEETS_EFFECTIVE_WEEK) ? hireWeek : TIMESHEETS_EFFECTIVE_WEEK;
+  }
+
   // Calendar range (inclusive 'YYYY-MM-DD' start/end) for the bucket
   // containing anchorDateStr, used by the timesheet summary dashboard
   // (GET /admin/timesheets/summary) to roll weekly rows up into
@@ -14677,8 +14696,11 @@ ${closingHtml}
   // required to submit, so they're excluded) who still has the current
   // week unsubmitted or the previous week overdue/rejected. Same
   // current/previous-week check as timesheet-digest.js's staff reminder,
-  // just surfaced here instead of only in an email. Empty for anyone
-  // who isn't a Timesheet Approver.
+  // just surfaced here instead of only in an email. The previous week is
+  // never flagged for someone whose own hire week (or the system-wide
+  // launch week — see TIMESHEETS_EFFECTIVE_WEEK/timesheetEffectiveWeek)
+  // is later than it — a week before either never counts as missed.
+  // Empty for anyone who isn't a Timesheet Approver.
   router.get('/admin/timesheets/pending-submission', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) return res.json({ employees: [] });
@@ -14686,7 +14708,7 @@ ${closingHtml}
     const prevWeek = addDaysIso(currentWeek, -7);
 
     const { data: staff, error: sErr } = await supabase.from('tax_employees')
-      .select('id, name, first_name, last_name, email, permissions, timesheet_required')
+      .select('id, name, first_name, last_name, email, permissions, timesheet_required, created_at')
       .eq('community_id', emp.community_id).eq('status', 'active');
     if (sErr) return sendSupabaseError(res, sErr);
     const required = (staff || [])
@@ -14708,7 +14730,8 @@ ${closingHtml}
       // overdue past one — not just the plain "never touched" draft
       // case — so both statuses count toward needsCurrent.
       const needsCurrent = !curRow || curRow.status === 'draft' || curRow.status === 'rejected';
-      const overduePrev = !prevRow || ['draft', 'rejected'].includes(prevRow.status);
+      const prevInEffect = prevWeek >= timesheetEffectiveWeek(e.created_at);
+      const overduePrev = prevInEffect && (!prevRow || ['draft', 'rejected'].includes(prevRow.status));
       if (!needsCurrent && !overduePrev) continue;
       employees.push({
         employeeId: e.id,
@@ -14738,7 +14761,7 @@ ${closingHtml}
     }
     const employeeId = trim(req.params.employeeId, 200);
     const { data: target } = await supabase.from('tax_employees')
-      .select('id, community_id, email, name, first_name, last_name, locale, status')
+      .select('id, community_id, email, name, first_name, last_name, locale, status, created_at')
       .eq('id', employeeId).maybeSingle();
     if (!target || target.community_id !== emp.community_id) {
       return res.status(404).json({ error: 'Employee not found.' });
@@ -14753,6 +14776,7 @@ ${closingHtml}
       .in('week_start', [currentWeek, prevWeek]);
     const curRow = (sheets || []).find(s => s.week_start === currentWeek);
     const prevRow = (sheets || []).find(s => s.week_start === prevWeek);
+    const prevInEffect = prevWeek >= timesheetEffectiveWeek(target.created_at);
 
     const items = [];
     if (!curRow || curRow.status === 'draft') {
@@ -14760,10 +14784,12 @@ ${closingHtml}
     } else if (curRow.status === 'rejected') {
       items.push({ weekStart: currentWeek, kind: 'rejected' });
     }
-    if (prevRow?.status === 'rejected') {
-      items.push({ weekStart: prevWeek, kind: 'rejected' });
-    } else if (!prevRow || prevRow.status === 'draft') {
-      items.push({ weekStart: prevWeek, kind: 'overdue' });
+    if (prevInEffect) {
+      if (prevRow?.status === 'rejected') {
+        items.push({ weekStart: prevWeek, kind: 'rejected' });
+      } else if (!prevRow || prevRow.status === 'draft') {
+        items.push({ weekStart: prevWeek, kind: 'overdue' });
+      }
     }
     if (!items.length) {
       return res.status(409).json({ error: 'nothing_pending', message: 'This employee has nothing pending right now.' });
