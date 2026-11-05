@@ -260,9 +260,15 @@ function RequirementRow({ e, auth, t, onChanged }) {
 // individual weeks that make up the total; click a week to expand its
 // own daily breakdown. Two-level drill-down: period total -> weeks ->
 // days.
-function SummaryRow({ row, locale, t }) {
+function SummaryRow({ row, locale, t, period }) {
   const [openWeeks, setOpenWeeks] = useState(false);
   const [openWeekStart, setOpenWeekStart] = useState('');
+
+  // On the Week tab there's always exactly one week in the period by
+  // definition — the count adds nothing and just repeats the period
+  // picker above. Only worth showing for Month/Quarter/Year, where an
+  // employee can genuinely have a handful of weeks' worth of data.
+  const showWeekCount = period !== 'week';
 
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, overflow: 'hidden' }}>
@@ -273,7 +279,11 @@ function SummaryRow({ row, locale, t }) {
               }}>
         <span aria-hidden="true" style={{ transition: 'transform .15s ease', transform: openWeeks ? 'none' : 'rotate(-90deg)' }}>&#9662;</span>
         <span style={{ fontWeight: 600, flex: 1 }}>{row.name}</span>
-        <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{row.weeks.length} {t('employee.timesheets.weeksWord')}</span>
+        {showWeekCount && (
+          <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+            {row.weeks.length} {t(row.weeks.length === 1 ? 'employee.timesheets.weekWord' : 'employee.timesheets.weeksWord')}
+          </span>
+        )}
         <span style={{ fontWeight: 700 }}>{row.totalHours.toFixed(2)} {t('employee.timesheets.hoursAbbrev')}</span>
       </button>
       {openWeeks && (
@@ -506,7 +516,7 @@ export default function OwnerTimesheetsDashboard() {
               </div>
               <div style={{ display: 'grid', gap: 8 }}>
                 {summary.rows.map(row => (
-                  <SummaryRow key={row.employeeId} row={row} locale={locale} t={t} />
+                  <SummaryRow key={row.employeeId} row={row} locale={locale} t={t} period={period} />
                 ))}
               </div>
             </>}
