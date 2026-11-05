@@ -146,7 +146,7 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
 // email on demand. The server recomputes what's actually pending at
 // send time rather than trusting this row's snapshot, so the button
 // stays correct even if the list is a little stale.
-function PendingSubmissionRow({ e, auth, t }) {
+function PendingSubmissionRow({ e, auth, t, locale, currentWeek, prevWeek }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(''); // '' | 'sent' | error message
 
@@ -160,27 +160,38 @@ function PendingSubmissionRow({ e, auth, t }) {
     } finally { setBusy(false); }
   };
 
+  // Each flag names its own week — a bare "SENT BACK" badge with no
+  // date next to it is useless once an employee has more than one
+  // outstanding week (see the bug report this was built to fix).
+  const flag = (badgeText, weekStart) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span style={{
+        padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+        textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
+      }}>{badgeText}</span>
+      {weekStart && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{formatWeekRange(weekStart, locale)}</span>}
+    </span>
+  );
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
       padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
     }}>
       <span style={{ fontWeight: 600 }}>{e.name}</span>
-      {e.overduePrev && (
-        <span style={{
-          padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-          textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
-        }}>
-          {e.prevRejected ? t('employee.timesheets.status.rejected') : t('employee.timesheets.notice.overdue')}
-        </span>
+      {e.overduePrev && flag(
+        e.prevRejected ? t('employee.timesheets.status.rejected') : t('employee.timesheets.notice.overdue'),
+        prevWeek
       )}
       {e.needsCurrent && (
         e.currentRejected
-          ? <span style={{
-              padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-              textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
-            }}>{t('employee.timesheets.status.rejected')}</span>
-          : <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>
+          ? flag(t('employee.timesheets.status.rejected'), currentWeek)
+          : (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--tax-muted)' }}>
+              {t('employee.timesheets.pendingSubmissionCurrentWeek')}
+              {currentWeek && <span style={{ fontSize: 12 }}>({formatWeekRange(currentWeek, locale)})</span>}
+            </span>
+          )
       )}
       <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
               style={{ marginLeft: 'auto' }}
@@ -320,10 +331,14 @@ export default function OwnerTimesheetsDashboard() {
   // who manage customers (same scope as the nav badge/reminder emails);
   // a website-only Site Admin never shows up here.
   const [pendingSubmission, setPendingSubmission] = useState(null);
+  const [pendingSubmissionWeeks, setPendingSubmissionWeeks] = useState({ currentWeek: '', prevWeek: '' });
   const loadPendingSubmission = () => {
     if (!isApprover) return;
     taxApi.adminTimesheetsPendingSubmission(auth)
-      .then(d => setPendingSubmission(d.employees || []))
+      .then(d => {
+        setPendingSubmission(d.employees || []);
+        setPendingSubmissionWeeks({ currentWeek: d.currentWeek || '', prevWeek: d.prevWeek || '' });
+      })
       .catch(() => setPendingSubmission([]));
   };
   useEffect(() => {
@@ -437,7 +452,9 @@ export default function OwnerTimesheetsDashboard() {
             ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionEmpty')}</p>
             : <div style={{ display: 'grid', gap: 6 }}>
                 {pendingSubmission.map(e => (
-                  <PendingSubmissionRow key={e.employeeId} e={e} auth={auth} t={t} />
+                  <PendingSubmissionRow key={e.employeeId} e={e} auth={auth} t={t} locale={locale}
+                                        currentWeek={pendingSubmissionWeeks.currentWeek}
+                                        prevWeek={pendingSubmissionWeeks.prevWeek} />
                 ))}
               </div>}
       </section>

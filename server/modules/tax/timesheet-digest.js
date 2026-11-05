@@ -41,6 +41,17 @@ function mondayOf(dateStr) {
   return d.toISOString().slice(0, 10);
 }
 
+// Timesheets went into effect this week — nobody is ever "overdue" for
+// a week before the feature existed. Mirrors
+// TIMESHEETS_EFFECTIVE_WEEK/timesheetEffectiveWeek in routes.js (GET
+// /admin/timesheets/pending-submission and POST
+// /admin/timesheets/remind/:employeeId use the same constant).
+const TIMESHEETS_EFFECTIVE_WEEK = '2026-11-02';
+function timesheetEffectiveWeek(createdAt) {
+  const hireWeek = createdAt ? mondayOf(String(createdAt).slice(0, 10)) : null;
+  return (hireWeek && hireWeek > TIMESHEETS_EFFECTIVE_WEEK) ? hireWeek : TIMESHEETS_EFFECTIVE_WEEK;
+}
+
 function esc(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -70,7 +81,7 @@ async function sendDailyTimesheetDigest(communityId, deps) {
 
   const { data: allEmployees, error: eErr } = await supabase
     .from('tax_employees')
-    .select('id, email, locale, permissions, timesheet_required')
+    .select('id, email, locale, permissions, timesheet_required, created_at')
     .eq('community_id', communityId).eq('status', 'active')
     .not('email', 'is', null);
   if (eErr) { warn('[timesheet-digest] employees fetch error', eErr.message); return; }
@@ -102,7 +113,8 @@ async function sendDailyTimesheetDigest(communityId, deps) {
     const curRow = byEmpWeek.get(`${emp.id}|${currentWeek}`);
     const prevRow = byEmpWeek.get(`${emp.id}|${prevWeek}`);
     const needsCurrent = !curRow || curRow.status === 'draft';
-    const overduePrev = !prevRow || ['draft', 'rejected'].includes(prevRow.status);
+    const prevInEffect = prevWeek >= timesheetEffectiveWeek(emp.created_at);
+    const overduePrev = prevInEffect && (!prevRow || ['draft', 'rejected'].includes(prevRow.status));
     if (!needsCurrent && !overduePrev) continue; // nothing outstanding — no email
 
     const lang = emp.locale === 'en' ? 'en' : (emp.locale === 'es' ? 'es' : (community.default_locale === 'en' ? 'en' : 'es'));
