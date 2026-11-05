@@ -140,13 +140,13 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
   );
 }
 
-// One row in "Pending Submission" — flags which week(s) are outstanding
-// for this employee (current unsubmitted/sent-back, previous
-// overdue/sent-back) and lets the approver fire off a one-off reminder
-// email on demand. The server recomputes what's actually pending at
-// send time rather than trusting this row's snapshot, so the button
-// stays correct even if the list is a little stale.
-function PendingSubmissionRow({ e, auth, t, locale, currentWeek, prevWeek }) {
+// One row in a Pending Submission group — the group already names the
+// week (see PendingSubmissionGroup below), so this just names the
+// person, their status for that one week, and a one-off reminder email
+// button. The server recomputes what's actually pending at send time
+// rather than trusting this row's snapshot, so the button stays correct
+// even if the list is a little stale.
+function PendingSubmissionRow({ e, auth, t, variant }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(''); // '' | 'sent' | error message
 
@@ -160,17 +160,11 @@ function PendingSubmissionRow({ e, auth, t, locale, currentWeek, prevWeek }) {
     } finally { setBusy(false); }
   };
 
-  // Each flag names its own week — a bare "SENT BACK" badge with no
-  // date next to it is useless once an employee has more than one
-  // outstanding week (see the bug report this was built to fix).
-  const flag = (badgeText, weekStart) => (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <span style={{
-        padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
-        textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
-      }}>{badgeText}</span>
-      {weekStart && <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{formatWeekRange(weekStart, locale)}</span>}
-    </span>
+  const badge = (text) => (
+    <span style={{
+      padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+      textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
+    }}>{text}</span>
   );
 
   return (
@@ -179,25 +173,43 @@ function PendingSubmissionRow({ e, auth, t, locale, currentWeek, prevWeek }) {
       padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
     }}>
       <span style={{ fontWeight: 600 }}>{e.name}</span>
-      {e.overduePrev && flag(
-        e.prevRejected ? t('employee.timesheets.status.rejected') : t('employee.timesheets.notice.overdue'),
-        prevWeek
-      )}
-      {e.needsCurrent && (
-        e.currentRejected
-          ? flag(t('employee.timesheets.status.rejected'), currentWeek)
-          : (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--tax-muted)' }}>
-              {t('employee.timesheets.pendingSubmissionCurrentWeek')}
-              {currentWeek && <span style={{ fontSize: 12 }}>({formatWeekRange(currentWeek, locale)})</span>}
-            </span>
-          )
-      )}
+      {e.rejected
+        ? badge(t('employee.timesheets.status.rejected'))
+        : variant === 'overdue'
+          ? badge(t('employee.timesheets.notice.overdue'))
+          : <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>}
       <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
               style={{ marginLeft: 'auto' }}
               onClick={sendReminder}>{t('employee.timesheets.sendReminder')}</button>
       {result === 'sent' && <span style={{ color: '#166534', fontSize: 12 }}>{t('employee.timesheets.reminderSent')}</span>}
       {result && result !== 'sent' && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{result}</span>}
+    </div>
+  );
+}
+
+// Groups Pending Submission by week rather than by person — a slow or
+// delayed staffer can be outstanding for both the previous and current
+// week at once, and burying that in one row per person made it easy to
+// miss which week (and how many people) are actually behind. One group
+// per week, each listing just the people outstanding for that week.
+function PendingSubmissionGroup({ weekStart, locale, t, entries, auth, variant }) {
+  if (!entries.length) return null;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+        <span style={{ fontWeight: 700, fontSize: 13 }}>
+          {t(variant === 'overdue' ? 'employee.timesheets.pendingSubmissionOverdueGroup' : 'employee.timesheets.pendingSubmissionCurrentGroup')}
+        </span>
+        <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{formatWeekRange(weekStart, locale)}</span>
+        <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          &middot; {t('employee.timesheets.pendingSubmissionPeopleCount', { count: entries.length })}
+        </span>
+      </div>
+      <div style={{ display: 'grid', gap: 6 }}>
+        {entries.map(e => (
+          <PendingSubmissionRow key={e.employeeId} e={e} auth={auth} t={t} variant={variant} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -450,13 +462,18 @@ export default function OwnerTimesheetsDashboard() {
         {pendingSubmission === null ? <p>{t('loading')}</p>
           : pendingSubmission.length === 0
             ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionEmpty')}</p>
-            : <div style={{ display: 'grid', gap: 6 }}>
-                {pendingSubmission.map(e => (
-                  <PendingSubmissionRow key={e.employeeId} e={e} auth={auth} t={t} locale={locale}
-                                        currentWeek={pendingSubmissionWeeks.currentWeek}
-                                        prevWeek={pendingSubmissionWeeks.prevWeek} />
-                ))}
-              </div>}
+            : <>
+                <PendingSubmissionGroup variant="overdue" auth={auth} t={t} locale={locale}
+                                         weekStart={pendingSubmissionWeeks.prevWeek}
+                                         entries={pendingSubmission
+                                           .filter(e => e.overduePrev)
+                                           .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.prevRejected }))} />
+                <PendingSubmissionGroup variant="current" auth={auth} t={t} locale={locale}
+                                         weekStart={pendingSubmissionWeeks.currentWeek}
+                                         entries={pendingSubmission
+                                           .filter(e => e.needsCurrent)
+                                           .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.currentRejected }))} />
+              </>}
       </section>
 
       <section style={{ marginBottom: 28 }}>
