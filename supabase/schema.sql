@@ -4094,3 +4094,20 @@ alter table public.communities
 -- Default true so nothing changes for anyone until an approver acts.
 alter table public.tax_employees
   add column if not exists timesheet_required boolean not null default true;
+
+-- 'skipped' status: lets a Timesheet Approver mark one employee's one
+-- week as not needing a timesheet at all (vacation, holiday, not yet
+-- hired that week) — distinct from timesheet_required above, which
+-- exempts someone permanently going forward. A skipped week is never
+-- flagged overdue (Pending Submission, the daily digest, the
+-- EmployeeShell badge/popup all only treat 'draft'/'rejected' rows as
+-- outstanding). Only ever applied to a week with nothing real entered
+-- (see POST /admin/timesheets/skip in routes.js), so undoing it (POST
+-- /admin/timesheets/:id/unskip) can simply delete the row.
+alter table public.tax_timesheets drop constraint if exists tax_timesheets_status_check;
+alter table public.tax_timesheets add constraint tax_timesheets_status_check
+  check (status in ('draft','submitted','approved','rejected','skipped'));
+alter table public.tax_timesheets
+  add column if not exists skip_note text not null default '',
+  add column if not exists skipped_by_employee_id text references public.tax_employees(id) on delete set null,
+  add column if not exists skipped_at timestamptz;

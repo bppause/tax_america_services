@@ -63,6 +63,7 @@ const STATUS_STYLE = {
   submitted: { bg: '#fef3c7', fg: '#92400e' },
   approved:  { bg: '#dcfce7', fg: '#166534' },
   rejected:  { bg: '#fee2e2', fg: '#991b1b' },
+  skipped:   { bg: '#e0f2fe', fg: '#075985' },
 };
 
 function StatusBadge({ status, t }) {
@@ -142,13 +143,20 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
 
 // One row in a Pending Submission group — the group already names the
 // week (see PendingSubmissionGroup below), so this just names the
-// person, their status for that one week, and a one-off reminder email
-// button. The server recomputes what's actually pending at send time
-// rather than trusting this row's snapshot, so the button stays correct
-// even if the list is a little stale.
-function PendingSubmissionRow({ e, auth, t, variant }) {
+// person, their status for that one week, and the two actions an
+// approver can take on it: fire off a one-off reminder email, or — only
+// when there's nothing real on it yet (not when it was sent back, which
+// has real data a skip shouldn't erase, see POST /admin/timesheets/skip)
+// — skip it outright for someone who genuinely doesn't need to submit
+// (vacation, holiday). The server recomputes what's actually pending at
+// send time rather than trusting this row's snapshot, so the reminder
+// button stays correct even if the list is a little stale.
+function PendingSubmissionRow({ e, weekStart, auth, t, variant, onSkipped }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(''); // '' | 'sent' | error message
+  const [skipping, setSkipping] = useState(false);
+  const [skipNote, setSkipNote] = useState('');
+  const [skipErr, setSkipErr] = useState('');
 
   const sendReminder = async () => {
     setBusy(true); setResult('');
@@ -160,12 +168,41 @@ function PendingSubmissionRow({ e, auth, t, variant }) {
     } finally { setBusy(false); }
   };
 
+  const confirmSkip = async () => {
+    setBusy(true); setSkipErr('');
+    try {
+      await taxApi.adminSkipTimesheet(auth, e.employeeId, weekStart, skipNote.trim());
+      onSkipped();
+    } catch (err) {
+      setSkipErr(err?.message || t('error.loadFailed'));
+    } finally { setBusy(false); }
+  };
+
   const badge = (text) => (
     <span style={{
       padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
       textTransform: 'uppercase', background: '#fee2e2', color: '#991b1b',
     }}>{text}</span>
   );
+
+  if (skipping) {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
+      }}>
+        <span style={{ fontWeight: 600 }}>{e.name}</span>
+        <input type="text" value={skipNote} onChange={ev => setSkipNote(ev.target.value)} maxLength={4000}
+               placeholder={t('employee.timesheets.skipNotePlaceholder')}
+               style={{ flex: '1 1 200px', minWidth: 160, fontSize: 13 }} />
+        <button type="button" className="tax-btn tax-btn--primary tax-btn--sm" disabled={busy}
+                onClick={confirmSkip}>{t('employee.timesheets.skipConfirm')}</button>
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                onClick={() => { setSkipping(false); setSkipErr(''); }}>{t('employee.timesheets.skipCancel')}</button>
+        {skipErr && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12, flexBasis: '100%' }}>{skipErr}</span>}
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -178,9 +215,15 @@ function PendingSubmissionRow({ e, auth, t, variant }) {
         : variant === 'overdue'
           ? badge(t('employee.timesheets.notice.overdue'))
           : <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>}
-      <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
-              style={{ marginLeft: 'auto' }}
-              onClick={sendReminder}>{t('employee.timesheets.sendReminder')}</button>
+      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+        {!e.rejected && (
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                  title={t('employee.timesheets.skipWeekHint')}
+                  onClick={() => setSkipping(true)}>{t('employee.timesheets.skipWeek')}</button>
+        )}
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                onClick={sendReminder}>{t('employee.timesheets.sendReminder')}</button>
+      </div>
       {result === 'sent' && <span style={{ color: '#166534', fontSize: 12 }}>{t('employee.timesheets.reminderSent')}</span>}
       {result && result !== 'sent' && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{result}</span>}
     </div>
@@ -192,7 +235,7 @@ function PendingSubmissionRow({ e, auth, t, variant }) {
 // week at once, and burying that in one row per person made it easy to
 // miss which week (and how many people) are actually behind. One group
 // per week, each listing just the people outstanding for that week.
-function PendingSubmissionGroup({ weekStart, locale, t, entries, auth, variant }) {
+function PendingSubmissionGroup({ weekStart, locale, t, entries, auth, variant, onSkipped }) {
   if (!entries.length) return null;
   return (
     <div style={{ marginBottom: 14 }}>
@@ -207,7 +250,8 @@ function PendingSubmissionGroup({ weekStart, locale, t, entries, auth, variant }
       </div>
       <div style={{ display: 'grid', gap: 6 }}>
         {entries.map(e => (
-          <PendingSubmissionRow key={e.employeeId} e={e} auth={auth} t={t} variant={variant} />
+          <PendingSubmissionRow key={e.employeeId} e={e} weekStart={weekStart} auth={auth} t={t} variant={variant}
+                                 onSkipped={onSkipped} />
         ))}
       </div>
     </div>
@@ -250,6 +294,52 @@ function RequirementRow({ e, auth, t, onChanged }) {
           textTransform: 'uppercase', background: 'var(--tax-bg-alt)', color: 'var(--tax-muted)',
           border: '1px solid var(--tax-border)',
         }}>{t('employee.timesheets.requirementExempt')}</span>
+      )}
+      {err && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{err}</span>}
+    </div>
+  );
+}
+
+// One row in Timesheet History — mostly read-only, except a skipped
+// week also gets an Undo button (deletes the skip, same restriction as
+// the Pending Submission skip action: there's nothing else on the row to
+// lose, since a week is only ever skipped while blank — see POST
+// /admin/timesheets/skip in routes.js).
+function TimesheetHistoryRow({ ts, locale, t, auth, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const who = ts.employee?.name
+    || [ts.employee?.first_name, ts.employee?.last_name].filter(Boolean).join(' ')
+    || ts.employee?.email || '';
+
+  const undoSkip = async () => {
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminUnskipTimesheet(auth, ts.id);
+      onChanged();
+    } catch (e) { setErr(e?.message || t('error.loadFailed')); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
+    }}>
+      <span style={{ fontWeight: 600, minWidth: 140 }}>{who}</span>
+      <span>{formatWeekRange(ts.week_start, locale)}</span>
+      <StatusBadge status={ts.status} t={t} />
+      <span style={{ color: 'var(--tax-muted)' }}>{ts.hours} {t('employee.timesheets.hoursAbbrev')}</span>
+      {ts.status === 'rejected' && ts.rejection_note && (
+        <span style={{ color: STATUS_STYLE.rejected.fg }}>{ts.rejection_note}</span>
+      )}
+      {ts.status === 'skipped' && ts.skip_note && (
+        <span style={{ color: STATUS_STYLE.skipped.fg }}>{ts.skip_note}</span>
+      )}
+      {ts.status === 'skipped' && (
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                style={{ marginLeft: 'auto' }}
+                onClick={undoSkip}>{t('employee.timesheets.unskip')}</button>
       )}
       {err && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{err}</span>}
     </div>
@@ -475,11 +565,13 @@ export default function OwnerTimesheetsDashboard() {
             : <>
                 <PendingSubmissionGroup variant="overdue" auth={auth} t={t} locale={locale}
                                          weekStart={pendingSubmissionWeeks.prevWeek}
+                                         onSkipped={loadPendingSubmission}
                                          entries={pendingSubmission
                                            .filter(e => e.overduePrev)
                                            .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.prevRejected }))} />
                 <PendingSubmissionGroup variant="current" auth={auth} t={t} locale={locale}
                                          weekStart={pendingSubmissionWeeks.currentWeek}
+                                         onSkipped={loadPendingSubmission}
                                          entries={pendingSubmission
                                            .filter(e => e.needsCurrent)
                                            .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.currentRejected }))} />
@@ -531,30 +623,15 @@ export default function OwnerTimesheetsDashboard() {
             <option value="submitted">{t('employee.timesheets.status.submitted')}</option>
             <option value="approved">{t('employee.timesheets.status.approved')}</option>
             <option value="rejected">{t('employee.timesheets.status.rejected')}</option>
+            <option value="skipped">{t('employee.timesheets.historyFilter.skipped')}</option>
           </select>
         </div>
         {history === null ? <p>{t('loading')}</p>
           : history.length === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.historyEmpty')}</p>
           : <div style={{ display: 'grid', gap: 6 }}>
-              {history.map(ts => {
-                const who = ts.employee?.name
-                  || [ts.employee?.first_name, ts.employee?.last_name].filter(Boolean).join(' ')
-                  || ts.employee?.email || '';
-                return (
-                  <div key={ts.id} style={{
-                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-                    padding: '8px 12px', borderRadius: 8, background: 'var(--tax-bg-alt)', fontSize: 13,
-                  }}>
-                    <span style={{ fontWeight: 600, minWidth: 140 }}>{who}</span>
-                    <span>{formatWeekRange(ts.week_start, locale)}</span>
-                    <StatusBadge status={ts.status} t={t} />
-                    <span style={{ color: 'var(--tax-muted)' }}>{ts.hours} {t('employee.timesheets.hoursAbbrev')}</span>
-                    {ts.status === 'rejected' && ts.rejection_note && (
-                      <span style={{ color: STATUS_STYLE.rejected.fg }}>{ts.rejection_note}</span>
-                    )}
-                  </div>
-                );
-              })}
+              {history.map(ts => (
+                <TimesheetHistoryRow key={ts.id} ts={ts} locale={locale} t={t} auth={auth} onChanged={refreshAll} />
+              ))}
             </div>}
       </section>
 
