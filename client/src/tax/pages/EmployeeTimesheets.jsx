@@ -132,6 +132,7 @@ const STATUS_STYLE = {
   submitted: { bg: '#fef3c7', fg: '#92400e' },
   approved:  { bg: '#dcfce7', fg: '#166534' },
   rejected:  { bg: '#fee2e2', fg: '#991b1b' },
+  skipped:   { bg: '#e0f2fe', fg: '#075985' },
 };
 
 function StatusBadge({ status, t }) {
@@ -166,6 +167,7 @@ function NoticeBanner({ tone, children }) {
 // it's scrolled out of view.
 function noticeFor(ts, weekStart, currentWeek, t) {
   const status = ts?.status || 'draft';
+  if (status === 'skipped') return { tone: 'info', text: t('employee.timesheets.notice.skipped') };
   if (status === 'rejected') return { tone: 'error', text: t('employee.timesheets.notice.rejected') };
   if (status === 'submitted') return { tone: 'warning', text: t('employee.timesheets.notice.submitted') };
   if (status === 'approved') return { tone: 'success', text: t('employee.timesheets.notice.approved') };
@@ -197,7 +199,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
   }, [weekStart, ts?.updated_at]);
 
   const total = values.reduce((sum, v) => sum + (Number(v) || 0), 0);
-  const locked = ts?.status === 'submitted' || ts?.status === 'approved';
+  const locked = ts?.status === 'submitted' || ts?.status === 'approved' || ts?.status === 'skipped';
   const original = sourceValues();
   const dirty = values.some((v, i) => v !== original[i]) || notes !== (ts?.notes || '');
   const loading = weekStart && !ts;
@@ -261,6 +263,11 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
           {ts?.status === 'rejected' && ts?.rejection_note && (
             <div className="tax-msg tax-msg--error" style={{ margin: 0 }}>
               {t('employee.timesheets.rejectionNote')}: {ts.rejection_note}
+            </div>
+          )}
+          {ts?.status === 'skipped' && ts?.skip_note && (
+            <div style={{ fontSize: 13, color: STATUS_STYLE.skipped.fg }}>
+              {t('employee.timesheets.skipNote')}: {ts.skip_note}
             </div>
           )}
 

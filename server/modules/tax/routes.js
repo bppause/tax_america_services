@@ -14414,7 +14414,7 @@ ${closingHtml}
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
     const { data, error } = await supabase.from('tax_timesheets')
-      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
+      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, skip_note, updated_at')
       .eq('employee_id', emp.id)
       .order('week_start', { ascending: false })
       .limit(26);
@@ -14424,7 +14424,7 @@ ${closingHtml}
     if (!hasCurrent) {
       rows.unshift({
         id: null, week_start: currentWeek, hours: 0, daily_hours: {}, notes: '', status: 'draft',
-        submitted_at: null, approved_at: null, rejection_note: '', updated_at: null,
+        submitted_at: null, approved_at: null, rejection_note: '', skip_note: '', updated_at: null,
       });
     }
     res.json({
@@ -14483,13 +14483,13 @@ ${closingHtml}
       return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
     }
     const { data: existing, error } = await supabase.from('tax_timesheets')
-      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, updated_at')
+      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, skip_note, updated_at')
       .eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
     if (error) return sendSupabaseError(res, error);
     res.json({
       timesheet: existing || {
         id: null, week_start: weekStart, hours: 0, daily_hours: {}, notes: '', status: 'draft',
-        submitted_at: null, approved_at: null, rejection_note: '', updated_at: null,
+        submitted_at: null, approved_at: null, rejection_note: '', skip_note: '', updated_at: null,
       },
     });
   });
@@ -14537,11 +14537,13 @@ ${closingHtml}
 
     const { data: existing } = await supabase.from('tax_timesheets')
       .select('id, status').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
-    if (existing && ['submitted', 'approved'].includes(existing.status)) {
+    if (existing && ['submitted', 'approved', 'skipped'].includes(existing.status)) {
       return res.status(409).json({
         error: 'locked',
         message: existing.status === 'approved'
           ? 'This week is already approved and can no longer be edited.'
+          : existing.status === 'skipped'
+          ? 'An approver marked this week as not required. Ask them to undo it before logging time.'
           : 'This week is awaiting approval and can no longer be edited.',
       });
     }
@@ -14585,6 +14587,7 @@ ${closingHtml}
     if (!existing) return res.status(404).json({ error: 'Enter your hours before submitting.' });
     if (existing.status === 'submitted') return res.status(409).json({ error: 'Already submitted.' });
     if (existing.status === 'approved') return res.status(409).json({ error: 'Already approved.' });
+    if (existing.status === 'skipped') return res.status(409).json({ error: 'An approver marked this week as not required.' });
     if ((!existing.hours || Number(existing.hours) <= 0) && !trim(existing.notes, MAX_TEXT_LEN)) {
       return res.status(400).json({
         error: 'note_required',
@@ -14608,13 +14611,13 @@ ${closingHtml}
   router.get('/admin/timesheets', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) return res.json({ timesheets: [] });
-    const status = ['submitted', 'approved', 'rejected', 'all'].includes(req.query.status)
+    const status = ['submitted', 'approved', 'rejected', 'skipped', 'all'].includes(req.query.status)
       ? req.query.status : 'submitted';
     const employeeId = trim(req.query.employeeId, 200);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     let q = supabase.from('tax_timesheets')
       .select(`
-        id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note,
+        id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, skip_note,
         employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
       .eq('community_id', emp.community_id)
@@ -14650,7 +14653,7 @@ ${closingHtml}
 
     const { data, error } = await supabase.from('tax_timesheets')
       .select(`
-        id, week_start, hours, daily_hours, status, submitted_at, approved_at, rejection_note, employee_id,
+        id, week_start, hours, daily_hours, status, submitted_at, approved_at, rejection_note, skip_note, employee_id,
         employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
       .eq('community_id', emp.community_id)
@@ -14678,7 +14681,7 @@ ${closingHtml}
       bucket.weeks.push({
         weekStart: row.week_start, hours, status: row.status,
         dailyHours: row.daily_hours || {}, submittedAt: row.submitted_at,
-        approvedAt: row.approved_at, rejectionNote: row.rejection_note || '',
+        approvedAt: row.approved_at, rejectionNote: row.rejection_note || '', skipNote: row.skip_note || '',
       });
     }
     const rows = Array.from(byEmployee.values())
@@ -14806,6 +14809,98 @@ ${closingHtml}
     if (!result || !result.sent) {
       return res.status(502).json({ error: 'send_failed', message: result?.reason || 'Could not send the email.' });
     }
+    res.json({ ok: true });
+  });
+
+  // POST /admin/timesheets/skip — body: { employeeId, weekStart, note? }.
+  // Marks one employee's one week as not needing a timesheet at all
+  // (vacation, holiday, not yet hired that week) so it stops being
+  // flagged overdue everywhere a draft/rejected week otherwise would be
+  // — Pending Submission, the daily digest, the EmployeeShell badge/popup
+  // all naturally skip a 'skipped' row since none of them treat it as
+  // outstanding. Open to any Timesheet Approver, same day-to-day
+  // operational reasoning as the timesheet_required toggle above.
+  //
+  // Only allowed when the week has nothing real in it yet (no row, or a
+  // blank draft with no hours/notes) — a week someone already submitted,
+  // got rejected on, or had approved has real data an approver shouldn't
+  // silently erase; they should review it instead. That restriction is
+  // also what makes POST /admin/timesheets/:id/unskip below safe to just
+  // delete the row.
+  router.post('/admin/timesheets/skip', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) {
+      return res.status(403).json({ error: 'approver_required', message: 'Only a Timesheet Approver can skip a week.' });
+    }
+    const employeeId = trim(req.body?.employeeId, 200);
+    const weekStart = trim(req.body?.weekStart, 10);
+    const note = trim(req.body?.note, MAX_TEXT_LEN);
+    if (!employeeId || !weekStart || weekStart !== mondayOf(weekStart)) {
+      return res.status(400).json({ error: 'employeeId and a Monday weekStart (YYYY-MM-DD) are required.' });
+    }
+    const { data: target } = await supabase.from('tax_employees')
+      .select('id, community_id').eq('id', employeeId).maybeSingle();
+    if (!target || target.community_id !== emp.community_id) {
+      return res.status(404).json({ error: 'Employee not found.' });
+    }
+    const { data: existing } = await supabase.from('tax_timesheets')
+      .select('id, status, hours, notes').eq('employee_id', employeeId).eq('week_start', weekStart).maybeSingle();
+    if (existing && (existing.status !== 'draft' || Number(existing.hours) > 0 || trim(existing.notes, MAX_TEXT_LEN))) {
+      return res.status(409).json({
+        error: 'has_data',
+        message: 'This week already has hours or a submission on it — review it instead of skipping.',
+      });
+    }
+    const now = new Date().toISOString();
+    const row = {
+      id: existing?.id || ('tsh_' + uuidv4().slice(0, 12)),
+      community_id: emp.community_id,
+      employee_id: employeeId,
+      week_start: weekStart,
+      hours: 0,
+      daily_hours: {},
+      notes: '',
+      status: 'skipped',
+      skip_note: note,
+      skipped_by_employee_id: emp.id,
+      skipped_at: now,
+      submitted_at: null,
+      approved_at: null,
+      approved_by_employee_id: null,
+      rejection_note: '',
+      updated_at: now,
+    };
+    const { error } = await supabase.from('tax_timesheets').upsert(row, { onConflict: 'employee_id,week_start' });
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({
+        entity: 'tax.timesheet', entityId: row.id, action: 'skip_timesheet',
+        actorEmail: emp.email || '', after: { employeeId, weekStart, note },
+      });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // POST /admin/timesheets/:id/unskip — undoes a skip. Since skip only
+  // ever applies to a week with nothing real in it (see above), undoing
+  // it just deletes the row — there's nothing to restore, the week goes
+  // back to looking exactly like it did before the skip.
+  router.post('/admin/timesheets/:id/unskip', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) {
+      return res.status(403).json({ error: 'approver_required', message: 'Only a Timesheet Approver can undo a skip.' });
+    }
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_timesheets')
+      .select('id, community_id, status').eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Timesheet not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (cur.status !== 'skipped') return res.status(409).json({ error: 'This week was not skipped.' });
+    const { error } = await supabase.from('tax_timesheets').delete().eq('id', id);
+    if (error) return sendSupabaseError(res, error);
+    try {
+      await auditLog({ entity: 'tax.timesheet', entityId: id, action: 'unskip_timesheet', actorEmail: emp.email || '' });
+    } catch (_e) {}
     res.json({ ok: true });
   });
 
