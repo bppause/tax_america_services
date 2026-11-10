@@ -63,6 +63,7 @@ export default function OwnerStaff() {
               send_reminders: false,
               view_audit_logs: false,
               view_activity: false,
+              view_website_metrics: false,
             }
           : undefined,
         locale: form.locale,

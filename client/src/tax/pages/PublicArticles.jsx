@@ -4,11 +4,13 @@ import { taxApi } from '../api';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import ArticlesSection from '../components/ArticlesSection';
+import { usePageviewPing } from '../lib/pageviewTracking';
 
 // Dedicated public page that renders every article for the community.
 // Reuses ArticlesSection in `mode="full"` so the markup matches the
 // landing-page preview.
 export default function PublicArticles({ communitySlug }) {
+  usePageviewPing(communitySlug, 'articles');
   const { t } = useT();
   const [community, setCommunity] = useState(null);
 

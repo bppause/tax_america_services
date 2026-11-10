@@ -51,7 +51,7 @@ const {
 const SITE_ADMIN_BUNDLE_REVOKED_KEYS = [
   'view_customers', 'manage_customers', 'manage_leads',
   'manage_workflows', 'manage_email_templates', 'manage_settings',
-  'manage_employees', 'send_reminders', 'view_audit_logs', 'view_activity',
+  'manage_employees', 'send_reminders', 'view_audit_logs', 'view_activity', 'view_website_metrics',
 ];
 const SITE_ADMIN_BUNDLE_GRANTED_KEYS = ['manage_services'];
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
@@ -463,6 +463,9 @@ module.exports = function createTaxRouter(deps) {
   // across two periods.
   function periodRange(period, anchorDateStr) {
     const d = new Date(`${anchorDateStr}T00:00:00Z`);
+    if (period === 'day') {
+      return { rangeStart: anchorDateStr, rangeEnd: anchorDateStr };
+    }
     if (period === 'week') {
       const start = mondayOf(anchorDateStr);
       return { rangeStart: start, rangeEnd: addDaysIso(start, 6) };
@@ -14322,7 +14325,7 @@ ${closingHtml}
     res.json({ ok: true });
   });
 
-  // GET /admin/activity/summary?communitySlug=&period=week|month|quarter|year
+  // GET /admin/activity/summary?communitySlug=&period=day|week|month|quarter|year
   // &date=YYYY-MM-DD — per-employee usage for the period containing `date`
   // (default today): total estimated active minutes, total feature views,
   // and a per-feature breakdown (ranked by minutes) for drill-down. Gated
@@ -14333,7 +14336,7 @@ ${closingHtml}
     if (!admin) return;
     const communitySlug = trim(req.query.communitySlug, 200);
     if (!communitySlug) return res.status(400).json({ error: 'communitySlug is required.' });
-    const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period)
+    const period = ['day', 'week', 'month', 'quarter', 'year'].includes(req.query.period)
       ? req.query.period : 'week';
     const anchor = trim(req.query.date, 10) || new Date().toISOString().slice(0, 10);
     if (Number.isNaN(new Date(`${anchor}T00:00:00Z`).getTime())) {
@@ -14378,6 +14381,100 @@ ${closingHtml}
       .sort((a, b) => b.totalMinutes - a.totalMinutes);
     const totalMinutes = rows.reduce((s, r) => s + r.totalMinutes, 0);
     res.json({ period, rangeStart, rangeEnd, totalMinutes, rows });
+  });
+
+  // ── Public website metrics ──────────────────────────────────────────────
+  // Anonymous page-view tracking for the public marketing site only
+  // (landing, FAQs, articles, calendar — never the authenticated portals,
+  // which have their own tracking above/elsewhere). See
+  // tax_public_pageviews in schema.sql and client/src/tax/lib/
+  // pageviewTracking.js, which pings this once per page load from each of
+  // those four pages with a client-generated visitor id (persisted,
+  // localStorage) and session id (per-tab, sessionStorage) — no PII.
+
+  // POST /public/pageview — body: { communitySlug, page, path, visitorId,
+  // sessionId, referrer }. Intentionally unauthenticated, same convention
+  // as POST /leads above — this needs to work for an anonymous visitor who
+  // has never signed in. Best-effort: the client swallows failures so a
+  // tracking hiccup never affects the visitor's page.
+  router.post('/public/pageview', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const page = ['landing', 'faqs', 'articles', 'calendar'].includes(body.page) ? body.page : '';
+    if (!communitySlug || !page) {
+      return res.status(400).json({ error: 'communitySlug and a valid page are required.' });
+    }
+    const { error } = await supabase.from('tax_public_pageviews').insert({
+      id: 'tpv_' + uuidv4().slice(0, 12),
+      community_id: communitySlug,
+      page,
+      path: trim(body.path, 300),
+      visitor_id: trim(body.visitorId, 100),
+      session_id: trim(body.sessionId, 100),
+      referrer: trim(body.referrer, 300),
+    });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // GET /admin/website-metrics/summary?communitySlug=&period=day|week|month|
+  // quarter|year&date=YYYY-MM-DD — pageviews, unique visitors (distinct
+  // visitor_id), and sessions (distinct session_id) for the period
+  // containing `date` (default today), plus a per-page breakdown (ranked
+  // by views) and the top referrers. Gated on view_website_metrics, same
+  // delegable-permission pattern as view_activity/view_audit_logs above.
+  router.get('/admin/website-metrics/summary', async (req, res) => {
+    const admin = await requireOwnerAdmin(req, res, 'view_website_metrics');
+    if (!admin) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug is required.' });
+    const period = ['day', 'week', 'month', 'quarter', 'year'].includes(req.query.period)
+      ? req.query.period : 'day';
+    const anchor = trim(req.query.date, 10) || new Date().toISOString().slice(0, 10);
+    if (Number.isNaN(new Date(`${anchor}T00:00:00Z`).getTime())) {
+      return res.status(400).json({ error: 'Invalid date.' });
+    }
+    const { rangeStart, rangeEnd } = periodRange(period, anchor);
+
+    const { data, error } = await supabase.from('tax_public_pageviews')
+      .select('page, visitor_id, session_id, referrer')
+      .eq('community_id', communitySlug)
+      .gte('created_at', `${rangeStart}T00:00:00Z`)
+      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`);
+    if (error) return sendSupabaseError(res, error);
+    const rows = data || [];
+
+    const pageCounts = new Map();
+    const referrerCounts = new Map();
+    const visitors = new Set();
+    const sessions = new Set();
+    for (const row of rows) {
+      pageCounts.set(row.page, (pageCounts.get(row.page) || 0) + 1);
+      if (row.visitor_id) visitors.add(row.visitor_id);
+      if (row.session_id) sessions.add(row.session_id);
+      // Host only — a full URL would leak query strings/search terms a
+      // visitor arrived with, which is more than "where did they come
+      // from" needs to answer.
+      if (row.referrer) {
+        let host = '';
+        try { host = new URL(row.referrer).hostname; } catch (_e) { host = ''; }
+        if (host) referrerCounts.set(host, (referrerCounts.get(host) || 0) + 1);
+      }
+    }
+    const pages = Array.from(pageCounts.entries())
+      .map(([page, views]) => ({ page, views }))
+      .sort((a, b) => b.views - a.views);
+    const referrers = Array.from(referrerCounts.entries())
+      .map(([host, views]) => ({ host, views }))
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 10);
+
+    res.json({
+      period, rangeStart, rangeEnd,
+      totalViews: rows.length, uniqueVisitors: visitors.size, sessions: sessions.size,
+      pages, referrers,
+    });
   });
 
   // ── Weekly timesheets ───────────────────────────────────────────────────

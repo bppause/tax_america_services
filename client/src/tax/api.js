@@ -634,6 +634,17 @@ export const taxApi = {
     return request('GET', `/admin/activity/summary?${qs.toString()}`, undefined, auth, { admin: true });
   },
 
+  // Public website metrics (see tax_public_pageviews). The ping is
+  // intentionally unauthenticated — called for anonymous visitors who
+  // have never signed in — so it's sent with no `auth`.
+  publicPageview(payload) { return request('POST', '/public/pageview', payload, null); },
+  adminWebsiteMetricsSummary(auth, communitySlug, period, date) {
+    const qs = new URLSearchParams({ communitySlug });
+    if (period) qs.set('period', period);
+    if (date) qs.set('date', date);
+    return request('GET', `/admin/website-metrics/summary?${qs.toString()}`, undefined, auth, { admin: true });
+  },
+
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
   adminCancelSubscription(auth, subId)           { return request('DELETE', `/admin/subscriptions/${encodeURIComponent(subId)}`, undefined, auth, { admin: true }); },

@@ -16,7 +16,7 @@ const NAV_ICON = {
   'service-catalog': '🏷️', articles: '📰', faqs: '❓', staff: '🧑‍💼',
   'email-templates': '✉️', settings: '⚙️', audit: '🗂️', news: '📣',
   testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔', inbox: '📨',
-  timesheets: '🕒', 'timesheets-dashboard': '📊', activity: '🖥️',
+  timesheets: '🕒', 'timesheets-dashboard': '📊', activity: '🖥️', 'website-metrics': '🌐',
 };
 
 // A plain "Staff" badge told everyone with an employee login the same
@@ -514,6 +514,7 @@ export default function EmployeeShell({ community, active, children }) {
                     {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
                     {perm('view_audit_logs')        && navLink('audit',          `${base}/audit`,            t('employee.nav.audit'))}
                     {perm('view_activity')          && navLink('activity',       `${base}/activity`,         t('employee.nav.activity'))}
+                    {perm('view_website_metrics')   && navLink('website-metrics', `${base}/website-metrics`, t('employee.nav.websiteMetrics'))}
                   </NavGroup>
                 )}
 

@@ -13,6 +13,9 @@ function addDays(dateStr, n) {
 function formatRangeLabel(rangeStart, rangeEnd, period, locale) {
   const loc = locale === 'es' ? 'es-ES' : 'en-US';
   const start = new Date(`${rangeStart}T00:00:00Z`);
+  if (period === 'day') {
+    return start.toLocaleDateString(loc, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  }
   if (period === 'week') {
     const end = new Date(`${rangeEnd}T00:00:00Z`);
     const startLabel = start.toLocaleDateString(loc, { month: 'short', day: 'numeric', timeZone: 'UTC' });
@@ -105,14 +108,14 @@ function ActivityEmployeeRow({ row, t }) {
   );
 }
 
-const PERIODS = ['week', 'month', 'quarter', 'year'];
+const PERIODS = ['day', 'week', 'month', 'quarter', 'year'];
 
 export default function OwnerActivityDashboard() {
   const { t, locale } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
 
-  const [period, setPeriod] = useState('week');
+  const [period, setPeriod] = useState('day');
   const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
   const [summary, setSummary] = useState(null);
   const [err, setErr] = useState('');
@@ -133,6 +136,7 @@ export default function OwnerActivityDashboard() {
   const shiftAnchor = (dir) => {
     if (dir > 0 && atOrPastCurrentPeriod) return;
     const d = new Date(`${anchor}T00:00:00Z`);
+    if (period === 'day') { setAnchor(addDays(anchor, dir)); return; }
     if (period === 'week') { setAnchor(addDays(anchor, dir * 7)); return; }
     if (period === 'month') { d.setUTCMonth(d.getUTCMonth() + dir, 1); setAnchor(d.toISOString().slice(0, 10)); return; }
     if (period === 'quarter') { d.setUTCMonth(d.getUTCMonth() + dir * 3, 1); setAnchor(d.toISOString().slice(0, 10)); return; }

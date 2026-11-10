@@ -53,6 +53,9 @@ const PERMISSIONS = [
   { key: 'view_activity',
     labelKey: 'owner.permissions.view_activity.label',
     descKey:  'owner.permissions.view_activity.desc' },
+  { key: 'view_website_metrics',
+    labelKey: 'owner.permissions.view_website_metrics.label',
+    descKey:  'owner.permissions.view_website_metrics.desc' },
 ];
 const VALID_KEYS = new Set(PERMISSIONS.map(p => p.key));
 
