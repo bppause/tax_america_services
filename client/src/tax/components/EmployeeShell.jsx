@@ -16,7 +16,7 @@ const NAV_ICON = {
   'service-catalog': '🏷️', articles: '📰', faqs: '❓', staff: '🧑‍💼',
   'email-templates': '✉️', settings: '⚙️', audit: '🗂️', news: '📣',
   testimonials: '⭐', whatsapp: '💬', profile: '👤', help: '❔', inbox: '📨',
-  timesheets: '🕒', 'timesheets-dashboard': '📊',
+  timesheets: '🕒', 'timesheets-dashboard': '📊', activity: '🖥️',
 };
 
 // A plain "Staff" badge told everyone with an employee login the same
@@ -262,6 +262,32 @@ export default function EmployeeShell({ community, active, children }) {
     return () => { cancelled = true; clearInterval(id); };
   }, [fbUser, community, isTimesheetApprover]);
 
+  // Portal usage tracking (see tax_employee_activity_events in
+  // schema.sql) — feeds the owner-facing Activity dashboard
+  // (OwnerActivityDashboard.jsx / GET /admin/activity/summary). Every
+  // page renders through this shell with its own `active` key already
+  // (used above for nav highlighting), so this one hook instruments the
+  // whole portal without touching individual pages. Fires one 'view'
+  // ping the moment `active` changes (a new feature was opened), then a
+  // 'heartbeat' ping every 60s while the tab stays visible — that's how
+  // "time spent" is approximated, since a page load alone can't say how
+  // long someone stayed. The visibility check (rather than a
+  // visibilitychange listener) means a backgrounded tab just silently
+  // skips its next tick instead of accumulating fake time; best-effort
+  // throughout, so a failed ping never surfaces to the employee.
+  useEffect(() => {
+    if (!fbUser || !community || !active) return;
+    const auth = { uid: fbUser.uid, email: fbUser.email, communitySlug: community.id };
+    const ping = (eventType) => {
+      if (document.visibilityState !== 'visible') return;
+      taxApi.employeeActivityPing(auth, { feature: active, eventType }).catch(() => {});
+    };
+    ping('view');
+    const id = setInterval(() => ping('heartbeat'), 60000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fbUser, community, active]);
+
   // Notification bell — surfaces tax_employee_notifications rows (new
   // messages, signed requests, task status changes, …). The endpoints
   // already existed server-side with no UI consuming them; this is that
@@ -487,6 +513,7 @@ export default function EmployeeShell({ community, active, children }) {
                     {perm('manage_email_templates') && navLink('email-templates', `${base}/email-templates`, t('employee.nav.emailTemplates'))}
                     {perm('manage_settings')        && navLink('settings',       `${base}/settings`,         t('employee.nav.settings'))}
                     {perm('view_audit_logs')        && navLink('audit',          `${base}/audit`,            t('employee.nav.audit'))}
+                    {perm('view_activity')          && navLink('activity',       `${base}/activity`,         t('employee.nav.activity'))}
                   </NavGroup>
                 )}
 

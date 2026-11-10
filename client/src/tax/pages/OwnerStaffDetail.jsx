@@ -1556,7 +1556,7 @@ function ImpersonateEmployeeButton({ employee: emp, auth, community, t }) {
 const SITE_ADMIN_REVOKED_KEYS = [
   'view_customers', 'manage_customers', 'manage_leads',
   'manage_workflows', 'manage_email_templates', 'manage_settings',
-  'manage_employees', 'send_reminders', 'view_audit_logs',
+  'manage_employees', 'send_reminders', 'view_audit_logs', 'view_activity',
 ];
 // Granted explicitly (not just "not revoked") so a one-off earlier
 // permission tweak can't quietly leave Services/WhatsApp missing from

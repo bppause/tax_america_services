@@ -4111,3 +4111,24 @@ alter table public.tax_timesheets
   add column if not exists skip_note text not null default '',
   add column if not exists skipped_by_employee_id text references public.tax_employees(id) on delete set null,
   add column if not exists skipped_at timestamptz;
+
+-- Employee portal usage tracking — lets an owner see who's using the
+-- portal and how much, broken down by feature (GET /admin/activity/summary,
+-- client/src/tax/pages/OwnerActivityDashboard.jsx). One row per ping sent
+-- from EmployeeShell.jsx: a 'view' row when a feature/page is opened, and
+-- a 'heartbeat' row every 60s while the tab stays visible on it — summing
+-- heartbeats approximates time spent, since a page load alone can't say
+-- how long someone stayed (see POST /employee/activity/ping in routes.js).
+create table if not exists public.tax_employee_activity_events (
+  id text primary key,
+  community_id text not null references public.communities(id) on delete cascade,
+  employee_id text not null references public.tax_employees(id) on delete cascade,
+  feature text not null,
+  event_type text not null check (event_type in ('view','heartbeat')),
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_employee_activity_community_day
+  on public.tax_employee_activity_events(community_id, created_at);
+create index if not exists idx_tax_employee_activity_employee_day
+  on public.tax_employee_activity_events(employee_id, created_at);
+alter table public.tax_employee_activity_events disable row level security;

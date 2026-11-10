@@ -623,6 +623,17 @@ export const taxApi = {
     return request('POST', `/admin/timesheets/${encodeURIComponent(id)}/unskip`, {}, auth);
   },
 
+  // Employee portal activity tracking (see tax_employee_activity_events).
+  employeeActivityPing(auth, { feature, eventType }) {
+    return request('POST', '/employee/activity/ping', { feature, eventType }, auth);
+  },
+  adminActivitySummary(auth, communitySlug, period, date) {
+    const qs = new URLSearchParams({ communitySlug });
+    if (period) qs.set('period', period);
+    if (date) qs.set('date', date);
+    return request('GET', `/admin/activity/summary?${qs.toString()}`, undefined, auth, { admin: true });
+  },
+
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
   adminCancelSubscription(auth, subId)           { return request('DELETE', `/admin/subscriptions/${encodeURIComponent(subId)}`, undefined, auth, { admin: true }); },

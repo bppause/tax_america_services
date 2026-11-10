@@ -51,7 +51,7 @@ const {
 const SITE_ADMIN_BUNDLE_REVOKED_KEYS = [
   'view_customers', 'manage_customers', 'manage_leads',
   'manage_workflows', 'manage_email_templates', 'manage_settings',
-  'manage_employees', 'send_reminders', 'view_audit_logs',
+  'manage_employees', 'send_reminders', 'view_audit_logs', 'view_activity',
 ];
 const SITE_ADMIN_BUNDLE_GRANTED_KEYS = ['manage_services'];
 const { generatePeriods: generateSchedulePeriods } = require('./schedule');
@@ -14295,6 +14295,89 @@ ${closingHtml}
       });
     } catch (_e) {}
     res.json({ ok: true, isTimesheetApprover: grant });
+  });
+
+  // ── Employee portal activity tracking ───────────────────────────────────
+  // See tax_employee_activity_events in schema.sql. EmployeeShell.jsx pings
+  // this once per page/feature (a 'view') and then every 60s while the tab
+  // stays visible on it (a 'heartbeat') — GET /admin/activity/summary below
+  // sums heartbeats as minutes to approximate time spent. Best-effort: the
+  // client swallows ping failures so this never breaks a page, and this
+  // endpoint stays extremely cheap (one insert, no cross-row validation).
+
+  // POST /employee/activity/ping — body: { feature, eventType: 'view'|'heartbeat' }.
+  router.post('/employee/activity/ping', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const feature = trim(req.body?.feature, 60);
+    const eventType = req.body?.eventType === 'heartbeat' ? 'heartbeat' : 'view';
+    if (!feature) return res.status(400).json({ error: 'feature is required.' });
+    const { error } = await supabase.from('tax_employee_activity_events').insert({
+      id: 'tact_' + uuidv4().slice(0, 12),
+      community_id: emp.community_id,
+      employee_id: emp.id,
+      feature,
+      event_type: eventType,
+    });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // GET /admin/activity/summary?communitySlug=&period=week|month|quarter|year
+  // &date=YYYY-MM-DD — per-employee usage for the period containing `date`
+  // (default today): total estimated active minutes, total feature views,
+  // and a per-feature breakdown (ranked by minutes) for drill-down. Gated
+  // on the view_activity permission like the audit log above — this is
+  // staff-monitoring data, kept to the owner by default but delegable.
+  router.get('/admin/activity/summary', async (req, res) => {
+    const admin = await requireOwnerAdmin(req, res, 'view_activity');
+    if (!admin) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug is required.' });
+    const period = ['week', 'month', 'quarter', 'year'].includes(req.query.period)
+      ? req.query.period : 'week';
+    const anchor = trim(req.query.date, 10) || new Date().toISOString().slice(0, 10);
+    if (Number.isNaN(new Date(`${anchor}T00:00:00Z`).getTime())) {
+      return res.status(400).json({ error: 'Invalid date.' });
+    }
+    const { rangeStart, rangeEnd } = periodRange(period, anchor);
+
+    const { data, error } = await supabase.from('tax_employee_activity_events')
+      .select(`
+        employee_id, feature, event_type,
+        employee:tax_employees!tax_employee_activity_events_employee_id_fkey ( id, name, first_name, last_name, email )
+      `)
+      .eq('community_id', communitySlug)
+      .gte('created_at', `${rangeStart}T00:00:00Z`)
+      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`);
+    if (error) return sendSupabaseError(res, error);
+
+    const byEmployee = new Map();
+    for (const row of data || []) {
+      const e = row.employee;
+      if (!e) continue;
+      if (!byEmployee.has(row.employee_id)) {
+        byEmployee.set(row.employee_id, {
+          employeeId: row.employee_id,
+          name: e.name || [e.first_name, e.last_name].filter(Boolean).join(' ') || e.email || '',
+          totalMinutes: 0, totalViews: 0, featureMap: new Map(),
+        });
+      }
+      const bucket = byEmployee.get(row.employee_id);
+      if (!bucket.featureMap.has(row.feature)) {
+        bucket.featureMap.set(row.feature, { feature: row.feature, minutes: 0, views: 0 });
+      }
+      const f = bucket.featureMap.get(row.feature);
+      if (row.event_type === 'heartbeat') { f.minutes += 1; bucket.totalMinutes += 1; }
+      else { f.views += 1; bucket.totalViews += 1; }
+    }
+    const rows = Array.from(byEmployee.values())
+      .map(r => ({
+        employeeId: r.employeeId, name: r.name, totalMinutes: r.totalMinutes, totalViews: r.totalViews,
+        features: Array.from(r.featureMap.values()).sort((a, b) => b.minutes - a.minutes),
+      }))
+      .sort((a, b) => b.totalMinutes - a.totalMinutes);
+    const totalMinutes = rows.reduce((s, r) => s + r.totalMinutes, 0);
+    res.json({ period, rangeStart, rangeEnd, totalMinutes, rows });
   });
 
   // ── Weekly timesheets ───────────────────────────────────────────────────
