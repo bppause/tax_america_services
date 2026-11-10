@@ -231,6 +231,11 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
     }
     if (total > 168) { setErr(t('employee.timesheets.weeklyHoursInvalid')); return; }
     if (total <= 0 && !notes.trim()) { setErr(t('employee.timesheets.hoursOrNoteRequired')); return; }
+    // Submitting locks the week until an approver acts — a week can only
+    // be submitted once (the server itself refuses a second submit; see
+    // POST /employee/timesheets/:weekStart/submit), so this is the one
+    // moment to make that plain before it's irreversible for the sitting.
+    if (!window.confirm(t('employee.timesheets.submitConfirm'))) return;
     setBusy(true); setErr('');
     try {
       const dailyHours = {};
@@ -271,6 +276,11 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
             </div>
           )}
 
+          {!locked && (
+            <p style={{ fontSize: 12, color: 'var(--tax-muted)', margin: 0 }}>
+              {t('employee.timesheets.dailyHoursHint')}
+            </p>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
             {days.map((d, i) => (
               <label key={d} style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--tax-muted)' }}>
@@ -294,13 +304,18 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
 
           {err && <div className="tax-msg tax-msg--error" style={{ margin: 0 }}>{err}</div>}
           {!locked && (
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy || !dirty}
-                      onClick={save}>{t('employee.timesheets.save')}</button>
-              <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                      disabled={busy || (total <= 0 && !notes.trim())}
-                      title={(total <= 0 && !notes.trim()) ? t('employee.timesheets.hoursOrNoteRequired') : ''}
-                      onClick={submit}>{t('employee.timesheets.submit')}</button>
+            <div style={{ display: 'grid', gap: 4 }}>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy || !dirty}
+                        onClick={save}>{t('employee.timesheets.save')}</button>
+                <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
+                        disabled={busy || (total <= 0 && !notes.trim())}
+                        title={(total <= 0 && !notes.trim()) ? t('employee.timesheets.hoursOrNoteRequired') : t('employee.timesheets.submitHint')}
+                        onClick={submit}>{t('employee.timesheets.submit')}</button>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--tax-muted)', margin: 0 }}>
+                {t('employee.timesheets.submitHint')}
+              </p>
             </div>
           )}
         </>
