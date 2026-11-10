@@ -4,6 +4,7 @@ import VideoEmbed from './VideoEmbed';
 import { useLandingCopy } from '../lib/landingCopy';
 import LeadChatWidget from './LeadChatWidget';
 import CertBadge from './CertBadge';
+import { useContentViewTracking } from '../lib/contentViewTracking';
 
 const ICON_LETTER = {
   receipt: 'IR', briefcase: 'BT', 'id-card': 'ID', book: 'BK', wallet: 'PR',
@@ -127,6 +128,9 @@ export default function ServicesGrid({ products, community, onRequestService }) 
 }
 
 function ServiceDetailModal({ product, locale, t, community, products, onClose, onRequest }) {
+  // Mounted only while this product's modal is open, so mount = opened,
+  // unmount = closed — one bounded view, no toggle state to track.
+  useContentViewTracking(community?.id, 'service', product.id, true);
   const closeRef = useRef(null);
   const [tab, setTab] = useState('info'); // 'info' | 'chat'
   const aiEnabled = !!community?.tax_ai_features_enabled;

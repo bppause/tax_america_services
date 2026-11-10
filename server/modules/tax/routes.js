@@ -14477,6 +14477,117 @@ ${closingHtml}
     });
   });
 
+  // Longest a 'close' duration is trusted for — a tab left open for
+  // hours isn't someone reading a service description, it's someone who
+  // walked away; cap it so one stray outlier can't blow out an average.
+  const MAX_CONTENT_VIEW_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+
+  // POST /public/content-view — body: { communitySlug, kind:
+  // 'service'|'article', itemId, event: 'click'|'close', durationMs?,
+  // visitorId, sessionId }. Which individual services/articles a visitor
+  // opens, and how long they kept it open — 'click' fires the moment a
+  // service modal or article expansion opens, 'close' fires when it
+  // closes (see client/src/tax/lib/contentViewTracking.js). Same
+  // intentionally-unauthenticated convention as POST /public/pageview
+  // and POST /leads.
+  router.post('/public/content-view', async (req, res) => {
+    if (!requireSupabaseEnv(res)) return;
+    const body = req.body || {};
+    const communitySlug = trim(body.communitySlug, 200);
+    const kind = ['service', 'article'].includes(body.kind) ? body.kind : '';
+    const itemId = trim(body.itemId, 200);
+    const eventType = body.event === 'close' ? 'close' : 'click';
+    if (!communitySlug || !kind || !itemId) {
+      return res.status(400).json({ error: 'communitySlug, kind, and itemId are required.' });
+    }
+    let durationMs = null;
+    if (eventType === 'close') {
+      const raw = Number(body.durationMs);
+      durationMs = Number.isFinite(raw) ? Math.max(0, Math.min(raw, MAX_CONTENT_VIEW_DURATION_MS)) : null;
+    }
+    const { error } = await supabase.from('tax_public_content_views').insert({
+      id: 'tcv_' + uuidv4().slice(0, 12),
+      community_id: communitySlug,
+      kind,
+      item_id: itemId,
+      event_type: eventType,
+      duration_ms: durationMs,
+      visitor_id: trim(body.visitorId, 100),
+      session_id: trim(body.sessionId, 100),
+    });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
+  // GET /admin/content-engagement/summary?communitySlug=&period=&date= —
+  // per-item clicks and average view duration, split into services and
+  // articles, each ranked by clicks. Resolves display names with a
+  // follow-up lookup per kind (item_id has no FK — see schema.sql — since
+  // it points into tax_products or tax_help_articles depending on kind).
+  // Reuses the view_website_metrics permission — this is the same
+  // "website usage" concern at finer grain, not a separate one.
+  router.get('/admin/content-engagement/summary', async (req, res) => {
+    const admin = await requireOwnerAdmin(req, res, 'view_website_metrics');
+    if (!admin) return;
+    const communitySlug = trim(req.query.communitySlug, 200);
+    if (!communitySlug) return res.status(400).json({ error: 'communitySlug is required.' });
+    const period = ['day', 'week', 'month', 'quarter', 'year'].includes(req.query.period)
+      ? req.query.period : 'day';
+    const anchor = trim(req.query.date, 10) || new Date().toISOString().slice(0, 10);
+    if (Number.isNaN(new Date(`${anchor}T00:00:00Z`).getTime())) {
+      return res.status(400).json({ error: 'Invalid date.' });
+    }
+    const { rangeStart, rangeEnd } = periodRange(period, anchor);
+
+    const { data, error } = await supabase.from('tax_public_content_views')
+      .select('kind, item_id, event_type, duration_ms')
+      .eq('community_id', communitySlug)
+      .gte('created_at', `${rangeStart}T00:00:00Z`)
+      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`);
+    if (error) return sendSupabaseError(res, error);
+
+    const byItem = new Map(); // `${kind}|${itemId}` -> { kind, itemId, clicks, durationTotal, durationCount }
+    for (const row of data || []) {
+      const key = `${row.kind}|${row.item_id}`;
+      if (!byItem.has(key)) byItem.set(key, { kind: row.kind, itemId: row.item_id, clicks: 0, durationTotal: 0, durationCount: 0 });
+      const b = byItem.get(key);
+      if (row.event_type === 'click') b.clicks += 1;
+      else if (row.duration_ms != null) { b.durationTotal += row.duration_ms; b.durationCount += 1; }
+    }
+    const items = Array.from(byItem.values()).map(b => ({
+      kind: b.kind, itemId: b.itemId, clicks: b.clicks,
+      avgSeconds: b.durationCount ? Math.round(b.durationTotal / b.durationCount / 1000) : 0,
+    }));
+    const serviceItems = items.filter(it => it.kind === 'service');
+    const articleItems = items.filter(it => it.kind === 'article');
+
+    const [{ data: products }, { data: articles }] = await Promise.all([
+      serviceItems.length
+        ? supabase.from('tax_products').select('id, slug, name_i18n').in('id', serviceItems.map(it => it.itemId))
+        : Promise.resolve({ data: [] }),
+      articleItems.length
+        ? supabase.from('tax_help_articles').select('id, title_i18n').in('id', articleItems.map(it => it.itemId))
+        : Promise.resolve({ data: [] }),
+    ]);
+    const productById = new Map((products || []).map(p => [p.id, p]));
+    const articleById = new Map((articles || []).map(a => [a.id, a]));
+
+    const services = serviceItems
+      .map(it => {
+        const p = productById.get(it.itemId);
+        return { itemId: it.itemId, slug: p?.slug || '', name_i18n: p?.name_i18n || {}, clicks: it.clicks, avgSeconds: it.avgSeconds };
+      })
+      .sort((a, b) => b.clicks - a.clicks);
+    const articlesOut = articleItems
+      .map(it => {
+        const a = articleById.get(it.itemId);
+        return { itemId: it.itemId, title_i18n: a?.title_i18n || {}, clicks: it.clicks, avgSeconds: it.avgSeconds };
+      })
+      .sort((a, b) => b.clicks - a.clicks);
+
+    res.json({ period, rangeStart, rangeEnd, services, articles: articlesOut });
+  });
+
   // ── Weekly timesheets ───────────────────────────────────────────────────
   // Single hours total per employee per Monday-Sunday week (see
   // supabase/schema.sql's tax_timesheets comment for the full status

@@ -4156,3 +4156,32 @@ create index if not exists idx_tax_public_pageviews_community_day
 create index if not exists idx_tax_public_pageviews_community_page_day
   on public.tax_public_pageviews(community_id, page, created_at);
 alter table public.tax_public_pageviews disable row level security;
+
+-- Anonymous per-item engagement on the public site: which services
+-- (tax_products) and articles (tax_help_articles, audience='customer')
+-- a visitor opens, and how long they kept it open. No FK on item_id —
+-- it points into one of two different tables depending on `kind`, so
+-- GET /admin/content-engagement/summary resolves display names with a
+-- follow-up lookup per kind instead. 'click' is logged the moment a
+-- service modal or article expansion opens; 'close' is logged when it
+-- closes (or the page/tab is navigated away from in-app), carrying
+-- duration_ms — see client/src/tax/lib/contentViewTracking.js. A click
+-- with no matching close (tab closed outright) is still counted; it
+-- just has no duration, same honesty as the portal's heartbeat-based
+-- time estimates.
+create table if not exists public.tax_public_content_views (
+  id text primary key,
+  community_id text not null references public.communities(id) on delete cascade,
+  kind text not null check (kind in ('service','article')),
+  item_id text not null,
+  event_type text not null check (event_type in ('click','close')),
+  duration_ms integer,
+  visitor_id text not null default '',
+  session_id text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_public_content_views_community_day
+  on public.tax_public_content_views(community_id, created_at);
+create index if not exists idx_tax_public_content_views_item
+  on public.tax_public_content_views(community_id, kind, item_id, created_at);
+alter table public.tax_public_content_views disable row level security;

@@ -645,6 +645,16 @@ export const taxApi = {
     return request('GET', `/admin/website-metrics/summary?${qs.toString()}`, undefined, auth, { admin: true });
   },
 
+  // Per-item (service/article) engagement — see tax_public_content_views.
+  // Unauthenticated, same reasoning as publicPageview above.
+  publicContentView(payload) { return request('POST', '/public/content-view', payload, null); },
+  adminContentEngagementSummary(auth, communitySlug, period, date) {
+    const qs = new URLSearchParams({ communitySlug });
+    if (period) qs.set('period', period);
+    if (date) qs.set('date', date);
+    return request('GET', `/admin/content-engagement/summary?${qs.toString()}`, undefined, auth, { admin: true });
+  },
+
   adminAddSubscription(auth, customerId, payload){ return request('POST', `/admin/customers/${encodeURIComponent(customerId)}/subscriptions`, payload, auth, { admin: true }); },
   adminUpdateSubscription(auth, subId, payload)  { return request('PUT',  `/admin/subscriptions/${encodeURIComponent(subId)}`, payload, auth, { admin: true }); },
   adminCancelSubscription(auth, subId)           { return request('DELETE', `/admin/subscriptions/${encodeURIComponent(subId)}`, undefined, auth, { admin: true }); },
