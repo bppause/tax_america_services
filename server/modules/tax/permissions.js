@@ -50,6 +50,9 @@ const PERMISSIONS = [
   { key: 'view_audit_logs',
     labelKey: 'owner.permissions.view_audit_logs.label',
     descKey:  'owner.permissions.view_audit_logs.desc' },
+  { key: 'view_activity',
+    labelKey: 'owner.permissions.view_activity.label',
+    descKey:  'owner.permissions.view_activity.desc' },
 ];
 const VALID_KEYS = new Set(PERMISSIONS.map(p => p.key));
 

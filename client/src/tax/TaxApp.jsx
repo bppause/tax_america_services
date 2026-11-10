@@ -60,6 +60,7 @@ import PortalHelp from './pages/PortalHelp';
 import EmployeeHelp from './pages/EmployeeHelp';
 import EmployeeTimesheets from './pages/EmployeeTimesheets';
 import OwnerTimesheetsDashboard from './pages/OwnerTimesheetsDashboard';
+import OwnerActivityDashboard from './pages/OwnerActivityDashboard';
 import { TaxAuthProvider, useTaxAuth } from './auth/AuthProvider';
 import { TaxEmployeeAuthProvider, useEmployeeAuth } from './auth/EmployeeAuthProvider';
 import { taxApi } from './api';
@@ -121,6 +122,7 @@ function parseTaxPath() {
     if (parts[3] === 'faqs')     return { route: 'owner-faqs', slug };
     if (parts[3] === 'service-catalog') return { route: 'owner-service-catalog', slug };
     if (parts[3] === 'audit')    return { route: 'owner-audit', slug };
+    if (parts[3] === 'activity') return { route: 'owner-activity', slug };
     if (parts[3] === 'help')     return { route: 'employee-help', slug };
     if (parts[3] === 'timesheets') return { route: 'employee-timesheets', slug };
     if (parts[3] === 'timesheets-dashboard') return { route: 'owner-timesheets-dashboard', slug };
@@ -289,6 +291,7 @@ function EmployeeGate({ parsed, community }) {
   if (parsed.route === 'owner-reminders') return <OwnerReminders />;
   if (parsed.route === 'owner-progress')  return <OwnerProgress />;
   if (parsed.route === 'owner-audit') return <OwnerAudit />;
+  if (parsed.route === 'owner-activity') return <OwnerActivityDashboard />;
   if (parsed.route === 'owner-email-templates') return <OwnerEmailTemplates />;
   if (parsed.route === 'owner-workflows') return <OwnerRelationshipWorkflows />;
   if (parsed.route === 'owner-services') return <OwnerRelationshipTypes />;

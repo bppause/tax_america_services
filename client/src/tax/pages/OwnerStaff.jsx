@@ -62,6 +62,7 @@ export default function OwnerStaff() {
               manage_employees: false,
               send_reminders: false,
               view_audit_logs: false,
+              view_activity: false,
             }
           : undefined,
         locale: form.locale,
