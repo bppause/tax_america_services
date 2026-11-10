@@ -4132,3 +4132,27 @@ create index if not exists idx_tax_employee_activity_community_day
 create index if not exists idx_tax_employee_activity_employee_day
   on public.tax_employee_activity_events(employee_id, created_at);
 alter table public.tax_employee_activity_events disable row level security;
+
+-- Anonymous page-view tracking for the PUBLIC marketing site only
+-- (landing, FAQs, articles, calendar — never the authenticated customer
+-- or employee portals). Feeds GET /admin/website-metrics/summary /
+-- client/src/tax/pages/OwnerWebsiteMetrics.jsx. visitor_id and
+-- session_id are random ids generated and stored client-side
+-- (localStorage / sessionStorage respectively — see
+-- client/src/tax/lib/pageviewTracking.js); no name, email, or other PII
+-- is ever attached to a row.
+create table if not exists public.tax_public_pageviews (
+  id text primary key,
+  community_id text not null references public.communities(id) on delete cascade,
+  page text not null check (page in ('landing','faqs','articles','calendar')),
+  path text not null default '',
+  visitor_id text not null default '',
+  session_id text not null default '',
+  referrer text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_public_pageviews_community_day
+  on public.tax_public_pageviews(community_id, created_at);
+create index if not exists idx_tax_public_pageviews_community_page_day
+  on public.tax_public_pageviews(community_id, page, created_at);
+alter table public.tax_public_pageviews disable row level security;

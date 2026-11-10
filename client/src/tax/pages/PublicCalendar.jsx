@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { taxApi } from '../api';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
+import { usePageviewPing } from '../lib/pageviewTracking';
 
 // Public tax calendar — lists every upcoming deadline for the
 // community with filter chips by entity type and jurisdiction.
@@ -11,6 +12,7 @@ import Footer from '../components/Footer';
 // yet, otherwise next year) so a single seed row works year over
 // year.
 export default function PublicCalendar({ communitySlug }) {
+  usePageviewPing(communitySlug, 'calendar');
   const { locale, t } = useT();
   const [community, setCommunity] = useState(null);
   const [deadlines, setDeadlines] = useState([]);

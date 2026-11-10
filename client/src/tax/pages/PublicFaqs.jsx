@@ -4,11 +4,13 @@ import { taxApi } from '../api';
 import Header from '../components/Header';
 import Footer from '../components/Footer';
 import FaqsSection from '../components/FaqsSection';
+import { usePageviewPing } from '../lib/pageviewTracking';
 
 // Dedicated public page that renders every FAQ for the community,
 // grouped by relationship type. Reuses FaqsSection in `mode="full"`
 // so the markup stays consistent with the landing-page preview.
 export default function PublicFaqs({ communitySlug }) {
+  usePageviewPing(communitySlug, 'faqs');
   const { t } = useT();
   const [community, setCommunity] = useState(null);
 

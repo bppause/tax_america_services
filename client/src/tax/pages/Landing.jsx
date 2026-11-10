@@ -14,6 +14,7 @@ import About from '../components/About';
 import Contact from '../components/Contact';
 import Footer from '../components/Footer';
 import { LandingCopyProvider } from '../lib/landingCopy';
+import { usePageviewPing } from '../lib/pageviewTracking';
 
 // Sets <head> meta for SEO + social previews. Best-effort from JS — non-JS
 // crawlers (legacy Facebook/LinkedIn) won't see these. Server-side rendering
@@ -30,6 +31,7 @@ function setMeta(name, content, attr = 'name') {
 }
 
 export default function Landing({ communitySlug }) {
+  usePageviewPing(communitySlug, 'landing');
   const { locale, setLocale, t } = useT();
   const [state, setState] = useState({ kind: 'loading', data: null, error: '' });
   // Selected service from a "Request this service" click in the service
