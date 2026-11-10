@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useT } from '../i18n';
+import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
@@ -67,6 +67,41 @@ function RankedBars({ rows, labelFor, maxValue }) {
   );
 }
 
+function formatSeconds(s) {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}m ${rem}s` : `${m}m`;
+}
+
+// Per-item engagement row — clicks (bar) plus average view duration.
+// Distinct from RankedBars above since it carries a second metric
+// (avgSeconds) alongside the count the bar is proportional to.
+function EngagementList({ items, labelFor, t }) {
+  const maxClicks = Math.max(1, ...items.map(it => it.clicks));
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      {items.map(it => (
+        <div key={it.itemId} style={{ display: 'grid', gap: 2 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+            <span>{labelFor(it)}</span>
+            <span style={{ color: 'var(--tax-muted)' }}>
+              {it.clicks} {t('employee.website.clicksWord')}
+              {it.avgSeconds > 0 && <> &middot; {t('employee.website.avgTime', { time: formatSeconds(it.avgSeconds) })}</>}
+            </span>
+          </div>
+          <div style={{ height: 6, borderRadius: 999, background: 'var(--tax-bg-alt)', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', width: `${Math.max(4, (it.clicks / maxClicks) * 100)}%`,
+              background: '#1d4ed8', borderRadius: 999,
+            }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const PERIODS = ['day', 'week', 'month', 'quarter', 'year'];
 
 export default function OwnerWebsiteMetrics() {
@@ -77,6 +112,7 @@ export default function OwnerWebsiteMetrics() {
   const [period, setPeriod] = useState('day');
   const [anchor, setAnchor] = useState(() => new Date().toISOString().slice(0, 10));
   const [summary, setSummary] = useState(null);
+  const [engagement, setEngagement] = useState(null);
   const [err, setErr] = useState('');
 
   useEffect(() => {
@@ -85,6 +121,10 @@ export default function OwnerWebsiteMetrics() {
     taxApi.adminWebsiteMetricsSummary(auth, community.id, period, anchor)
       .then(setSummary)
       .catch(e => setErr(e?.message || t('error.loadFailed')));
+    setEngagement(null);
+    taxApi.adminContentEngagementSummary(auth, community.id, period, anchor)
+      .then(setEngagement)
+      .catch(() => setEngagement({ services: [], articles: [] }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fbUser, community, employee, period, anchor]);
 
@@ -163,6 +203,21 @@ export default function OwnerWebsiteMetrics() {
               </>
             )}
           </>}
+
+      {engagement && engagement.services.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 20, marginBottom: 8 }}>{t('employee.website.serviceEngagement')}</h3>
+          <EngagementList items={engagement.services} t={t}
+                          labelFor={it => pickI18n(it.name_i18n, locale).value || it.slug} />
+        </>
+      )}
+      {engagement && engagement.articles.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 20, marginBottom: 8 }}>{t('employee.website.articleEngagement')}</h3>
+          <EngagementList items={engagement.articles} t={t}
+                          labelFor={it => pickI18n(it.title_i18n, locale).value} />
+        </>
+      )}
     </EmployeeShell>
   );
 }
