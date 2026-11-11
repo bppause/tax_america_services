@@ -64,9 +64,25 @@ function featureLabel(key, t) {
 // One employee's row — click to expand into a ranked list of features by
 // estimated minutes, each with a simple proportional bar (no charting
 // library, same hand-rolled style as the Timesheets dashboard's drill-down).
-function ActivityEmployeeRow({ row, t }) {
+// Where each kind of record lives in the portal, so an opened record in
+// the list below links straight to it.
+const ITEM_HREF = {
+  customer: (base, id) => `${base}/customers/${encodeURIComponent(id)}`,
+  task:     (base, id) => `${base}/tasks?edit=${encodeURIComponent(id)}`,
+  lead:     (base, id) => `${base}/leads?lead=${encodeURIComponent(id)}`,
+  thread:   (base, id) => `${base}/threads/${encodeURIComponent(id)}`,
+  employee: (base, id) => `${base}/staff/${encodeURIComponent(id)}`,
+};
+
+function formatViewedAt(iso, locale) {
+  return new Date(iso).toLocaleString(locale === 'es' ? 'es-ES' : 'en-US',
+    { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function ActivityEmployeeRow({ row, base, locale, t }) {
   const [open, setOpen] = useState(false);
   const maxMinutes = Math.max(1, ...row.features.map(f => f.minutes));
+  const items = row.items || [];
 
   return (
     <div style={{ border: '1px solid var(--tax-border)', borderRadius: 8, overflow: 'hidden' }}>
@@ -84,6 +100,9 @@ function ActivityEmployeeRow({ row, t }) {
       </button>
       {open && (
         <div style={{ padding: '4px 12px 12px', display: 'grid', gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tax-muted)', textTransform: 'uppercase' }}>
+            {t('employee.activity.featuresHeading')}
+          </div>
           {row.features.length === 0
             ? <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('employee.activity.noFeatures')}</span>
             : row.features.map(f => (
@@ -102,6 +121,39 @@ function ActivityEmployeeRow({ row, t }) {
                   </div>
                 </div>
               ))}
+
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--tax-muted)', textTransform: 'uppercase', marginTop: 10 }}>
+            {t('employee.activity.itemsHeading')}
+          </div>
+          {items.length === 0
+            ? <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('employee.activity.noItems')}</span>
+            : (
+              <div style={{ display: 'grid', gap: 4, maxHeight: 320, overflowY: 'auto' }}>
+                {items.map(it => {
+                  const label = it.label
+                    || t(it.exists ? 'employee.activity.itemUntitled' : 'employee.activity.itemDeleted');
+                  return (
+                    <div key={`${it.kind}|${it.itemId}`} style={{
+                      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+                      padding: '6px 10px', borderRadius: 6, background: 'var(--tax-bg-alt)', fontSize: 13,
+                    }}>
+                      <span style={{
+                        padding: '1px 8px', borderRadius: 999, fontSize: 11, fontWeight: 700,
+                        textTransform: 'uppercase', background: '#fff', color: 'var(--tax-muted)',
+                        border: '1px solid var(--tax-border)',
+                      }}>{t(`employee.activity.itemKind.${it.kind}`)}</span>
+                      {it.exists
+                        ? <a href={ITEM_HREF[it.kind](base, it.itemId)} style={{ color: '#1d4ed8', fontWeight: 600 }}>{label}</a>
+                        : <span style={{ color: 'var(--tax-muted)' }}>{label}</span>}
+                      <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--tax-muted)' }}>
+                        {it.views > 1 && <>{it.views}&times; &middot; </>}
+                        {formatViewedAt(it.lastViewedAt, locale)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
         </div>
       )}
     </div>
@@ -174,6 +226,7 @@ export default function OwnerActivityDashboard() {
       </div>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      {summary?.truncated && <div className="tax-msg" style={{ fontSize: 13 }}>{t('employee.activity.truncated')}</div>}
       {!summary ? <p>{t('loading')}</p>
         : summary.rows.length === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.activity.empty')}</p>
         : <>
@@ -182,7 +235,8 @@ export default function OwnerActivityDashboard() {
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
               {summary.rows.map(row => (
-                <ActivityEmployeeRow key={row.employeeId} row={row} t={t} />
+                <ActivityEmployeeRow key={row.employeeId} row={row} locale={locale} t={t}
+                                     base={`/tax/${community.id}/employee`} />
               ))}
             </div>
           </>}

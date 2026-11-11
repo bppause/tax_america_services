@@ -14308,6 +14308,24 @@ ${closingHtml}
   // client swallows ping failures so this never breaks a page, and this
   // endpoint stays extremely cheap (one insert, no cross-row validation).
 
+  // Supabase returns at most 1000 rows per select (fewer if the project
+  // lowers the cap) and truncates silently. The summaries below aggregate
+  // raw event rows — one employee's heartbeats alone pass 1000 in about
+  // two working days — so they page until a request comes back empty.
+  // `buildQuery` must apply a stable order. Stops at MAX_EVENT_ROWS and
+  // reports `truncated` so the dashboards can say the totals are partial.
+  const MAX_EVENT_ROWS = 200000;
+  async function fetchAllRows(buildQuery) {
+    const out = [];
+    while (out.length < MAX_EVENT_ROWS) {
+      const { data, error } = await buildQuery().range(out.length, out.length + 999);
+      if (error) return { data: null, error, truncated: false };
+      if (!data || !data.length) return { data: out, error: null, truncated: false };
+      out.push(...data);
+    }
+    return { data: out, error: null, truncated: true };
+  }
+
   // POST /employee/activity/ping — body: { feature, eventType: 'view'|'heartbeat' }.
   router.post('/employee/activity/ping', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
@@ -14325,10 +14343,34 @@ ${closingHtml}
     res.json({ ok: true });
   });
 
+  // POST /employee/activity/item-view — body: { kind, itemId }. One row
+  // each time an employee opens a specific record (a customer's page, a
+  // task's edit form, an expanded lead, a message thread, a staff
+  // profile) — see client/src/tax/lib/employeeItemTracking.js. The
+  // summary below resolves names scoped to the community, so an id that
+  // isn't a real record there just never shows up.
+  const ITEM_VIEW_KINDS = ['customer', 'task', 'lead', 'thread', 'employee'];
+  router.post('/employee/activity/item-view', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    const kind = ITEM_VIEW_KINDS.includes(req.body?.kind) ? req.body.kind : '';
+    const itemId = trim(req.body?.itemId, 200);
+    if (!kind || !itemId) return res.status(400).json({ error: 'kind and itemId are required.' });
+    const { error } = await supabase.from('tax_employee_item_views').insert({
+      id: 'tiv_' + uuidv4().slice(0, 12),
+      community_id: emp.community_id,
+      employee_id: emp.id,
+      kind,
+      item_id: itemId,
+    });
+    if (error) return sendSupabaseError(res, error);
+    res.json({ ok: true });
+  });
+
   // GET /admin/activity/summary?communitySlug=&period=day|week|month|quarter|year
   // &date=YYYY-MM-DD — per-employee usage for the period containing `date`
   // (default today): total estimated active minutes, total feature views,
-  // and a per-feature breakdown (ranked by minutes) for drill-down. Gated
+  // a per-feature breakdown (ranked by minutes), and the specific records
+  // they opened (most recent first) for drill-down. Gated
   // on the view_activity permission like the audit log above — this is
   // staff-monitoring data, kept to the owner by default but delegable.
   router.get('/admin/activity/summary', async (req, res) => {
@@ -14344,28 +14386,43 @@ ${closingHtml}
     }
     const { rangeStart, rangeEnd } = periodRange(period, anchor);
 
-    const { data, error } = await supabase.from('tax_employee_activity_events')
-      .select(`
-        employee_id, feature, event_type,
-        employee:tax_employees!tax_employee_activity_events_employee_id_fkey ( id, name, first_name, last_name, email )
-      `)
-      .eq('community_id', communitySlug)
-      .gte('created_at', `${rangeStart}T00:00:00Z`)
-      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`);
-    if (error) return sendSupabaseError(res, error);
+    const fromIso = `${rangeStart}T00:00:00Z`;
+    const toIso = `${addDaysIso(rangeEnd, 1)}T00:00:00Z`;
+    const [events, itemViews] = await Promise.all([
+      fetchAllRows(() => supabase.from('tax_employee_activity_events')
+        .select(`
+          employee_id, feature, event_type,
+          employee:tax_employees!tax_employee_activity_events_employee_id_fkey ( id, name, first_name, last_name, email )
+        `)
+        .eq('community_id', communitySlug)
+        .gte('created_at', fromIso).lt('created_at', toIso)
+        .order('created_at', { ascending: true }).order('id', { ascending: true })),
+      fetchAllRows(() => supabase.from('tax_employee_item_views')
+        .select(`
+          employee_id, kind, item_id, created_at,
+          employee:tax_employees!tax_employee_item_views_employee_id_fkey ( id, name, first_name, last_name, email )
+        `)
+        .eq('community_id', communitySlug)
+        .gte('created_at', fromIso).lt('created_at', toIso)
+        .order('created_at', { ascending: true }).order('id', { ascending: true })),
+    ]);
+    if (events.error) return sendSupabaseError(res, events.error);
+    if (itemViews.error) return sendSupabaseError(res, itemViews.error);
 
     const byEmployee = new Map();
-    for (const row of data || []) {
-      const e = row.employee;
-      if (!e) continue;
-      if (!byEmployee.has(row.employee_id)) {
-        byEmployee.set(row.employee_id, {
-          employeeId: row.employee_id,
+    const bucketFor = (employeeId, e) => {
+      if (!byEmployee.has(employeeId)) {
+        byEmployee.set(employeeId, {
+          employeeId,
           name: e.name || [e.first_name, e.last_name].filter(Boolean).join(' ') || e.email || '',
-          totalMinutes: 0, totalViews: 0, featureMap: new Map(),
+          totalMinutes: 0, totalViews: 0, featureMap: new Map(), itemMap: new Map(),
         });
       }
-      const bucket = byEmployee.get(row.employee_id);
+      return byEmployee.get(employeeId);
+    };
+    for (const row of events.data) {
+      if (!row.employee) continue;
+      const bucket = bucketFor(row.employee_id, row.employee);
       if (!bucket.featureMap.has(row.feature)) {
         bucket.featureMap.set(row.feature, { feature: row.feature, minutes: 0, views: 0 });
       }
@@ -14373,14 +14430,59 @@ ${closingHtml}
       if (row.event_type === 'heartbeat') { f.minutes += 1; bucket.totalMinutes += 1; }
       else { f.views += 1; bucket.totalViews += 1; }
     }
+    const idsByKind = Object.fromEntries(ITEM_VIEW_KINDS.map(k => [k, new Set()]));
+    for (const row of itemViews.data) {
+      if (!row.employee || !idsByKind[row.kind]) continue;
+      const bucket = bucketFor(row.employee_id, row.employee);
+      const key = `${row.kind}|${row.item_id}`;
+      if (!bucket.itemMap.has(key)) {
+        bucket.itemMap.set(key, { kind: row.kind, itemId: row.item_id, views: 0, lastViewedAt: row.created_at });
+      }
+      const it = bucket.itemMap.get(key);
+      it.views += 1;
+      if (row.created_at > it.lastViewedAt) it.lastViewedAt = row.created_at;
+      idsByKind[row.kind].add(row.item_id);
+    }
+
+    // Names for the opened records, one lookup per kind, each scoped to
+    // this community. A record deleted since it was viewed has no row
+    // here and is returned with exists: false.
+    const ITEM_SOURCES = {
+      customer: { table: 'tax_customers', cols: 'id, name, first_name, last_name, email', label: r => displayNameOf(r) || r.email || '' },
+      employee: { table: 'tax_employees', cols: 'id, name, first_name, last_name, email', label: r => displayNameOf(r) || r.email || '' },
+      task:     { table: 'tax_tasks', cols: 'id, title', label: r => r.title || '' },
+      lead:     { table: 'tax_leads', cols: 'id, name, email', label: r => r.name || r.email || '' },
+      thread:   { table: 'tax_message_threads', cols: 'id, subject', label: r => r.subject || '' },
+    };
+    const labelByKey = new Map();
+    for (const kind of ITEM_VIEW_KINDS) {
+      const ids = Array.from(idsByKind[kind]);
+      const src = ITEM_SOURCES[kind];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data: found, error: lErr } = await supabase.from(src.table)
+          .select(src.cols).eq('community_id', communitySlug).in('id', ids.slice(i, i + 200));
+        if (lErr) return sendSupabaseError(res, lErr);
+        for (const r of found || []) labelByKey.set(`${kind}|${r.id}`, src.label(r));
+      }
+    }
+
     const rows = Array.from(byEmployee.values())
       .map(r => ({
         employeeId: r.employeeId, name: r.name, totalMinutes: r.totalMinutes, totalViews: r.totalViews,
         features: Array.from(r.featureMap.values()).sort((a, b) => b.minutes - a.minutes),
+        items: Array.from(r.itemMap.values())
+          .map(it => {
+            const key = `${it.kind}|${it.itemId}`;
+            return { ...it, label: labelByKey.get(key) || '', exists: labelByKey.has(key) };
+          })
+          .sort((a, b) => (a.lastViewedAt < b.lastViewedAt ? 1 : -1)),
       }))
       .sort((a, b) => b.totalMinutes - a.totalMinutes);
     const totalMinutes = rows.reduce((s, r) => s + r.totalMinutes, 0);
-    res.json({ period, rangeStart, rangeEnd, totalMinutes, rows });
+    res.json({
+      period, rangeStart, rangeEnd, totalMinutes, rows,
+      truncated: events.truncated || itemViews.truncated,
+    });
   });
 
   // ── Public website metrics ──────────────────────────────────────────────
@@ -14437,13 +14539,14 @@ ${closingHtml}
     }
     const { rangeStart, rangeEnd } = periodRange(period, anchor);
 
-    const { data, error } = await supabase.from('tax_public_pageviews')
+    const { data, error, truncated } = await fetchAllRows(() => supabase.from('tax_public_pageviews')
       .select('page, visitor_id, session_id, referrer')
       .eq('community_id', communitySlug)
       .gte('created_at', `${rangeStart}T00:00:00Z`)
-      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`);
+      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`)
+      .order('created_at', { ascending: true }).order('id', { ascending: true }));
     if (error) return sendSupabaseError(res, error);
-    const rows = data || [];
+    const rows = data;
 
     const pageCounts = new Map();
     const referrerCounts = new Map();
@@ -14473,7 +14576,7 @@ ${closingHtml}
     res.json({
       period, rangeStart, rangeEnd,
       totalViews: rows.length, uniqueVisitors: visitors.size, sessions: sessions.size,
-      pages, referrers,
+      pages, referrers, truncated,
     });
   });
 
@@ -14539,15 +14642,16 @@ ${closingHtml}
     }
     const { rangeStart, rangeEnd } = periodRange(period, anchor);
 
-    const { data, error } = await supabase.from('tax_public_content_views')
+    const { data, error, truncated } = await fetchAllRows(() => supabase.from('tax_public_content_views')
       .select('kind, item_id, event_type, duration_ms')
       .eq('community_id', communitySlug)
       .gte('created_at', `${rangeStart}T00:00:00Z`)
-      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`);
+      .lt('created_at', `${addDaysIso(rangeEnd, 1)}T00:00:00Z`)
+      .order('created_at', { ascending: true }).order('id', { ascending: true }));
     if (error) return sendSupabaseError(res, error);
 
     const byItem = new Map(); // `${kind}|${itemId}` -> { kind, itemId, clicks, durationTotal, durationCount }
-    for (const row of data || []) {
+    for (const row of data) {
       const key = `${row.kind}|${row.item_id}`;
       if (!byItem.has(key)) byItem.set(key, { kind: row.kind, itemId: row.item_id, clicks: 0, durationTotal: 0, durationCount: 0 });
       const b = byItem.get(key);
@@ -14585,7 +14689,7 @@ ${closingHtml}
       })
       .sort((a, b) => b.clicks - a.clicks);
 
-    res.json({ period, rangeStart, rangeEnd, services, articles: articlesOut });
+    res.json({ period, rangeStart, rangeEnd, services, articles: articlesOut, truncated });
   });
 
   // ── Weekly timesheets ───────────────────────────────────────────────────
