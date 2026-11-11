@@ -4,6 +4,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { useEmployeeItemView } from '../lib/employeeItemTracking';
 import { displayPersonName } from '../lib/personName';
 import { urgencyOf, effectiveUrgency, colorOf, priorityColorOf, resolveThresholds, URGENCY_LABEL_KEY } from '../lib/taskUrgency';
 import { formatFrequency } from '../lib/taskFrequency';
@@ -1379,6 +1380,7 @@ function TaskFormModal({
   onCustomersChanged, onClose, onSaved, onChanged,
 }) {
   const isEdit = mode === 'edit';
+  useEmployeeItemView(auth, 'task', isEdit ? task.id : '');
   // Owner-editable per-community override (Settings → Priority
   // definitions); falls back to the platform default copy when the
   // community hasn't set one for this locale/priority.

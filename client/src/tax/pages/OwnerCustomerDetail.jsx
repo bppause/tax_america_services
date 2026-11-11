@@ -4,6 +4,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { useEmployeeItemView } from '../lib/employeeItemTracking';
 import TaskHover from '../components/TaskHover';
 import { ensureStatusChangeNotes, notStartedFieldsMissing } from '../lib/taskStatus';
 import BookkeepingReportsSection from '../components/BookkeepingReports';
@@ -465,6 +466,7 @@ export default function OwnerCustomerDetail({ customerId }) {
   const { locale, t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
+  useEmployeeItemView(auth, 'customer', customerId);
 
   const [data, setData] = useState(null);
   const [types, setTypes] = useState([]);

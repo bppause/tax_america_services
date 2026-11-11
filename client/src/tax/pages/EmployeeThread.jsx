@@ -3,6 +3,7 @@ import { useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { useEmployeeItemView } from '../lib/employeeItemTracking';
 
 function relTime(iso) {
   if (!iso) return '';
@@ -13,6 +14,7 @@ export default function EmployeeThread({ threadId }) {
   const { t } = useT();
   const { fbUser, employee, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
+  useEmployeeItemView(auth, 'thread', threadId);
 
   const [state, setState] = useState({ kind: 'loading' });
   const [reply, setReply] = useState('');

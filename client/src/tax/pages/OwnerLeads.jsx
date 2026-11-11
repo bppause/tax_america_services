@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { useEmployeeItemView } from '../lib/employeeItemTracking';
 import { displayPersonName } from '../lib/personName';
 import { formatDateTime } from '../lib/lastSignIn';
 import CustomerTypeBadge from '../components/CustomerTypeBadge';
@@ -233,6 +234,7 @@ function staleDays(lead) {
 
 function LeadRow({ lead, auth, onChange, communitySlug, community, products, relTypes, staff, focused, locale, t }) {
   const [expanded, setExpanded] = useState(!!focused);
+  useEmployeeItemView(auth, 'lead', expanded ? lead.id : '');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);

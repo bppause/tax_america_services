@@ -627,6 +627,9 @@ export const taxApi = {
   employeeActivityPing(auth, { feature, eventType }) {
     return request('POST', '/employee/activity/ping', { feature, eventType }, auth);
   },
+  employeeActivityItemView(auth, { kind, itemId }) {
+    return request('POST', '/employee/activity/item-view', { kind, itemId }, auth);
+  },
   adminActivitySummary(auth, communitySlug, period, date) {
     const qs = new URLSearchParams({ communitySlug });
     if (period) qs.set('period', period);

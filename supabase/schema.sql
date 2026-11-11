@@ -4185,3 +4185,22 @@ create index if not exists idx_tax_public_content_views_community_day
 create index if not exists idx_tax_public_content_views_item
   on public.tax_public_content_views(community_id, kind, item_id, created_at);
 alter table public.tax_public_content_views disable row level security;
+
+-- Which specific records an employee opened in the portal — a customer's
+-- page, a task's edit form, an expanded lead, a message thread, a staff
+-- profile. One row per open (POST /employee/activity/item-view, sent
+-- from client/src/tax/lib/employeeItemTracking.js); the Activity
+-- dashboard lists them per employee under GET /admin/activity/summary.
+-- No FK on item_id — it points into a different table per `kind`, and
+-- the summary resolves names with a per-kind lookup instead.
+create table if not exists public.tax_employee_item_views (
+  id text primary key,
+  community_id text not null references public.communities(id) on delete cascade,
+  employee_id text not null references public.tax_employees(id) on delete cascade,
+  kind text not null check (kind in ('customer','task','lead','thread','employee')),
+  item_id text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_tax_employee_item_views_community_day
+  on public.tax_employee_item_views(community_id, created_at);
+alter table public.tax_employee_item_views disable row level security;

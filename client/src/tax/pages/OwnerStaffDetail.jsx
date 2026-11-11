@@ -3,6 +3,7 @@ import { pickI18n, useT } from '../i18n';
 import { useEmployeeAuth } from '../auth/EmployeeAuthProvider';
 import { taxApi, setImpersonation } from '../api';
 import EmployeeShell from '../components/EmployeeShell';
+import { useEmployeeItemView } from '../lib/employeeItemTracking';
 import { CERT_LIBRARY } from '../lib/certLibrary';
 
 import { formatLastSignIn, formatDateTime } from '../lib/lastSignIn';
@@ -48,6 +49,7 @@ export default function OwnerStaffDetail({ employeeId }) {
   const { t, locale } = useT();
   const { fbUser, employee: me, community } = useEmployeeAuth();
   const auth = { uid: fbUser?.uid, email: fbUser?.email, communitySlug: community?.id };
+  useEmployeeItemView(auth, 'employee', employeeId);
 
   const [employees, setEmployees] = useState(null);
   const [customers, setCustomers] = useState(null);

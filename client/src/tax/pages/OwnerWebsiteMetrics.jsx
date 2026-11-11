@@ -176,6 +176,7 @@ export default function OwnerWebsiteMetrics() {
       </div>
 
       {err && <div className="tax-msg tax-msg--error">{err}</div>}
+      {(summary?.truncated || engagement?.truncated) && <div className="tax-msg" style={{ fontSize: 13 }}>{t('employee.activity.truncated')}</div>}
       {!summary ? <p>{t('loading')}</p>
         : summary.totalViews === 0 ? <p style={{ color: 'var(--tax-muted)' }}>{t('employee.website.empty')}</p>
         : <>
