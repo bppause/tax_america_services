@@ -2492,6 +2492,8 @@
   "employee.timesheets.dailyHoursInvalid": "Enter a number of hours between 0 and 24 for each day.",
   "employee.timesheets.weeklyHoursInvalid": "Weekly hours cannot exceed 168.",
   "employee.timesheets.hoursOrNoteRequired": "Enter hours, or add a note explaining why this week has none (e.g. PTO, holiday), before submitting.",
+  "employee.timesheets.hoursRequired": "Enter your hours in the day boxes before submitting. If you didn't work this week, ask a Timesheet Approver to skip it.",
+  "employee.timesheets.legacyNote": "Note saved earlier (notes are no longer used — enter hours in the day boxes above):",
   "employee.timesheets.weekTotal": "Week total",
   "employee.timesheets.previousWeek": "Previous week",
   "employee.timesheets.nextWeek": "Next week",
