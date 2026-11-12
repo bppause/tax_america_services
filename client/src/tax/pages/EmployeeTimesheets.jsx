@@ -183,7 +183,7 @@ function noticeFor(ts, weekStart, currentWeek, t) {
 // day's total), and a running weekly total. Locked once submitted or
 // approved; editing a rejected week resets it to draft on save, same as
 // the server-side rule.
-function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNext, onChanged }) {
+function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, isApprover, onPrev, onNext, onChanged }) {
   const days = weekDates(weekStart);
   const sourceValues = () => days.map(d => String(ts?.daily_hours?.[d] ?? 0));
   const [values, setValues] = useState(sourceValues);
@@ -202,6 +202,13 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
   const locked = ts?.status === 'submitted' || ts?.status === 'approved' || ts?.status === 'skipped';
   const original = sourceValues();
   const dirty = values.some((v, i) => v !== original[i]) || notes !== (ts?.notes || '');
+  // Only a Timesheet Approver gets a notes box — regular staff were
+  // typing their hours into it instead of the day boxes. Without a
+  // note there is nothing to explain a zero-hour week, so staff need
+  // hours to submit; a week genuinely not worked is skipped by an
+  // approver instead (same rules as the server's PUT and submit).
+  const canSubmit = total > 0 || (isApprover && !!notes.trim());
+  const cannotSubmitMsg = t(isApprover ? 'employee.timesheets.hoursOrNoteRequired' : 'employee.timesheets.hoursRequired');
   const loading = weekStart && !ts;
 
   const save = async () => {
@@ -214,7 +221,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
     try {
       const dailyHours = {};
       days.forEach((d, i) => { dailyHours[d] = Number(values[i]) || 0; });
-      await taxApi.employeeSaveTimesheet(auth, weekStart, { dailyHours, notes });
+      await taxApi.employeeSaveTimesheet(auth, weekStart, isApprover ? { dailyHours, notes } : { dailyHours });
       onChanged(weekStart);
     } catch (e) { setErr(e?.message || t('error.loadFailed')); }
     finally { setBusy(false); }
@@ -230,7 +237,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
       if (!Number.isFinite(n) || n < 0 || n > 24) { setErr(t('employee.timesheets.dailyHoursInvalid')); return; }
     }
     if (total > 168) { setErr(t('employee.timesheets.weeklyHoursInvalid')); return; }
-    if (total <= 0 && !notes.trim()) { setErr(t('employee.timesheets.hoursOrNoteRequired')); return; }
+    if (!canSubmit) { setErr(cannotSubmitMsg); return; }
     // Submitting locks the week until an approver acts — a week can only
     // be submitted once (the server itself refuses a second submit; see
     // POST /employee/timesheets/:weekStart/submit), so this is the one
@@ -240,7 +247,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
     try {
       const dailyHours = {};
       days.forEach((d, i) => { dailyHours[d] = Number(values[i]) || 0; });
-      await taxApi.employeeSaveTimesheet(auth, weekStart, { dailyHours, notes });
+      await taxApi.employeeSaveTimesheet(auth, weekStart, isApprover ? { dailyHours, notes } : { dailyHours });
       await taxApi.employeeSubmitTimesheet(auth, weekStart);
       onChanged(weekStart);
     } catch (e) { setErr(e?.message || t('error.loadFailed')); }
@@ -295,12 +302,21 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
             {t('employee.timesheets.weekTotal')}: {total.toFixed(2)} {t('employee.timesheets.hoursAbbrev')}
           </div>
 
-          <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--tax-muted)' }}>
-            {t('employee.timesheets.notes')}
-            <textarea rows={2} value={notes} disabled={locked || busy} maxLength={4000}
-                      placeholder={t('employee.timesheets.notesPlaceholder')}
-                      onChange={e => setNotes(e.target.value)} />
-          </label>
+          {isApprover ? (
+            <label style={{ display: 'grid', gap: 4, fontSize: 12, color: 'var(--tax-muted)' }}>
+              {t('employee.timesheets.notes')}
+              <textarea rows={2} value={notes} disabled={locked || busy} maxLength={4000}
+                        placeholder={t('employee.timesheets.notesPlaceholder')}
+                        onChange={e => setNotes(e.target.value)} />
+            </label>
+          ) : ts?.notes ? (
+            // A note saved before the box was removed stays visible
+            // (read-only) so hours typed into it can be moved to the days.
+            <div style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+              {t('employee.timesheets.legacyNote')}
+              <div style={{ whiteSpace: 'pre-wrap', color: 'inherit', marginTop: 2 }}>{ts.notes}</div>
+            </div>
+          ) : null}
 
           {err && <div className="tax-msg tax-msg--error" style={{ margin: 0 }}>{err}</div>}
           {!locked && (
@@ -309,8 +325,8 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, onPrev, onNex
                 <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy || !dirty}
                         onClick={save}>{t('employee.timesheets.save')}</button>
                 <button type="button" className="tax-btn tax-btn--primary tax-btn--sm"
-                        disabled={busy || (total <= 0 && !notes.trim())}
-                        title={(total <= 0 && !notes.trim()) ? t('employee.timesheets.hoursOrNoteRequired') : t('employee.timesheets.submitHint')}
+                        disabled={busy || !canSubmit}
+                        title={canSubmit ? t('employee.timesheets.submitHint') : cannotSubmitMsg}
                         onClick={submit}>{t('employee.timesheets.submit')}</button>
               </div>
               <p style={{ fontSize: 11, color: 'var(--tax-muted)', margin: 0 }}>
@@ -429,7 +445,7 @@ export default function EmployeeTimesheets() {
 
         {!focusedWeek ? <p>{t('loading')}</p> : (
           <WeekEditor weekStart={focusedWeek} ts={focusedTs} auth={auth} t={t} locale={locale}
-                      currentWeek={currentWeek}
+                      currentWeek={currentWeek} isApprover={isApprover}
                       onPrev={() => goToWeek(addDays(focusedWeek, -7))}
                       onNext={() => goToWeek(addDays(focusedWeek, 7))}
                       onChanged={syncWeek} />

@@ -14951,10 +14951,14 @@ ${closingHtml}
       week_start: weekStart,
       hours: total,
       daily_hours: dailyHours,
-      notes,
       status: 'draft',
       updated_at: now,
     };
+    // Only a Timesheet Approver can write notes on their own timesheet —
+    // regular staff were typing hours into the box instead of the days.
+    // Left out of the upsert for everyone else, so a note saved before
+    // this rule stays as it was rather than being wiped.
+    if (isTimesheetApprover(emp)) row.notes = notes;
     const { error } = await supabase.from('tax_timesheets')
       .upsert(row, { onConflict: 'employee_id,week_start' });
     if (error) return sendSupabaseError(res, error);
@@ -14962,11 +14966,11 @@ ${closingHtml}
   });
 
   // POST /employee/timesheets/:weekStart/submit — moves a draft week to
-  // submitted so it appears in approvers' queue. Requires either some
-  // hours entered, or — for a week genuinely not worked (PTO, holiday,
-  // not yet hired) — a note explaining why it's zero, so a blank week
-  // can be cleared out of the "overdue" nagging without the approver
-  // having to guess whether it's a real zero or just forgotten. Same
+  // submitted so it appears in approvers' queue. Requires some hours
+  // entered. A Timesheet Approver — the only one with a notes box, see
+  // the PUT above — may instead submit a zero-hour week with a note
+  // explaining it; for everyone else a week genuinely not worked (PTO,
+  // holiday) is skipped by an approver (POST /admin/timesheets/skip). Same
   // future-week guard as the PUT above — in practice redundant with it
   // (a future week can never acquire a row to submit), but kept
   // explicit here too.
@@ -14983,11 +14987,13 @@ ${closingHtml}
     if (existing.status === 'submitted') return res.status(409).json({ error: 'Already submitted.' });
     if (existing.status === 'approved') return res.status(409).json({ error: 'Already approved.' });
     if (existing.status === 'skipped') return res.status(409).json({ error: 'An approver marked this week as not required.' });
-    if ((!existing.hours || Number(existing.hours) <= 0) && !trim(existing.notes, MAX_TEXT_LEN)) {
-      return res.status(400).json({
-        error: 'note_required',
-        message: 'Enter hours, or add a note explaining why this week has none (e.g. PTO, holiday), before submitting.',
-      });
+    if (!existing.hours || Number(existing.hours) <= 0) {
+      const approver = isTimesheetApprover(emp);
+      if (!approver || !trim(existing.notes, MAX_TEXT_LEN)) {
+        return res.status(400).json(approver
+          ? { error: 'note_required', message: 'Enter hours, or add a note explaining why this week has none (e.g. PTO, holiday), before submitting.' }
+          : { error: 'hours_required', message: "Enter your hours for each day before submitting. If you didn't work this week, ask a Timesheet Approver to skip it." });
+      }
     }
     const { error } = await supabase.from('tax_timesheets')
       .update({ status: 'submitted', submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
