@@ -300,11 +300,12 @@ function RequirementRow({ e, auth, t, onChanged }) {
   );
 }
 
-// One row in Timesheet History — mostly read-only, except a skipped
-// week also gets an Undo button (deletes the skip, same restriction as
-// the Pending Submission skip action: there's nothing else on the row to
-// lose, since a week is only ever skipped while blank — see POST
-// /admin/timesheets/skip in routes.js).
+// One row in Timesheet History. A skipped week gets an Undo button
+// (deletes the skip — nothing else on the row to lose, since a week is
+// only ever skipped while blank, see POST /admin/timesheets/skip in
+// routes.js). A draft, submitted or sent-back week gets Delete, which
+// removes the entry and its hours outright after a confirm; an approved
+// week has neither.
 function TimesheetHistoryRow({ ts, locale, t, auth, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -316,6 +317,18 @@ function TimesheetHistoryRow({ ts, locale, t, auth, onChanged }) {
     setBusy(true); setErr('');
     try {
       await taxApi.adminUnskipTimesheet(auth, ts.id);
+      onChanged();
+    } catch (e) { setErr(e?.message || t('error.loadFailed')); }
+    finally { setBusy(false); }
+  };
+
+  const canDelete = ['draft', 'submitted', 'rejected'].includes(ts.status);
+  const deleteTimesheet = async () => {
+    const week = formatWeekRange(ts.week_start, locale);
+    if (!window.confirm(t('employee.timesheets.deleteConfirm', { name: who, week }))) return;
+    setBusy(true); setErr('');
+    try {
+      await taxApi.adminDeleteTimesheet(auth, ts.id);
       onChanged();
     } catch (e) { setErr(e?.message || t('error.loadFailed')); }
     finally { setBusy(false); }
@@ -340,6 +353,12 @@ function TimesheetHistoryRow({ ts, locale, t, auth, onChanged }) {
         <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
                 style={{ marginLeft: 'auto' }}
                 onClick={undoSkip}>{t('employee.timesheets.unskip')}</button>
+      )}
+      {canDelete && (
+        <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                title={t('employee.timesheets.deleteHint')}
+                style={{ marginLeft: 'auto', color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
+                onClick={deleteTimesheet}>{t('employee.timesheets.delete')}</button>
       )}
       {err && <span className="tax-msg tax-msg--error" style={{ margin: 0, fontSize: 12 }}>{err}</span>}
     </div>
@@ -493,7 +512,7 @@ export default function OwnerTimesheetsDashboard() {
   const loadHistory = () => {
     if (!isApprover) return;
     taxApi.adminListTimesheets(auth, historyStatus, { limit: 200 })
-      .then(d => setHistory((d.timesheets || []).filter(ts => ts.status !== 'draft')))
+      .then(d => setHistory((d.timesheets || []).filter(ts => historyStatus === 'draft' || ts.status !== 'draft')))
       .catch(() => setHistory([]));
   };
   useEffect(() => {
@@ -624,6 +643,7 @@ export default function OwnerTimesheetsDashboard() {
             <option value="approved">{t('employee.timesheets.status.approved')}</option>
             <option value="rejected">{t('employee.timesheets.status.rejected')}</option>
             <option value="skipped">{t('employee.timesheets.historyFilter.skipped')}</option>
+            <option value="draft">{t('employee.timesheets.historyFilter.draft')}</option>
           </select>
         </div>
         {history === null ? <p>{t('loading')}</p>

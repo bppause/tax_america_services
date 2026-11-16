@@ -15012,7 +15012,7 @@ ${closingHtml}
   router.get('/admin/timesheets', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) return res.json({ timesheets: [] });
-    const status = ['submitted', 'approved', 'rejected', 'skipped', 'all'].includes(req.query.status)
+    const status = ['draft', 'submitted', 'approved', 'rejected', 'skipped', 'all'].includes(req.query.status)
       ? req.query.status : 'submitted';
     const employeeId = trim(req.query.employeeId, 200);
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
@@ -15301,6 +15301,44 @@ ${closingHtml}
     if (error) return sendSupabaseError(res, error);
     try {
       await auditLog({ entity: 'tax.timesheet', entityId: id, action: 'unskip_timesheet', actorEmail: emp.email || '' });
+    } catch (_e) {}
+    res.json({ ok: true });
+  });
+
+  // DELETE /admin/timesheets/:id — a Timesheet Approver deletes a
+  // timesheet outright, in any state except approved (draft, submitted,
+  // sent back, or skipped). An approved week is the record of hours that
+  // were signed off, so it stays. The week goes back to having no entry
+  // at all, so the employee is asked for it again like any missing week.
+  // The deleted row is kept in the audit log's before-data, since the
+  // hours on it are otherwise gone.
+  router.delete('/admin/timesheets/:id', async (req, res) => {
+    const emp = await requireTaxEmployee(req, res); if (!emp) return;
+    if (!isTimesheetApprover(emp)) {
+      return res.status(403).json({ error: 'approver_required', message: 'Only a Timesheet Approver can delete a timesheet.' });
+    }
+    const id = trim(req.params.id, 200);
+    const { data: cur } = await supabase.from('tax_timesheets')
+      .select('id, community_id, employee_id, week_start, hours, daily_hours, notes, status, rejection_note, skip_note')
+      .eq('id', id).maybeSingle();
+    if (!cur) return res.status(404).json({ error: 'Timesheet not found.' });
+    if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
+    if (cur.status === 'approved') {
+      return res.status(409).json({ error: 'approved', message: 'An approved timesheet cannot be deleted.' });
+    }
+    // Status repeated in the filter so a timesheet approved between the
+    // read above and this delete is left alone.
+    const { data: deleted, error } = await supabase.from('tax_timesheets')
+      .delete().eq('id', id).neq('status', 'approved').select('id');
+    if (error) return sendSupabaseError(res, error);
+    if (!deleted || !deleted.length) {
+      return res.status(409).json({ error: 'approved', message: 'An approved timesheet cannot be deleted.' });
+    }
+    try {
+      await auditLog({
+        entity: 'tax.timesheet', entityId: id, action: 'delete_timesheet',
+        actorEmail: emp.email || '', before: cur,
+      });
     } catch (_e) {}
     res.json({ ok: true });
   });

@@ -622,6 +622,9 @@ export const taxApi = {
   adminUnskipTimesheet(auth, id) {
     return request('POST', `/admin/timesheets/${encodeURIComponent(id)}/unskip`, {}, auth);
   },
+  adminDeleteTimesheet(auth, id) {
+    return request('DELETE', `/admin/timesheets/${encodeURIComponent(id)}`, undefined, auth);
+  },
 
   // Employee portal activity tracking (see tax_employee_activity_events).
   employeeActivityPing(auth, { feature, eventType }) {
