@@ -15120,10 +15120,15 @@ ${closingHtml}
     if (!required.length) return res.json({ employees: [], currentWeek, prevWeek });
 
     const { data: sheets, error: tErr } = await supabase.from('tax_timesheets')
-      .select('employee_id, week_start, status')
+      .select('id, employee_id, week_start, status, hours, notes')
       .eq('community_id', emp.community_id)
       .in('week_start', [currentWeek, prevWeek]);
     if (tErr) return sendSupabaseError(res, tErr);
+    // A pending week that already holds something — hours or a note on a
+    // draft, or anything sent back — can't be skipped (POST
+    // /admin/timesheets/skip refuses it), only deleted; the dashboard
+    // offers one or the other per row off this.
+    const hasEntry = (row) => !!row && (row.status === 'rejected' || Number(row.hours) > 0 || !!trim(row.notes, MAX_TEXT_LEN));
     const byEmpWeek = new Map((sheets || []).map(s => [`${s.employee_id}|${s.week_start}`, s]));
 
     const employees = [];
@@ -15145,6 +15150,10 @@ ${closingHtml}
         overduePrev,
         currentRejected: curRow?.status === 'rejected',
         prevRejected: prevRow?.status === 'rejected',
+        currentTimesheetId: curRow?.id || '',
+        prevTimesheetId: prevRow?.id || '',
+        currentHasEntry: hasEntry(curRow),
+        prevHasEntry: hasEntry(prevRow),
       });
     }
     res.json({ employees, currentWeek, prevWeek });
@@ -15306,12 +15315,17 @@ ${closingHtml}
   });
 
   // DELETE /admin/timesheets/:id — a Timesheet Approver deletes a
-  // timesheet outright, in any state except approved (draft, submitted,
-  // sent back, or skipped). An approved week is the record of hours that
-  // were signed off, so it stays. The week goes back to having no entry
-  // at all, so the employee is asked for it again like any missing week.
-  // The deleted row is kept in the audit log's before-data, since the
-  // hours on it are otherwise gone.
+  // timesheet in any state except approved (draft, submitted or sent
+  // back). An approved week is the record of hours that were signed off,
+  // so it stays. Deleting wipes the entered hours and leaves the row as
+  // 'skipped' rather than removing it: a week with no row at all is
+  // indistinguishable from one never started, so it would go straight
+  // back to being flagged overdue and reminded about. As a skipped week
+  // it is treated as not required everywhere, and an approver can ask
+  // for it again with POST /admin/timesheets/:id/unskip. The row as it
+  // was is kept in the audit log's before-data, since the hours on it
+  // are otherwise gone.
+  const DELETED_TIMESHEET_NOTE = 'Deleted by an approver / Borrada por un aprobador';
   router.delete('/admin/timesheets/:id', async (req, res) => {
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     if (!isTimesheetApprover(emp)) {
@@ -15326,10 +15340,18 @@ ${closingHtml}
     if (cur.status === 'approved') {
       return res.status(409).json({ error: 'approved', message: 'An approved timesheet cannot be deleted.' });
     }
+    if (cur.status === 'skipped') return res.json({ ok: true });
     // Status repeated in the filter so a timesheet approved between the
-    // read above and this delete is left alone.
+    // read above and this update is left alone.
+    const now = new Date().toISOString();
     const { data: deleted, error } = await supabase.from('tax_timesheets')
-      .delete().eq('id', id).neq('status', 'approved').select('id');
+      .update({
+        status: 'skipped', hours: 0, daily_hours: {}, notes: '',
+        skip_note: DELETED_TIMESHEET_NOTE, skipped_by_employee_id: emp.id, skipped_at: now,
+        submitted_at: null, approved_at: null, approved_by_employee_id: null,
+        rejection_note: '', updated_at: now,
+      })
+      .eq('id', id).neq('status', 'approved').select('id');
     if (error) return sendSupabaseError(res, error);
     if (!deleted || !deleted.length) {
       return res.status(409).json({ error: 'approved', message: 'An approved timesheet cannot be deleted.' });

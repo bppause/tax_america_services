@@ -151,7 +151,7 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
 // (vacation, holiday). The server recomputes what's actually pending at
 // send time rather than trusting this row's snapshot, so the reminder
 // button stays correct even if the list is a little stale.
-function PendingSubmissionRow({ e, weekStart, auth, t, variant, onSkipped }) {
+function PendingSubmissionRow({ e, weekStart, auth, t, locale, variant, onSkipped }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(''); // '' | 'sent' | error message
   const [skipping, setSkipping] = useState(false);
@@ -163,6 +163,20 @@ function PendingSubmissionRow({ e, weekStart, auth, t, variant, onSkipped }) {
     try {
       await taxApi.adminRemindTimesheet(auth, e.employeeId);
       setResult('sent');
+    } catch (err) {
+      setResult(err?.message || t('error.loadFailed'));
+    } finally { setBusy(false); }
+  };
+
+  // A week that already holds something (hours on a draft, or a
+  // sent-back timesheet) can't be skipped, only deleted — which wipes it
+  // and leaves the week skipped, so it stops being flagged either way.
+  const deleteEntry = async () => {
+    if (!window.confirm(t('employee.timesheets.deleteConfirm', { name: e.name, week: formatWeekRange(weekStart, locale) }))) return;
+    setBusy(true); setResult('');
+    try {
+      await taxApi.adminDeleteTimesheet(auth, e.timesheetId);
+      onSkipped();
     } catch (err) {
       setResult(err?.message || t('error.loadFailed'));
     } finally { setBusy(false); }
@@ -216,7 +230,12 @@ function PendingSubmissionRow({ e, weekStart, auth, t, variant, onSkipped }) {
           ? badge(t('employee.timesheets.notice.overdue'))
           : <span style={{ color: 'var(--tax-muted)' }}>{t('employee.timesheets.pendingSubmissionCurrentWeek')}</span>}
       <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
-        {!e.rejected && (
+        {e.hasEntry ? (
+          <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
+                  title={t('employee.timesheets.deleteHint')}
+                  style={{ color: 'var(--tax-error)', borderColor: 'var(--tax-error)' }}
+                  onClick={deleteEntry}>{t('employee.timesheets.delete')}</button>
+        ) : (
           <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
                   title={t('employee.timesheets.skipWeekHint')}
                   onClick={() => setSkipping(true)}>{t('employee.timesheets.skipWeek')}</button>
@@ -250,7 +269,7 @@ function PendingSubmissionGroup({ weekStart, locale, t, entries, auth, variant, 
       </div>
       <div style={{ display: 'grid', gap: 6 }}>
         {entries.map(e => (
-          <PendingSubmissionRow key={e.employeeId} e={e} weekStart={weekStart} auth={auth} t={t} variant={variant}
+          <PendingSubmissionRow key={e.employeeId} e={e} weekStart={weekStart} auth={auth} t={t} locale={locale} variant={variant}
                                  onSkipped={onSkipped} />
         ))}
       </div>
@@ -304,8 +323,8 @@ function RequirementRow({ e, auth, t, onChanged }) {
 // (deletes the skip — nothing else on the row to lose, since a week is
 // only ever skipped while blank, see POST /admin/timesheets/skip in
 // routes.js). A draft, submitted or sent-back week gets Delete, which
-// removes the entry and its hours outright after a confirm; an approved
-// week has neither.
+// after a confirm wipes its hours and leaves the week skipped, so it
+// isn't flagged as overdue; an approved week has neither.
 function TimesheetHistoryRow({ ts, locale, t, auth, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -584,16 +603,18 @@ export default function OwnerTimesheetsDashboard() {
             : <>
                 <PendingSubmissionGroup variant="overdue" auth={auth} t={t} locale={locale}
                                          weekStart={pendingSubmissionWeeks.prevWeek}
-                                         onSkipped={loadPendingSubmission}
+                                         onSkipped={refreshAll}
                                          entries={pendingSubmission
                                            .filter(e => e.overduePrev)
-                                           .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.prevRejected }))} />
+                                           .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.prevRejected,
+                                                         timesheetId: e.prevTimesheetId, hasEntry: e.prevHasEntry }))} />
                 <PendingSubmissionGroup variant="current" auth={auth} t={t} locale={locale}
                                          weekStart={pendingSubmissionWeeks.currentWeek}
-                                         onSkipped={loadPendingSubmission}
+                                         onSkipped={refreshAll}
                                          entries={pendingSubmission
                                            .filter(e => e.needsCurrent)
-                                           .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.currentRejected }))} />
+                                           .map(e => ({ employeeId: e.employeeId, name: e.name, rejected: e.currentRejected,
+                                                         timesheetId: e.currentTimesheetId, hasEntry: e.currentHasEntry }))} />
               </>}
       </section>
 
