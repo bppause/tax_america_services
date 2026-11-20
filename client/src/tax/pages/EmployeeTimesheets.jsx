@@ -352,10 +352,20 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, isApprover, o
             </div>
           )}
 
+          {/* Spelled out in a box of its own, not a muted footnote: each
+              day is entered as work blocks (a start and an end time), and
+              the totals are worked out from them — there is nowhere to
+              type a total, which is easy to miss coming from the old
+              one-number-per-day form. */}
           {!locked && (
-            <p style={{ fontSize: 12, color: 'var(--tax-muted)', margin: 0 }}>
-              {t('employee.timesheets.dailyHoursHint')}
-            </p>
+            <div style={{
+              padding: '10px 12px', borderRadius: 8, fontSize: 13, lineHeight: 1.45,
+              background: '#eff6ff', color: '#1e3a8a', border: '1px solid #bfdbfe',
+            }}>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>{t('employee.timesheets.howToTitle')}</div>
+              <div>{t('employee.timesheets.dailyHoursHint')}</div>
+              <div style={{ marginTop: 4 }}>{t('employee.timesheets.howToAuto')}</div>
+            </div>
           )}
 
           <div style={{ display: 'grid', gap: 6 }}>
@@ -372,7 +382,11 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, isApprover, o
                         : (hours > 0 ? '' : t('employee.timesheets.noTime'))}
                     </span>
                   )}
-                  <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13 }}>{hours.toFixed(2)} {hrs}</span>
+                  <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: 13 }}
+                        title={t('employee.timesheets.howToAuto')}>
+                    {!locked && <span style={{ fontWeight: 400, fontSize: 11, color: 'var(--tax-muted)', marginRight: 6 }}>{t('employee.timesheets.dayTotalAuto')}</span>}
+                    {hours.toFixed(2)} {hrs}
+                  </span>
                 </div>
 
                 {!locked && legacy > 0 && (
@@ -386,14 +400,17 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, isApprover, o
                 )}
 
                 {!locked && list.map((r, idx) => (
-                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    <input type="time" value={r.start} disabled={busy}
-                           aria-label={t('employee.timesheets.rangeStart')}
-                           onChange={e => setRange(d, idx, 'start', e.target.value)} />
-                    <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('employee.timesheets.rangeTo')}</span>
-                    <input type="time" value={r.end} disabled={busy}
-                           aria-label={t('employee.timesheets.rangeEnd')}
-                           onChange={e => setRange(d, idx, 'end', e.target.value)} />
+                  <div key={idx} style={{ display: 'flex', alignItems: 'flex-end', gap: 6, flexWrap: 'wrap' }}>
+                    <label style={{ display: 'grid', gap: 2, fontSize: 11, color: 'var(--tax-muted)' }}>
+                      {t('employee.timesheets.rangeStart')}
+                      <input type="time" value={r.start} disabled={busy}
+                             onChange={e => setRange(d, idx, 'start', e.target.value)} />
+                    </label>
+                    <label style={{ display: 'grid', gap: 2, fontSize: 11, color: 'var(--tax-muted)' }}>
+                      {t('employee.timesheets.rangeEnd')}
+                      <input type="time" value={r.end} disabled={busy}
+                             onChange={e => setRange(d, idx, 'end', e.target.value)} />
+                    </label>
                     <button type="button" className="tax-btn tax-btn--ghost tax-btn--sm" disabled={busy}
                             aria-label={t('employee.timesheets.removeRange')} title={t('employee.timesheets.removeRange')}
                             onClick={() => removeRange(d, idx)}>&times;</button>
@@ -414,6 +431,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, isApprover, o
 
           <div style={{ fontWeight: 700, fontSize: 15 }}>
             {t('employee.timesheets.weekTotal')}: {total.toFixed(2)} {hrs}
+            {!locked && <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--tax-muted)', marginLeft: 8 }}>{t('employee.timesheets.weekTotalAuto')}</span>}
           </div>
 
           {isApprover ? (
