@@ -28,6 +28,28 @@ function formatDayLabel(dateStr, locale) {
   return `${weekday} ${numeric}`;
 }
 
+// 'HH:MM' (24h, as stored in daily_ranges) in the viewer's locale.
+function formatClock(hhmm, locale) {
+  const m = /^(\d{2}):(\d{2})$/.exec(hhmm || '');
+  if (!m) return hhmm || '';
+  return new Date(2000, 0, 1, Number(m[1]), Number(m[2]))
+    .toLocaleTimeString(locale === 'es' ? 'es-ES' : 'en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+// The times a day's hours were worked, one range per line, under the
+// day's total. Nothing for a day entered as a plain total before time
+// ranges existed.
+function DayTimes({ ranges, locale }) {
+  if (!ranges || !ranges.length) return null;
+  return (
+    <div style={{ color: 'var(--tax-muted)' }}>
+      {ranges.map((r, i) => (
+        <div key={i}>{formatClock(r.start, locale)} – {formatClock(r.end, locale)}</div>
+      ))}
+    </div>
+  );
+}
+
 function formatRangeLabel(rangeStart, rangeEnd, period, locale) {
   const loc = locale === 'es' ? 'es-ES' : 'en-US';
   const start = new Date(`${rangeStart}T00:00:00Z`);
@@ -112,16 +134,22 @@ function ApprovalRow({ ts, auth, t, locale, onChanged }) {
           {t('employee.timesheets.weekOf')} {ts.week_start} &mdash; {ts.hours} {t('employee.timesheets.hoursAbbrev')}
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(80px, 1fr))', gap: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6 }}>
         {Object.keys(ts.daily_hours || {}).length === 0
           ? <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('employee.timesheets.noDailyBreakdown')}</span>
           : Array.from({ length: 7 }, (_, i) => addDays(ts.week_start, i)).map(d => (
               <div key={d} style={{ fontSize: 12 }}>
                 <div style={{ color: 'var(--tax-muted)' }}>{formatDayLabel(d, locale)}</div>
                 <div style={{ fontWeight: 600 }}>{(ts.daily_hours?.[d] || 0)} {t('employee.timesheets.hoursAbbrev')}</div>
+                <DayTimes ranges={ts.daily_ranges?.[d]} locale={locale} />
               </div>
             ))}
       </div>
+      {ts.time_zone && Object.keys(ts.daily_ranges || {}).length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--tax-muted)' }}>
+          {t('employee.timesheets.timesEnteredIn', { tz: ts.time_zone })}
+        </div>
+      )}
       {ts.notes && <div style={{ fontSize: 13, color: 'var(--tax-muted)' }}>{ts.notes}</div>}
       <textarea rows={2} value={note} onChange={e => setNote(e.target.value)} maxLength={4000}
                 placeholder={t('employee.timesheets.rejectNotePlaceholder')} />
@@ -429,15 +457,21 @@ function SummaryRow({ row, locale, t, period }) {
                 <span style={{ marginLeft: 'auto', fontWeight: 600 }}>{w.hours.toFixed(2)} {t('employee.timesheets.hoursAbbrev')}</span>
               </button>
               {openWeekStart === w.weekStart && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(90px, 1fr))', gap: 6, padding: '6px 8px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 6, padding: '6px 8px' }}>
                   {Object.keys(w.dailyHours || {}).length === 0
                     ? <span style={{ fontSize: 12, color: 'var(--tax-muted)' }}>{t('employee.timesheets.noDailyBreakdown')}</span>
                     : Array.from({ length: 7 }, (_, i) => addDays(w.weekStart, i)).map(d => (
                         <div key={d} style={{ fontSize: 12 }}>
                           <div style={{ color: 'var(--tax-muted)' }}>{formatDayLabel(d, locale)}</div>
                           <div style={{ fontWeight: 600 }}>{(w.dailyHours?.[d] || 0)} {t('employee.timesheets.hoursAbbrev')}</div>
+                          <DayTimes ranges={w.dailyRanges?.[d]} locale={locale} />
                         </div>
                       ))}
+                  {w.timeZone && Object.keys(w.dailyRanges || {}).length > 0 && (
+                    <div style={{ gridColumn: '1 / -1', fontSize: 12, color: 'var(--tax-muted)' }}>
+                      {t('employee.timesheets.timesEnteredIn', { tz: w.timeZone })}
+                    </div>
+                  )}
                   {w.rejectionNote && (
                     <div style={{ gridColumn: '1 / -1', fontSize: 12, color: STATUS_STYLE.rejected.fg }}>
                       {t('employee.timesheets.rejectionNote')}: {w.rejectionNote}

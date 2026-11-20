@@ -4204,3 +4204,15 @@ create table if not exists public.tax_employee_item_views (
 create index if not exists idx_tax_employee_item_views_community_day
   on public.tax_employee_item_views(community_id, created_at);
 alter table public.tax_employee_item_views disable row level security;
+
+-- Timesheet hours are entered as the times worked each day rather than
+-- a typed total: daily_ranges is { 'YYYY-MM-DD': [{ "start": "HH:MM",
+-- "end": "HH:MM" }, ...] } in the employee's own local clock time, and
+-- daily_hours / hours are derived from it on save (PUT
+-- /employee/timesheets/:weekStart). A day with hours but no ranges was
+-- entered before this existed and only has its total. time_zone is the
+-- IANA zone the employee's browser reported at their last save, shown to
+-- approvers beside the times; nothing is converted with it.
+alter table public.tax_timesheets
+  add column if not exists daily_ranges jsonb not null default '{}'::jsonb,
+  add column if not exists time_zone text not null default '';

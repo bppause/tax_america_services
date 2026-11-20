@@ -14809,7 +14809,7 @@ ${closingHtml}
     const emp = await requireTaxEmployee(req, res); if (!emp) return;
     const currentWeek = mondayOf(new Date().toISOString().slice(0, 10));
     const { data, error } = await supabase.from('tax_timesheets')
-      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, skip_note, updated_at')
+      .select('id, week_start, hours, daily_hours, daily_ranges, time_zone, notes, status, submitted_at, approved_at, rejection_note, skip_note, updated_at')
       .eq('employee_id', emp.id)
       .order('week_start', { ascending: false })
       .limit(26);
@@ -14818,7 +14818,7 @@ ${closingHtml}
     const hasCurrent = rows.some(r => r.week_start === currentWeek);
     if (!hasCurrent) {
       rows.unshift({
-        id: null, week_start: currentWeek, hours: 0, daily_hours: {}, notes: '', status: 'draft',
+        id: null, week_start: currentWeek, hours: 0, daily_hours: {}, daily_ranges: {}, time_zone: '', notes: '', status: 'draft',
         submitted_at: null, approved_at: null, rejection_note: '', skip_note: '', updated_at: null,
       });
     }
@@ -14878,22 +14878,58 @@ ${closingHtml}
       return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
     }
     const { data: existing, error } = await supabase.from('tax_timesheets')
-      .select('id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, skip_note, updated_at')
+      .select('id, week_start, hours, daily_hours, daily_ranges, time_zone, notes, status, submitted_at, approved_at, rejection_note, skip_note, updated_at')
       .eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
     if (error) return sendSupabaseError(res, error);
     res.json({
       timesheet: existing || {
-        id: null, week_start: weekStart, hours: 0, daily_hours: {}, notes: '', status: 'draft',
+        id: null, week_start: weekStart, hours: 0, daily_hours: {}, daily_ranges: {}, time_zone: '', notes: '', status: 'draft',
         submitted_at: null, approved_at: null, rejection_note: '', skip_note: '', updated_at: null,
       },
     });
   });
 
-  // PUT /employee/timesheets/:weekStart — body: { dailyHours: { 'YYYY-MM-DD':
-  // number, ... }, notes }. Create or edit the caller's own entry for that
-  // week, one day at a time — the weekly `hours` total is derived
-  // server-side as the sum, never trusted from the client. Blocked once
-  // the week is submitted or approved — editing after a rejection is
+  // One day's worked time as a list of { start, end } clock times
+  // ('HH:MM', 24h, in the employee's own local time — only the length
+  // of each range matters, so no time zone conversion is involved).
+  // Returns { ranges, minutes } with the ranges sorted, or { error }.
+  // A range must end after it starts: reading an end before the start as
+  // "past midnight" would silently turn an AM/PM slip like 11:00–02:00
+  // into 15 hours, so work past midnight is entered as two ranges, one
+  // on each day. Ranges may not overlap, or the overlap is counted twice.
+  const CLOCK_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+  function parseDayRanges(raw) {
+    if (raw == null) return { ranges: [], minutes: 0 };
+    if (!Array.isArray(raw) || raw.length > 12) return { error: 'Enter at most 12 time ranges per day.' };
+    const spans = [];
+    for (const r of raw) {
+      const sm = CLOCK_RE.exec(String(r?.start || ''));
+      const em = CLOCK_RE.exec(String(r?.end || ''));
+      if (!sm || !em) return { error: 'Each time range needs a start and an end time.' };
+      const start = Number(sm[1]) * 60 + Number(sm[2]);
+      const end = Number(em[1]) * 60 + Number(em[2]);
+      if (end <= start) return { error: 'Each end time must be after its start time.' };
+      spans.push({ start, end, range: { start: sm[0], end: em[0] } });
+    }
+    spans.sort((x, y) => x.start - y.start);
+    for (let i = 1; i < spans.length; i++) {
+      if (spans[i].start < spans[i - 1].end) return { error: 'Time ranges on the same day cannot overlap.' };
+    }
+    return {
+      ranges: spans.map(x => x.range),
+      minutes: spans.reduce((sum, x) => sum + (x.end - x.start), 0),
+    };
+  }
+
+  // PUT /employee/timesheets/:weekStart — body: { dailyRanges: {
+  // 'YYYY-MM-DD': [{ start, end }, ...] }, keepLegacy?: ['YYYY-MM-DD'],
+  // timeZone?, notes? }. Create or edit the caller's own entry for that
+  // week. Each day's hours are derived here from its time ranges and the
+  // weekly total from those — a typed total is never accepted. The one
+  // exception is a day saved before ranges existed, which only has a
+  // total: naming it in keepLegacy carries that stored total over
+  // unchanged until the employee enters times for the day or drops it.
+  // Blocked once the week is submitted or approved — editing after a rejection is
   // allowed and resets status back to draft (the rejection note stays
   // visible until the next decision overwrites it). Staff can go back and
   // log any past week that isn't already approved, but never a week that
@@ -14908,30 +14944,25 @@ ${closingHtml}
     if (weekStart > currentWeek) {
       return res.status(400).json({ error: 'future_week', message: 'You cannot log time for a future week.' });
     }
-    const rawDaily = (req.body || {}).dailyHours;
-    if (!rawDaily || typeof rawDaily !== 'object') {
-      return res.status(400).json({ error: 'dailyHours is required.' });
+    const body = req.body || {};
+    const rawRanges = body.dailyRanges;
+    if (!rawRanges || typeof rawRanges !== 'object' || Array.isArray(rawRanges)) {
+      // A tab opened before time ranges shipped still sends plain totals.
+      return res.status(400).json({ error: 'Timesheets are now entered as start and end times. Refresh the page and enter your times.' });
     }
     const days = weekDates(weekStart);
-    const dailyHours = {};
-    let total = 0;
+    const parsedByDay = {};
     for (const day of days) {
-      const v = Number(rawDaily[day]);
-      const h = Number.isFinite(v) ? v : 0;
-      if (h < 0 || h > 24) {
-        return res.status(400).json({ error: 'Each day must be between 0 and 24 hours.' });
-      }
-      dailyHours[day] = Math.round(h * 100) / 100;
-      total += dailyHours[day];
+      const parsed = parseDayRanges(rawRanges[day]);
+      if (parsed.error) return res.status(400).json({ error: `${day}: ${parsed.error}` });
+      parsedByDay[day] = parsed;
     }
-    total = Math.round(total * 100) / 100;
-    if (total > 168) {
-      return res.status(400).json({ error: 'Weekly hours cannot exceed 168.' });
-    }
+    const keepLegacy = new Set(Array.isArray(body.keepLegacy) ? body.keepLegacy.map(String) : []);
+    const timeZone = /^[A-Za-z0-9_+\-/]{1,64}$/.test(String(body.timeZone || '')) ? String(body.timeZone) : '';
     const notes = trim((req.body || {}).notes, MAX_TEXT_LEN);
 
     const { data: existing } = await supabase.from('tax_timesheets')
-      .select('id, status').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
+      .select('id, status, daily_hours, daily_ranges').eq('employee_id', emp.id).eq('week_start', weekStart).maybeSingle();
     if (existing && ['submitted', 'approved', 'skipped'].includes(existing.status)) {
       return res.status(409).json({
         error: 'locked',
@@ -14943,6 +14974,24 @@ ${closingHtml}
       });
     }
 
+    const dailyHours = {};
+    const dailyRanges = {};
+    let total = 0;
+    for (const day of days) {
+      const { ranges, minutes } = parsedByDay[day];
+      if (ranges.length) {
+        dailyRanges[day] = ranges;
+        dailyHours[day] = Math.round((minutes / 60) * 100) / 100;
+      } else if (keepLegacy.has(day) && existing && !(existing.daily_ranges?.[day]?.length)) {
+        const legacy = Number(existing.daily_hours?.[day]);
+        dailyHours[day] = Number.isFinite(legacy) ? Math.min(Math.max(legacy, 0), 24) : 0;
+      } else {
+        dailyHours[day] = 0;
+      }
+      total += dailyHours[day];
+    }
+    total = Math.round(total * 100) / 100;
+
     const now = new Date().toISOString();
     const row = {
       id: existing?.id || ('tsh_' + uuidv4().slice(0, 12)),
@@ -14951,9 +15000,11 @@ ${closingHtml}
       week_start: weekStart,
       hours: total,
       daily_hours: dailyHours,
+      daily_ranges: dailyRanges,
       status: 'draft',
       updated_at: now,
     };
+    if (timeZone) row.time_zone = timeZone;
     // Only a Timesheet Approver can write notes on their own timesheet —
     // regular staff were typing hours into the box instead of the days.
     // Left out of the upsert for everyone else, so a note saved before
@@ -15018,7 +15069,7 @@ ${closingHtml}
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
     let q = supabase.from('tax_timesheets')
       .select(`
-        id, week_start, hours, daily_hours, notes, status, submitted_at, approved_at, rejection_note, skip_note,
+        id, week_start, hours, daily_hours, daily_ranges, time_zone, notes, status, submitted_at, approved_at, rejection_note, skip_note,
         employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
       .eq('community_id', emp.community_id)
@@ -15054,7 +15105,7 @@ ${closingHtml}
 
     const { data, error } = await supabase.from('tax_timesheets')
       .select(`
-        id, week_start, hours, daily_hours, status, submitted_at, approved_at, rejection_note, skip_note, employee_id,
+        id, week_start, hours, daily_hours, daily_ranges, time_zone, status, submitted_at, approved_at, rejection_note, skip_note, employee_id,
         employee:tax_employees!tax_timesheets_employee_id_fkey ( id, name, first_name, last_name, email )
       `)
       .eq('community_id', emp.community_id)
@@ -15081,7 +15132,8 @@ ${closingHtml}
       bucket.totalHours += hours;
       bucket.weeks.push({
         weekStart: row.week_start, hours, status: row.status,
-        dailyHours: row.daily_hours || {}, submittedAt: row.submitted_at,
+        dailyHours: row.daily_hours || {}, dailyRanges: row.daily_ranges || {}, timeZone: row.time_zone || '',
+        submittedAt: row.submitted_at,
         approvedAt: row.approved_at, rejectionNote: row.rejection_note || '', skipNote: row.skip_note || '',
       });
     }
@@ -15269,6 +15321,7 @@ ${closingHtml}
       week_start: weekStart,
       hours: 0,
       daily_hours: {},
+      daily_ranges: {},
       notes: '',
       status: 'skipped',
       skip_note: note,
@@ -15333,7 +15386,7 @@ ${closingHtml}
     }
     const id = trim(req.params.id, 200);
     const { data: cur } = await supabase.from('tax_timesheets')
-      .select('id, community_id, employee_id, week_start, hours, daily_hours, notes, status, rejection_note, skip_note')
+      .select('id, community_id, employee_id, week_start, hours, daily_hours, daily_ranges, notes, status, rejection_note, skip_note')
       .eq('id', id).maybeSingle();
     if (!cur) return res.status(404).json({ error: 'Timesheet not found.' });
     if (cur.community_id !== emp.community_id) return res.status(403).json({ error: 'Wrong community.' });
@@ -15346,7 +15399,7 @@ ${closingHtml}
     const now = new Date().toISOString();
     const { data: deleted, error } = await supabase.from('tax_timesheets')
       .update({
-        status: 'skipped', hours: 0, daily_hours: {}, notes: '',
+        status: 'skipped', hours: 0, daily_hours: {}, daily_ranges: {}, notes: '',
         skip_note: DELETED_TIMESHEET_NOTE, skipped_by_employee_id: emp.id, skipped_at: now,
         submitted_at: null, approved_at: null, approved_by_employee_id: null,
         rejection_note: '', updated_at: now,
@@ -15464,7 +15517,7 @@ ${closingHtml}
     const update = decision === 'approve'
       ? { status: 'approved', approved_at: now, approved_by_employee_id: emp.id, rejection_note: '', updated_at: now }
       : decision === 'remove'
-      ? { status: 'rejected', rejection_note: note, hours: 0, daily_hours: {}, notes: '', approved_at: null, approved_by_employee_id: null, updated_at: now }
+      ? { status: 'rejected', rejection_note: note, hours: 0, daily_hours: {}, daily_ranges: {}, notes: '', approved_at: null, approved_by_employee_id: null, updated_at: now }
       : { status: 'rejected', rejection_note: note, approved_at: null, approved_by_employee_id: null, updated_at: now };
     const { error } = await supabase.from('tax_timesheets').update(update).eq('id', id);
     if (error) return sendSupabaseError(res, error);
