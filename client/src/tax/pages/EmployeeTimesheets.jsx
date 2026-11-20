@@ -364,6 +364,7 @@ function WeekEditor({ weekStart, ts, auth, t, locale, currentWeek, isApprover, o
             }}>
               <div style={{ fontWeight: 700, marginBottom: 2 }}>{t('employee.timesheets.howToTitle')}</div>
               <div>{t('employee.timesheets.dailyHoursHint')}</div>
+              <div style={{ marginTop: 4, fontWeight: 700 }}>{t('employee.timesheets.howToWorkedOnly')}</div>
               <div style={{ marginTop: 4 }}>{t('employee.timesheets.howToAuto')}</div>
             </div>
           )}

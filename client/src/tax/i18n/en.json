@@ -2510,6 +2510,7 @@
   "employee.timesheets.notes": "Notes (optional)",
   "employee.timesheets.notesPlaceholder": "Anything the approver should know about this week…",
   "employee.timesheets.dailyHoursHint": "For each day you worked, add a work block with a start time and an end time, in your own local time. Add another block for each stretch you worked — for example 11:00 AM to 2:00 PM, then 3:00 PM to 5:00 PM.",
+  "employee.timesheets.howToWorkedOnly": "Only include time you were actually working. Leave out lunch, breaks, and any time you left the office for errands or personal matters: end the block when you stop working and start a new one when you are back.",
   "employee.timesheets.howToTitle": "How to enter your time",
   "employee.timesheets.howToAuto": "You don't type the hours: each day's total and the week total are calculated automatically from your work blocks.",
   "employee.timesheets.dayTotalAuto": "Day total (automatic)",
